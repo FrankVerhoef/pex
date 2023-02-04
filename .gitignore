@@ -1,0 +1,7 @@
+# User defined
+/data/
+/wandb/
+launch.json
+
+# Byte-compiled / optimized / DLL files
+*.py[cod]
