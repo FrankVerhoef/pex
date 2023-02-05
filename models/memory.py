@@ -35,7 +35,7 @@ class TextMemory:
         else:
             self.mem[fact] += median if self.mem[fact] < median else 1 
 
-    def recall(self, keys):
+    def recall(self, keys, max_memories=None):
         """
         Returns a list of memories that match with any of the key words
         """
@@ -44,6 +44,13 @@ class TextMemory:
             if self.match(fact, keys):
                 memories.append(fact)
                 self.mem[fact] += 1
+        
+        # If max_memories is given, return the memories with highest weight
+        if max_memories is not None:
+            assert max_memories > 0, "Invalid value {}, should be greater than 0".format(max_memories)
+            if max_memories < len(memories):
+                sorted_memories = sorted(memories, key=lambda x: self.mem[x])
+                memories = sorted_memories[-max_memories:]
 
         return memories
 
@@ -137,7 +144,7 @@ class GraphMemory:
                     e['weight'] += 1
 
 
-    def recall(self, keys):
+    def recall(self, keys, max_memories=None):
         """
         Returns all paths starting from the central node that are connected with nodes that match with any of the key words.
         The result is a list of triples (subject, object, predicate), where subject and object are text strings and 
@@ -178,7 +185,21 @@ class GraphMemory:
             # Determine new boundary edges
             boundary = list(nx.edge_boundary(self.mem, boundary_tails, targets, data=True))
 
+        # If max_memories is given, return the memories with highest weight
+        if max_memories is not None:
+            assert max_memories > 0, "Invalid value {}, should be greater than 0".format(max_memories)
+            if max_memories < len(memories):
+                sorted_memories = sorted(memories, key=lambda x: self._memory_weight(x))
+                memories = sorted_memories[-max_memories:]
+
         return memories
+
+    def _memory_weight(self, memory):
+
+        weights = [predicate['weight'] for _, _, predicate in memory]
+        avg_weight = sum(weights) / len(weights)
+
+        return avg_weight
 
     def match(self, fact, keys):
         head, tail, attributes = fact
@@ -268,7 +289,7 @@ if __name__ == '__main__':
         print(memory)  
 
     print('--- RECALL ---')
-    recalled = memory.recall(keys)
+    recalled = memory.recall(keys, max_memories=3)
     for r in recalled:
         print(r)
 
