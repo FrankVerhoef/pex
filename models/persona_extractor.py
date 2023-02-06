@@ -25,9 +25,9 @@ class PersonaExtractor(nn.Module):
         encoded = self.encoder(xs, xs_len)
 
         # Set initial state for decoder
-        B, E = encoded.shape
+        B, H = encoded.shape
         decoder_input = torch.full(size=(B, 1), fill_value=self.start_token, device=encoded.device)
-        state = (encoded.unsqueeze(dim=0), torch.zeros((1, B, E), device=encoded.device))
+        state = (encoded.unsqueeze(dim=0), torch.zeros((1, B, H), device=encoded.device))
 
         # Generate tokens based on output of encoder
         output = []
@@ -41,3 +41,46 @@ class PersonaExtractor(nn.Module):
 
         return torch.stack(output, dim=-1).reshape(B, len(output), -1)
   
+
+if __name__ == '__main__':
+
+    I = 60
+    L = 20
+    E = 16
+    H = 48
+    B = 8
+
+    dev="mps"
+
+    encoder_type = 'poolbilstm'
+    encoder_opts = {
+        "input_size": I,
+        "embedding_size": E,
+        "hidden_size": H,
+        "aggregate_method": "max"
+    }
+    decoder_type = 'lstm'
+    decoder_opts = {
+        "input_size": I,
+        "embedding_size": E,
+        "hidden_size": {
+            "mean": E,
+            "lstm": H,
+            "bilstm": H * 2,
+            "poolbilstm": H * 2            
+        }[encoder_type],
+        "output_size": I
+    }
+    model = PersonaExtractor(encoder_type, encoder_opts, decoder_type, decoder_opts, start_token=1).to(dev)
+    criterion = nn.NLLLoss()
+
+    X = torch.randint(high=I, size=(B, L)).to(dev)
+    X_lens = torch.randint(low=1, high=L, size=(B, ))
+    y = torch.randint(high=I, size=(B, L)).to(dev)
+
+    out = model(X, X_lens, teacher_forcing=True, ys=y)
+    print("Shapes out: {}, y: {}".format(out.shape, y.shape))
+    loss = criterion(out.transpose(1,2), y)
+    print("Loss: ", loss)
+    loss.backward()
+
