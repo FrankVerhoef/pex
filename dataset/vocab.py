@@ -2,6 +2,7 @@ import spacy
 from spacy.symbols import ORTH
 from collections import Counter
 from tqdm import tqdm
+import json
 
 nlp = spacy.load("en_core_web_sm", disable = ['ner', 'tagger', 'parser', 'textcat'])
 
@@ -85,10 +86,28 @@ class Vocab:
         if max_tokens < len(self.ind2tok):
             vocab = [t for t, _ in sorted(self.count.items(), key=lambda x: x[1], reverse=True)[:max_tokens]]
             self.count = Counter({t: c for t, c in self.count.items() if t in vocab})
-            self.ind2tok = special_tokens
+            self.ind2tok = list(self.special_tokens)
             self.ind2tok.extend(vocab)
             self.tok2ind = {self.ind2tok[i]: i for i in range(len(self.ind2tok))}
             print("Reduced vocab to {} tokens, covering {:.1%} of corpus".format(max_tokens, sum(self.count.values()) / token_count))
+
+    def save(self, path):
+        with open(path, "w") as f:
+            f.write(json.dumps(self.ind2tok) + '\n')
+            f.write(json.dumps(list(self.special_tokens)) + '\n')
+
+    def load(self, path):
+        self.__init__()
+        with open(path, "r") as f:
+            try:
+                self.ind2tok = json.loads(f.readline())
+                self.special_tokens = set(json.loads(f.readline()))
+                self.tok2ind = {token: index for index, token in enumerate(self.ind2tok)}
+                for t in self.special_tokens:
+                    nlp.tokenizer.add_special_case(t, [{ORTH: t}])
+            except:
+                print("Failed to load vocab from ", path)
+
 
 ###
 ### Test
@@ -103,4 +122,8 @@ if __name__ == "__main__":
     voc = Vocab()
     voc.add_special_tokens(['<P0>', '<P1>'])
     voc.add_to_vocab(sentences)
+
+    voc.save('testvocab')
+    voc.load('testvocab')
+
     print(voc.tok2ind)
