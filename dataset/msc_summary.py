@@ -14,12 +14,13 @@ extra_tokens = ['<P0>', '<P1>']
 
 class MSC_Turns(Dataset):
     
-    def __init__(self, path, text2vec, len_context=2, max_samples=None):
+    def __init__(self, path, text2vec, len_context=2, persona_tokens=False, max_samples=None):
         super(MSC_Turns, self).__init__()
         dialogues = []
         with open(path, "r") as f:
             for line in f:
                 dialogues.append(json.loads(line))
+        self.persona_tokens = persona_tokens
         self.len_context = len_context
         self.text2vec = text2vec
         self.turns, self.personas = self.transform(dialogues, max_samples)
@@ -30,10 +31,11 @@ class MSC_Turns(Dataset):
         for d in dialogues:
             for i in range(len(d["dialog"]) - self.len_context + 1):
                 
-                turn = ""
+                turn = []
                 for j in range(self.len_context):
-                    turn += '<P{}> '.format((self.len_context - j) % 2)
-                    turn += d["dialog"][i+j].get("text","") + ' '
+                    p = '<P{}>'.format((self.len_context - j) % 2)
+                    t = d["dialog"][i+j].get("text","")
+                    turn.append((p, t))
                 turns.append(turn)
 
                 if "persona_text" in d["dialog"][i+self.len_context-1].keys():
@@ -54,10 +56,17 @@ class MSC_Turns(Dataset):
         return len(self.turns)
     
     def __getitem__(self, i):
-        return self.turns[i], self.personas[i]
+        if self.persona_tokens:
+            turns = ' '.join([p + ' ' + t for p, t in self.turns[i]])
+        else:
+            turns = ' '.join([t for _, t in self.turns[i]])
+        return turns, self.personas[i]
+    
+    def get_turn(self, i):
+        return self.turns[i]
 
     def corpus(self):
-        return [' '.join([turn, persona]) for turn, persona in zip(self.turns, self.personas)]
+        return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
 
     def batchify(self, data):
         """
@@ -69,9 +78,9 @@ class MSC_Turns(Dataset):
         turns, personas = zip(*data)
 
         # tokenize and convert to tensor
-        xs = [torch.tensor(self.text2vec(t + END_TOKEN)) for t in turns]
-        ys = [torch.tensor(self.text2vec(p + END_TOKEN)) for p in personas]
-
+        xs = [torch.tensor(self.text2vec(t + END_TOKEN), dtype=torch.long) for t in turns]
+        ys = [torch.tensor(self.text2vec(p + END_TOKEN), dtype=torch.long) for p in personas]
+        
         # determine lengths of source and target
         xs_len = [len(x) for x in xs]
         ys_len = [len(y) for y in ys]
@@ -80,7 +89,7 @@ class MSC_Turns(Dataset):
         pad_value = self.text2vec(PAD_TOKEN)[0]
         padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=pad_value)
         padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=pad_value)
-        
+
         return padded_xs, padded_ys, xs_len, ys_len
 
 
@@ -88,7 +97,7 @@ if __name__ == "__main__":
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
 
     # Test extraction of dialogue turns and persona sentences
-    msc_turns = MSC_Turns(datapath, text2vec=None, len_context=2)
+    msc_turns = MSC_Turns(datapath, text2vec=lambda x: random.choices(range(10), k=len(x)//5), len_context=2)
 
     batch = [msc_turns[i] for i in range(10)]
 
@@ -97,5 +106,9 @@ if __name__ == "__main__":
         print(item[1])
         print('-'*40)
 
-    print(msc_turns.batchify(batch))
+    padded_xs, padded_ys, xs_len, ys_len = msc_turns.batchify(batch)
+    print(padded_xs)
+    print(padded_ys)
+    print(xs_len)
+    print(ys_len)
     print('-' * 40)
