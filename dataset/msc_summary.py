@@ -97,7 +97,8 @@ if __name__ == "__main__":
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
 
     # Test extraction of dialogue turns and persona sentences
-    msc_turns = MSC_Turns(datapath, text2vec=lambda x: random.choices(range(10), k=len(x)//5), len_context=2)
+    text2vec = lambda x: random.choices(range(10), k=len(x.split()))  # return list with random integers
+    msc_turns = MSC_Turns(datapath, text2vec, len_context=2)
 
     batch = [msc_turns[i] for i in range(10)]
 
