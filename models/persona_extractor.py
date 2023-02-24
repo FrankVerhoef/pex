@@ -7,6 +7,17 @@ from models.decoder_models import DECODERS, DECODER_TYPES
 
 class PersonaExtractor(nn.Module):
 
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        group = parser.add_argument_group('PersonaExtractor args')
+        group.add_argument("--encoder", type=str, default="mean", help="Encoder model")
+        group.add_argument("--embedding_size", type=int, default=100, help="Embedding size")
+        group.add_argument("--hidden_size", type=int, default=256, help="Hidden size")
+        group.add_argument("--aggregate_method", type=str, default="avg", choices=["avg", "max"], help="Aggregate method for Pool Bi-LSTM")
+        group.add_argument("--decoder", type=str, default="lstm", help="Decoder model")
+        group.add_argument("--decoder_max", type=int, default=20, help="Max number of tokens to generate with decoder")
+        return parser
+
     def __init__(self, encoder_type, encoder_opts, decoder_type, decoder_opts, start_token):
         super().__init__()
         self.embed = nn.Embedding(encoder_opts["input_size"], encoder_opts["embedding_size"])

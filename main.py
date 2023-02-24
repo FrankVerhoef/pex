@@ -33,7 +33,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
     do_grid_search, use_wandb):
 
     train_losses = []
-    max_accuracy = 0
+    max_accuracy = -1
     step = 0
     model.to(device)
 
@@ -191,7 +191,7 @@ def train_with_args(config, args):
     return train_stats
 
 
-def parse_args():
+def get_parser():
 
     parser = argparse.ArgumentParser(description="Train a model")
 
@@ -210,16 +210,6 @@ def parse_args():
     
     # Encoder and decoder model
     parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert"], help="Encoder model")
-    parser.add_argument("--encoder", type=str, default="mean", help="Encoder model")
-    parser.add_argument("--embedding_size", type=int, default=100, help="Embedding size")
-    parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size")
-    parser.add_argument("--aggregate_method", type=str, default="avg", choices=["avg", "max"], help="Aggregate method for Pool Bi-LSTM")
-    parser.add_argument("--decoder", type=str, default="lstm", help="Decoder model")
-    parser.add_argument("--decoder_max", type=int, default=20, help="Max number of tokens to generate with decoder")
-
-    # Bert variants
-    parser.add_argument("--freeze", type=int, default=0, help="Layers to freeze for finetuning; None=none, 0=only embeddings, 12=all")
-    parser.add_argument("--prefix_size", type=int, default=0, help="Insert prefix in BERT")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
@@ -236,12 +226,13 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
 
-    return parser.parse_args()
+    return parser
 
 if __name__ == "__main__":
     import argparse
 
-    args = parse_args()
+    parser = get_parser()
+    args = parser.parse_known_args()[0]
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -255,6 +246,12 @@ if __name__ == "__main__":
         assert torch.backends.mps.is_built(), "PyTorch installation was not built with MPS activated"
     elif args.device == "cuda":
         assert torch.cuda.is_available(), "Cuda not available"
+
+    if args.model == "seq2seq":
+        PersonaExtractor.add_cmdline_args(parser)
+    else:
+        PrefixBert.add_cmdline_args(parser)
+    args = parser.parse_args()
 
     if args.do_grid_search:
         ray.init(

@@ -77,7 +77,14 @@ class FrozenBert(BertClassifier):
 
 class PrefixBert(FrozenBert):
 
-    def __init__(self, bert_base=None, freeze=None, prefix_size=1):
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        group = parser.add_argument_group('PrefixBert')
+        group.add_argument("--freeze", type=int, default=0, help="Layers to freeze for finetuning; None=none, 0=only embeddings, 12=all")
+        group.add_argument("--prefix_size", type=int, default=0, help="Insert prefix in BERT")
+        return parser
+
+    def __init__(self, bert_base=None, freeze=None, prefix_size=1, prefix_aggr="concat"):
         super().__init__(bert_base, freeze)
         self.prefix_size = prefix_size
         if self.prefix_size > 0:
