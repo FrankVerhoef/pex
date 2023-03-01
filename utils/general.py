@@ -6,6 +6,8 @@ def savename(args):
     name = args.save
     if args.model == "bert":
         name += "bert"
+    elif args.model == "bart":
+        name += "bart"
     elif args.model == "seq2seq":
         name += "_seq2seq_{}_{}_I{}_E{}_H{}".format(
             args.encoder,
