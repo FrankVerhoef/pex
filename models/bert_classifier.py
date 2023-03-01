@@ -8,7 +8,7 @@ from transformers import BertForSequenceClassification, BertModel, BertConfig
 
 class BertClassifier(nn.Module):
 
-    def __init__(self, bert_base=None):
+    def __init__(self, classifier_size_factor=1, bert_base=None):
         super().__init__()
         if bert_base is None:
             self.bert = BertModel(config=BertConfig())
@@ -16,7 +16,8 @@ class BertClassifier(nn.Module):
             self.bert = BertModel.from_pretrained(bert_base)
         self.bert.pooler = None
 
-        self.classifier = nn.Linear(in_features=self.bert.config.hidden_size, out_features=2)
+        in_features = classifier_size_factor * self.bert.config.hidden_size
+        self.classifier = nn.Linear(in_features=in_features, out_features=2)
         self.softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
@@ -63,10 +64,27 @@ class BertClassifier(nn.Module):
 
         return stats
 
-class FrozenBert(BertClassifier):
 
-    def __init__(self, bert_base=None, freeze=None):
-        super().__init__(bert_base)
+class PrefixBert(BertClassifier):
+
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        group = parser.add_argument_group('PrefixBert')
+        group.add_argument("--freeze", type=int, default=0, help="Layers to freeze for finetuning; None=none, 0=only embeddings, 12=all")
+        group.add_argument("--prefix_size", type=int, default=0, help="Insert prefix in BERT")
+        group.add_argument("--prefix_aggr", type=str, default="concat", choices=["concat", "max", "avg"], help="How to aggregate prefix hidden states")
+        return parser
+
+    def __init__(self, bert_base=None, freeze=None, prefix_size=1, prefix_aggr="concat"):
+        
+        self.freeze = freeze
+        self.prefix_size = prefix_size
+        self.prefix_aggr = prefix_aggr
+        classifier_size_factor = prefix_size + 1 if prefix_aggr == "concat" else 1
+        super().__init__(classifier_size_factor, bert_base)
+        if self.prefix_size > 0:
+            self.prefix_ids = torch.arange(self.prefix_size)
+            self.prefix = nn.Embedding(self.prefix_size, self.bert.config.hidden_size)
         if freeze is None:
             modules = []
         else:
@@ -74,22 +92,6 @@ class FrozenBert(BertClassifier):
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
-
-class PrefixBert(FrozenBert):
-
-    @classmethod
-    def add_cmdline_args(cls, parser):
-        group = parser.add_argument_group('PrefixBert')
-        group.add_argument("--freeze", type=int, default=0, help="Layers to freeze for finetuning; None=none, 0=only embeddings, 12=all")
-        group.add_argument("--prefix_size", type=int, default=0, help="Insert prefix in BERT")
-        return parser
-
-    def __init__(self, bert_base=None, freeze=None, prefix_size=1, prefix_aggr="concat"):
-        super().__init__(bert_base, freeze)
-        self.prefix_size = prefix_size
-        if self.prefix_size > 0:
-            self.prefix_ids = torch.arange(self.prefix_size)
-            self.prefix = nn.Embedding(self.prefix_size, self.bert.config.hidden_size)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
 
@@ -114,7 +116,12 @@ class PrefixBert(FrozenBert):
         # pool last hidden states of prefix with cls
         out = self.bert(inputs_embeds=input_embeddings, attention_mask=attention_mask, token_type_ids=token_type_ids)
         cls = out.last_hidden_state[:, :self.prefix_size + 1, :]
-        cls = cls.max(dim=1)[0]
+        if self.prefix_aggr == "concat":
+            cls = cls.view(B, -1)
+        elif self.prefix_aggr == "max":
+            cls = cls.max(dim=1)[0]
+        elif self.prefix_aggr == "avg":
+            cls = cls.mean(dim=1)
 
         # use pooled cls for classification
         logits = self.classifier(cls)
@@ -128,7 +135,7 @@ if __name__ == "__main__":
     logging.set_log_level(logging.DEBUG)
     logging.set_only_message(True)
 
-    model = BertClassifier()
+    model = PrefixBert(prefix_size=3)
     criterion = nn.NLLLoss()
     input_ids = torch.randint(high=100, size=(3,8))
     attention_mask = torch.randint(high=2, size=(3,8))
