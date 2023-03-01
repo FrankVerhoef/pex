@@ -1,9 +1,15 @@
 from torch.utils.data import Dataset
-from dataset.msc_summary import MSC_Turns
+from dataset.msc_summary import MSC_Turns, persona_token
 import torch
 
 
 class MSC_Turn_Facts(Dataset):
+
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        group = parser.add_argument_group('MSC_Turn_Facts')
+        group.add_argument("--persona_tokens", type=bool, default=False, help="Whether to insert special persona token before each dialogue turn")
+        return parser
 
     def __init__(self, path, tokenizer, len_context=2, persona_tokens=False, max_samples=None):
         """
@@ -27,8 +33,8 @@ class MSC_Turn_Facts(Dataset):
         """
         turn = self.turns.get_turn(index)
         if self.turns.persona_tokens:
-            turn_0 = ' '.join([p + ' ' + t for p, t in turn[:-1]])
-            turn_1 = turn[-1][0] + ' ' + turn[-1][1]
+            turn_0 = ' '.join([persona_token[p] + ' ' + t for p, t in turn[:-1]])
+            turn_1 = persona_token[turn[-1][0]] + ' ' + turn[-1][1]
         else:
             turn_0 = ' '.join([t for _, t in turn[:-1]])
             turn_1 = turn[-1][1]
@@ -51,13 +57,13 @@ class MSC_Turn_Facts(Dataset):
 if __name__ == "__main__":
 
     from transformers import AutoTokenizer
-    from dataset.msc_summary import extra_tokens
+    from dataset.msc_summary import PERSONA_TOKENS
 
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
     persona_tokens = False
     if persona_tokens:
-        num_added_toks = tokenizer.add_tokens(extra_tokens)
+        num_added_toks = tokenizer.add_tokens(PERSONA_TOKENS)
     
     # Test extraction of dialogue turns and persona facts
     msc_turns = MSC_Turn_Facts(datapath, tokenizer=tokenizer, len_context=4, persona_tokens=persona_tokens)
