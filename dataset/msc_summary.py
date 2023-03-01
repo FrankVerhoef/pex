@@ -9,11 +9,21 @@ import random
 
 from dataset.vocab import END_TOKEN, PAD_TOKEN
 
-
-extra_tokens = ['<P0>', '<P1>']
+persona_token = {
+    0: '<self>',
+    1: '<other>'
+}
+PERSONA_TOKENS = list(persona_token.values())
+# extra_tokens = ['<P0>', '<P1>']
 
 class MSC_Turns(Dataset):
     
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        group = parser.add_argument_group('MSC_Turns')
+        group.add_argument("--persona_tokens", type=bool, default=False, help="Whether to insert special persona token before each dialogue turn")
+        return parser
+
     def __init__(self, path, text2vec, len_context=2, persona_tokens=False, max_samples=None):
         super(MSC_Turns, self).__init__()
         dialogues = []
@@ -33,7 +43,7 @@ class MSC_Turns(Dataset):
                 
                 turn = []
                 for j in range(self.len_context):
-                    p = '<P{}>'.format((self.len_context - j) % 2)
+                    p = (self.len_context - j) % 2
                     t = d["dialog"][i+j].get("text","")
                     turn.append((p, t))
                 turns.append(turn)
@@ -57,7 +67,7 @@ class MSC_Turns(Dataset):
     
     def __getitem__(self, i):
         if self.persona_tokens:
-            turns = ' '.join([p + ' ' + t for p, t in self.turns[i]])
+            turns = ' '.join([persona_token[p] + ' ' + t for p, t in self.turns[i]])
         else:
             turns = ' '.join([t for _, t in self.turns[i]])
         return turns, self.personas[i]
@@ -98,7 +108,7 @@ if __name__ == "__main__":
 
     # Test extraction of dialogue turns and persona sentences
     text2vec = lambda x: random.choices(range(10), k=len(x.split()))  # return list with random integers
-    msc_turns = MSC_Turns(datapath, text2vec, len_context=2)
+    msc_turns = MSC_Turns(datapath, text2vec, len_context=2, persona_tokens=True)
 
     batch = [msc_turns[i] for i in range(10)]
 
