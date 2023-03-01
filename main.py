@@ -20,8 +20,9 @@ import transformers
 from transformers import AutoTokenizer
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
-from models.bert_classifier import BertClassifier, FrozenBert, PrefixBert
-from dataset.msc_summary import MSC_Turns, extra_tokens
+from models.bert_classifier import BertClassifier, PrefixBert
+from models.bart_extractor import BartExtractor, ConditionalFactLoss
+from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN
 from utils.general import savename
 import utils.logging as logging
@@ -36,6 +37,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
     max_accuracy = -1
     step = 0
     model.to(device)
+    best_model = model
 
     for epoch in range(epochs):
 
@@ -103,13 +105,13 @@ def train_with_args(config, args):
         logging.info("Set up {} to {}".format(args.model, args.task))
         tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
         with FileLock(os.path.expanduser(args.datadir + ".lock")): 
-            traindata = MSC_Turn_Facts(args.datadir + args.traindata, tokenizer, len_context=2, persona_tokens=args.persona_tokens, max_samples=args.train_samples)
-            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, persona_tokens=args.persona_tokens, max_samples=args.test_samples)
-            testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, persona_tokens=args.persona_tokens, max_samples=args.test_samples)
-        if args.persona_tokens:
-            num_added_toks = tokenizer.add_tokens(extra_tokens)
+            traindata = MSC_Turn_Facts(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
+            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+            testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+        if args.persona_identifier == "token":
+            num_added_toks = tokenizer.add_tokens(PERSONA_TOKENS)
         if args.load == "":
-            model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size)
+            model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr)
         else:
             model = PrefixBert()
         model.bert.resize_token_embeddings(len(tokenizer))
@@ -118,39 +120,61 @@ def train_with_args(config, args):
     elif args.task == 'generate':
 
         logging.info("Set up {} to {}".format(args.model, args.task))
-        vocab = Vocab()
-        with FileLock(os.path.expanduser(args.datadir + ".lock")): 
-            traindata = MSC_Turns(args.datadir + args.traindata, vocab.text2vec, len_context=2, persona_tokens=args.persona_tokens, max_samples=args.train_samples)
-            validdata = MSC_Turns(args.datadir + args.validdata, vocab.text2vec, len_context=2, persona_tokens=args.persona_tokens, max_samples=args.test_samples)
-            testdata = MSC_Turns(args.datadir + args.testdata, vocab.text2vec, len_context=2, persona_tokens=args.persona_tokens, max_samples=args.test_samples)
-        if args.persona_tokens:
-            vocab.add_special_tokens(extra_tokens)
-        vocab.add_to_vocab(traindata.corpus())
-        if args.vocab_size is not None:
-            vocab.cut_vocab(max_tokens=args.vocab_size)
-        vocab.save("vocab_{}".format(len(vocab)))
-        pad_token_id = vocab.tok2ind[PAD_TOKEN]
-        start_token_id = vocab.tok2ind[START_TOKEN]
 
-        encoder_opts = {
-            "input_size": len(vocab),
-            "embedding_size": args.embedding_size,
-            "hidden_size": args.hidden_size,
-            "aggregate_method": args.aggregate_method
-        }
-        decoder_opts = {
-            "input_size": len(vocab),
-            "embedding_size": args.embedding_size,
-            "hidden_size": {
-                "mean": args.embedding_size,
-                "lstm": args.hidden_size,
-                "bilstm": args.hidden_size * 2,
-                "poolbilstm": args.hidden_size * 2            
-            }[args.encoder],
-            "output_size": len(vocab)
-        }
-        model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id)
-        criterion = nn.NLLLoss(ignore_index=pad_token_id, reduction='mean')
+        if args.model == "seq2seq":
+            vocab = Vocab()
+            tokenizer = vocab.text2vec
+            if args.persona_identifier == "token":
+                vocab.add_special_tokens(PERSONA_TOKENS)
+            traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
+            vocab.add_to_vocab(traindata.corpus())
+            if args.vocab_size is not None:
+                vocab.cut_vocab(max_tokens=args.vocab_size)
+            vocab.save("vocab_{}".format(len(vocab)))
+            pad_token_id = vocab.tok2ind[PAD_TOKEN]
+            start_token_id = vocab.tok2ind[START_TOKEN]
+            vocab_size = len(vocab)
+            encoder_opts = {
+                "input_size": vocab_size,
+                "embedding_size": args.embedding_size,
+                "hidden_size": args.hidden_size,
+                "aggregate_method": args.aggregate_method
+            }
+            decoder_opts = {
+                "input_size": vocab_size,
+                "embedding_size": args.embedding_size,
+                "hidden_size": {
+                    "mean": args.embedding_size,
+                    "lstm": args.hidden_size,
+                    "bilstm": args.hidden_size * 2,
+                    "poolbilstm": args.hidden_size * 2            
+                }[args.encoder],
+                "output_size": vocab_size
+            }
+            model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id)
+            criterion = nn.NLLLoss()
+
+        elif args.model == "bart":
+            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn', additional_special_tokens=[NO_FACT_TOKEN])
+            if args.persona_identifier == "token":
+                tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS})
+            vocab_size = tokenizer.vocab_size
+            pad_token_id = tokenizer.pad_token_id
+            start_token_id = tokenizer.eos_token_id
+            nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
+            if args.load == "":
+                model = BartExtractor("facebook/bart-large-cnn", nofact_token_id=nofact_token_id)
+            else:
+                model = BartExtractor(nofact_token_id=nofact_token_id)
+            model.bart.resize_token_embeddings(len(tokenizer))
+            criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id)
+
+        with FileLock(os.path.expanduser(args.datadir + ".lock")): 
+            traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
+            validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+            testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+
+
 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
@@ -179,8 +203,8 @@ def train_with_args(config, args):
             logging.info("Saving model to {}".format(savepath))
             torch.save(best_model.state_dict(), savepath)
 
-        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=testdata.batchify)    
         logging.info("Start testing")
+        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=testdata.batchify)    
         test_stats = eval(best_model, test_loader, criterion, device=args.device)
         logging.success("Test stats: {}".format(test_stats))
         train_stats["test_loss"] = test_stats["valid_loss"]
@@ -199,7 +223,7 @@ def get_parser():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--log_interval", type=int, default=10, help="report interval")
-    parser.add_argument("--loglevel", type=str, default="info", choices=logging.get_all_levels())    
+    parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
     parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
     parser.add_argument("--load", type=str, default="", help="filename of model to load")
     parser.add_argument("--save", type=str, default="", help="filename to save the model")
@@ -209,7 +233,7 @@ def get_parser():
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert"], help="Encoder model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart"], help="Model")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
@@ -219,7 +243,6 @@ def get_parser():
     parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
     parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
     parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
-    parser.add_argument("--persona_tokens", type=bool, default=False, help="Whether to insert special persona token before each dialogue turn")
     
     # Training
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
@@ -236,21 +259,33 @@ if __name__ == "__main__":
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
+
+    # Prepare logging
     logging.set_log_level(args.loglevel)
     if args.logdir is not None:
         logging.add_file_handler(logdir=args.logdir)
     logging.info("Args: {}".format(args))
 
+    # Check availability of requested device
     if args.device == "mps":
         assert torch.backends.mps.is_available(), "Device 'mps' not available"
         assert torch.backends.mps.is_built(), "PyTorch installation was not built with MPS activated"
     elif args.device == "cuda":
         assert torch.cuda.is_available(), "Cuda not available"
 
-    if args.model == "seq2seq":
-        PersonaExtractor.add_cmdline_args(parser)
-    else:
-        PrefixBert.add_cmdline_args(parser)
+    # Add cmdline arguments for model
+    parser = {
+        "seq2seq": PersonaExtractor,
+        "bert": PrefixBert,
+        "bart": BartExtractor
+    }[args.model].add_cmdline_args(parser)
+
+    # Add cmdline arguments for task/dataset
+    parser = {
+        "classify": MSC_Turn_Facts,
+        "generate": MSC_Turns
+    }[args.task].add_cmdline_args(parser)
+    
     args = parser.parse_args()
 
     if args.do_grid_search:
@@ -259,10 +294,11 @@ if __name__ == "__main__":
             logging_level="warning",
             )
         search_space = {
+            "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
             "learning_rate": tune.grid_search([1e-4, 1e-3]),
-            "batch_size": tune.grid_search([16, 64]),
-            "prefix_size": tune.grid_search([0, 5]),
-            "freeze": tune.sample_from(lambda spec: {0:None, 1:8, 2:12}[random.randint(0,2)] if spec.config.prefix_size == 0 else 12),
+            # "batch_size": tune.grid_search([16, 64]),
+            # "prefix_size": tune.grid_search([0, 5]),
+            # "freeze": tune.sample_from(lambda spec: {0:None, 1:8, 2:12}[random.randint(0,2)] if spec.config.prefix_size == 0 else 12),
         }
         tuner = tune.Tuner(
             trainable=partial(train_with_args, args=args),
@@ -282,7 +318,7 @@ if __name__ == "__main__":
 
         best_result = results.get_best_result() 
         logging.success("BEST RESULTS: {}".format(best_result.config))
-        logging.success("BEST METRICS: {.2%}".format(best_result.metrics["valid_acc"]))
+        logging.success("BEST METRICS: {:.2%}".format(best_result.metrics["valid_acc"]))
 
     else:
         stats = train_with_args(config=None, args=args)
