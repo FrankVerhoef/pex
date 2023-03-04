@@ -88,7 +88,7 @@ class PrefixBert(BertClassifier):
         if freeze is None:
             modules = []
         else:
-            modules = [self.bert.embeddings, *self.bert.encoder.layer][:freeze]
+            modules = [self.bert.embeddings, *(self.bert.encoder.layer[:freeze])]
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
