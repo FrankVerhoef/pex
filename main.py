@@ -21,7 +21,7 @@ from transformers import AutoTokenizer
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
-from models.bart_extractor import BartExtractor, ConditionalFactLoss
+from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss
 from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN
 from utils.general import savename
@@ -30,7 +30,7 @@ import utils.logging as logging
 
 
 def train(model, trainloader, validloader, optimizer, criterion, 
-    device, epochs, log_interval,
+    device, epochs, log_interval, valid_interval,
     do_grid_search, use_wandb):
 
     train_losses = []
@@ -38,6 +38,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
     step = 0
     model.to(device)
     best_model = model
+    num_batches = len(trainloader)
 
     for epoch in range(epochs):
 
@@ -54,23 +55,25 @@ def train(model, trainloader, validloader, optimizer, criterion,
                     wandb.log({"train_loss": loss_avg, "epoch": epoch}, step=step)
                 logging.verbose("Epoch {}, step {}: Train loss={:.4f}".format(epoch, step, loss_avg))
     
-        # Evaluate on validation set
-        model.eval()
-        valid_stats = eval(model, validloader, criterion, device)
-        valid_acc = valid_stats['valid_acc']
-        logging.info("Epoch {}, step {}: Validation stats={}".format(epoch, step, valid_stats))
+            if (step % valid_interval == 0) or (step % num_batches == 0):
+                # Evaluate on validation set
+                model.eval()
+                valid_stats = eval(model, validloader, criterion, device)
+                valid_acc = valid_stats['valid_acc']
+                logging.info("Epoch {}, step {}: Validation stats={}".format(epoch, step, valid_stats))
+                model.train()
 
-        if use_wandb:
-            valid_stats["epoch"] = epoch
-            wandb.log(valid_stats, step=step)
+                if use_wandb:
+                    valid_stats["epoch"] = epoch
+                    wandb.log(valid_stats, step=step)
 
-        if do_grid_search:
-            tune.report(valid_acc=valid_acc)
+                if do_grid_search:
+                    tune.report(valid_acc=valid_acc)
 
-        if valid_acc > max_accuracy:
-                max_accuracy = valid_acc
-                logging.info("Best accuracy improved to {:.2%}".format(max_accuracy))
-                best_model = copy.deepcopy(model)
+                if valid_acc > max_accuracy:
+                        max_accuracy = valid_acc
+                        logging.info("Best accuracy improved to {:.2%}".format(max_accuracy))
+                        best_model = copy.deepcopy(model)
 
     return best_model, {"valid_acc": max_accuracy}
 
@@ -110,10 +113,7 @@ def train_with_args(config, args):
             testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
         if args.persona_identifier == "token":
             num_added_toks = tokenizer.add_tokens(PERSONA_TOKENS)
-        if args.load == "":
-            model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr)
-        else:
-            model = PrefixBert()
+        model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr)
         model.bert.resize_token_embeddings(len(tokenizer))
         criterion = nn.NLLLoss(reduction='mean')
 
@@ -154,27 +154,34 @@ def train_with_args(config, args):
             model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id)
             criterion = nn.NLLLoss()
 
-        elif args.model == "bart":
-            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn', additional_special_tokens=[NO_FACT_TOKEN])
+        elif args.model[-4:] == "bart":
+            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn')
             if args.persona_identifier == "token":
-                tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS})
+                tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS + [NO_FACT_TOKEN]})
             vocab_size = tokenizer.vocab_size
             pad_token_id = tokenizer.pad_token_id
             start_token_id = tokenizer.eos_token_id
             nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
-            if args.load == "":
-                model = BartExtractor("facebook/bart-large-cnn", nofact_token_id=nofact_token_id)
+            assert nofact_token_id != tokenizer.unk_token_id, "NO_FACT_TOKEN cannot be unknown token"
+            bart_base = "facebook/bart-large-cnn" if args.load == "" else None
+            if args.model == "bart":
+                model = BartExtractor(bart_base=bart_base, nofact_token_id=nofact_token_id)
             else:
-                model = BartExtractor(nofact_token_id=nofact_token_id)
+                model = PrefixBart(
+                    bart_base=bart_base, 
+                    nofact_token_id=nofact_token_id, 
+                    freeze=args.freeze, 
+                    enc_prefix_size=args.enc_prefix_size,
+                    dec_prefix_size=args.dec_prefix_size,
+                    prefix_aggr=args.prefix_aggr
+                )
+            criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=args.lm_loss_factor)
             model.bart.resize_token_embeddings(len(tokenizer))
-            criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id)
 
         with FileLock(os.path.expanduser(args.datadir + ".lock")): 
             traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
             validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
             testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
-
-
 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
@@ -188,11 +195,13 @@ def train_with_args(config, args):
     train_loader = torch.utils.data.DataLoader(dataset=traindata, batch_size=args.batch_size, shuffle=True, collate_fn=traindata.batchify)
     valid_loader = torch.utils.data.DataLoader(dataset=validdata, batch_size=args.batch_size, shuffle=False, collate_fn=validdata.batchify)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    if args.valid_interval is None:
+        args.valid_interval = len(train_loader)
 
-    logging.info("Start training with config: {}".format("None" if config is None else config))
+    logging.info("Start training")
     best_model, train_stats = train(
         model, train_loader, valid_loader, optimizer, criterion, 
-        device=args.device, epochs=args.epochs, log_interval=args.log_interval,
+        device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval,
         do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
     )
 
@@ -223,6 +232,7 @@ def get_parser():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--log_interval", type=int, default=10, help="report interval")
+    parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
     parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
     parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
     parser.add_argument("--load", type=str, default="", help="filename of model to load")
@@ -233,7 +243,7 @@ def get_parser():
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart"], help="Model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart"], help="Model")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
@@ -260,12 +270,6 @@ if __name__ == "__main__":
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    # Prepare logging
-    logging.set_log_level(args.loglevel)
-    if args.logdir is not None:
-        logging.add_file_handler(logdir=args.logdir)
-    logging.info("Args: {}".format(args))
-
     # Check availability of requested device
     if args.device == "mps":
         assert torch.backends.mps.is_available(), "Device 'mps' not available"
@@ -277,7 +281,8 @@ if __name__ == "__main__":
     parser = {
         "seq2seq": PersonaExtractor,
         "bert": PrefixBert,
-        "bart": BartExtractor
+        "bart": BartExtractor,
+        "prefixbart": PrefixBart,
     }[args.model].add_cmdline_args(parser)
 
     # Add cmdline arguments for task/dataset
@@ -287,6 +292,12 @@ if __name__ == "__main__":
     }[args.task].add_cmdline_args(parser)
     
     args = parser.parse_args()
+
+    # Prepare logging
+    logging.set_log_level(args.loglevel)
+    if args.logdir is not None:
+        logging.add_file_handler(logdir=args.logdir)
+    logging.info("Args: {}".format(args))
 
     if args.do_grid_search:
         ray.init(

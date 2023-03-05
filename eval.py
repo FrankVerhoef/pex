@@ -8,16 +8,16 @@ import random
 from tqdm import tqdm
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, multiclass_accuracy, binary_f1_score, bleu_score
 
+import transformers
 from transformers import AutoTokenizer
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
-from models.bart_extractor import BartExtractor
+from models.bart_extractor import BartExtractor, PrefixBart
 from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN, END_TOKEN
 
-import transformers
-transformers.utils.logging.set_verbosity_error
+import utils.logging as logging
 
 def eval(model, dataloader, vocab, decoder_max):
 
@@ -48,9 +48,9 @@ def eval_bart_text(model, dataset, tokenizer, decoder_max):
         batch = dataset.batchify([dataset[i]])
 
         with torch.no_grad():
-            pred_tokens = model.bart.generate(
+            pred_tokens = model.generate(
                 batch['input_ids'], 
-                min_length=1,
+                min_length=2,
                 max_new_tokens=decoder_max, 
                 num_beams=1,
                 do_sample=False,
@@ -190,9 +190,11 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--load", type=str, default='', help="filename of model to load") #, required=True)
     parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify"])
-    
+    parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())
+    parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
+
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart"], help="Encoder model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart"], help="Encoder model")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
@@ -206,11 +208,18 @@ if __name__ == "__main__":
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    # Prepare logging
+    logging.set_log_level(args.loglevel)
+    if args.logdir is not None:
+        logging.add_file_handler(logdir=args.logdir)
+    logging.info("Args: {}".format(args))
+
     # Add cmdline arguments for model
     parser = {
         "seq2seq": PersonaExtractor,
         "bert": PrefixBert,
-        "bart": BartExtractor
+        "bart": BartExtractor,
+        "prefixbart": PrefixBart
     }[args.model].add_cmdline_args(parser)
 
     # Add cmdline arguments for task/dataset
@@ -265,22 +274,31 @@ if __name__ == "__main__":
             }
             model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id)
 
-        elif args.model == "bart":
-            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn', additional_special_tokens=[NO_FACT_TOKEN])
+        elif args.model[-4:] == "bart":
+            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn')
             if args.persona_identifier == "token":
-                tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS})
+                tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS + [NO_FACT_TOKEN]})
             vocab_size = tokenizer.vocab_size
             pad_token_id = tokenizer.pad_token_id
             start_token_id = tokenizer.eos_token_id
             nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
-            if args.load == "":
-                model = BartExtractor("facebook/bart-large-cnn", nofact_token_id=nofact_token_id)
+            assert nofact_token_id != tokenizer.unk_token_id, "NO_FACT_TOKEN cannot be unknown token"
+            bart_base = "facebook/bart-large-cnn" if args.load == "" else None
+            if args.model == "bart":
+                model = BartExtractor(bart_base=bart_base, nofact_token_id=nofact_token_id)
             else:
-                model = BartExtractor("facebook/bart-large-cnn", nofact_token_id=nofact_token_id)
+                model = PrefixBart(
+                    bart_base=bart_base, 
+                    nofact_token_id=nofact_token_id, 
+                    freeze=args.freeze, 
+                    enc_prefix_size=args.enc_prefix_size,
+                    dec_prefix_size=args.dec_prefix_size,
+                    prefix_aggr=args.prefix_aggr
+                )
             model.bart.resize_token_embeddings(len(tokenizer))
 
     if args.load != '':
-        print("Loading model from {}".format(args.checkpoint_dir + args.load))
+        logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
         model.load_state_dict(torch.load(args.checkpoint_dir + args.load))
 
     testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
@@ -290,13 +308,13 @@ if __name__ == "__main__":
         eval_stats = eval_bert(model, test_loader, tokenizer)
         for k, v in eval_stats.items():
             print("{:<10}: {}".format(k, v))
-    if args.model == 'bart':
+    if args.model[-4:] == 'bart':
         if args.teacher_forcing:
             eval_stats = eval_bart_data(model, test_loader, tokenizer)
         else:
             eval_stats = eval_bart_text(model, testdata, tokenizer, decoder_max=args.decoder_max)
-        for k, v in eval_stats.items():
-            print("{:<10}: {}".format(k, v))
+        report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
+        logging.report(report)
     elif args.model == 'seq2seq':
         eval(model, test_loader, vocab, decoder_max=args.decoder_max)
 

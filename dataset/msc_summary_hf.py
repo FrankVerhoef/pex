@@ -16,11 +16,12 @@ persona_token = {
 PERSONA_TOKENS = list(persona_token.values())
 
 persona_prefix = {
-    0: "I said:",
-    1: "You said:"
+    0: "<self>",
+    1: "<other>"
 }
 
 NO_FACT_TOKEN = '<nofact>'
+# NO_FACT_TOKEN = '</s>'
 
 class MSC_Turns(Dataset):
     
@@ -74,6 +75,9 @@ class MSC_Turns(Dataset):
         return len(self.turns)
     
     def __getitem__(self, i):
+        """
+        #TODO: decide whether to include space between persona token and utterance
+        """
         last_p, last_t = self.turns[i][-1]
         if self.persona_tokens:
             history = ' '.join([persona_token[p] + ' ' + t for p, t in self.turns[i][:-1]])
@@ -111,6 +115,7 @@ if __name__ == "__main__":
 
     from transformers import AutoTokenizer
     logging.set_log_level("VERBOSE")
+    logging.info("Unit test {}".format(__file__))
 
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
 
