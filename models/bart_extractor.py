@@ -240,7 +240,7 @@ class PrefixBart(BartExtractor):
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer
-    from eval import print_bart_predictions
+    from run.eval import print_bart_predictions
     from dataset.msc_summary_hf import MSC_Turns, NO_FACT_TOKEN, PERSONA_TOKENS
 
     logging.set_log_level(logging.SPAM)
