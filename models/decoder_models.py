@@ -35,10 +35,10 @@ if __name__ == '__main__':
     import copy
 
     I = 5
-    L = 8
+    L = 4
     E = 2
     H = 3
-    B = 4
+    B = 2
 
     def grad_norms(model):
         sum_grads = 0
@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
         optimizer.zero_grad()
         out, (new_h, new_s) = model(ed, (hd, sd))
-        print("Out: ", out)
+        print("Out: ", out.cpu())
 
         loss = criterion(torch.transpose(out, 1, 2), yd)
         loss.backward()
@@ -133,7 +133,7 @@ if __name__ == '__main__':
                 decoder_input = out.argmax(dim=-1)
 
         out = torch.stack(output, dim=-1).reshape(B, len(output), -1)
-        print("Out: ", out)
+        print("Out: ", out.cpu())
 
         loss = criterion(torch.transpose(out, 1, 2), ld)
         loss.backward()
