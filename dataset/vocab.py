@@ -15,6 +15,11 @@ special_tokens = [START_TOKEN, END_TOKEN, UNK_TOKEN, PAD_TOKEN]
 
 class Vocab:
 
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
+        return parser
+
     def __init__(self):
 
         # initialize empty vocab with special tokens
