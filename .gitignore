@@ -1,7 +1,12 @@
 # User defined
 /data/
+/checkpoints/
 /wandb/
+/logs/
 launch.json
 
 # Byte-compiled / optimized / DLL files
 *.py[cod]
+
+# MacOs
+.DS_Store
