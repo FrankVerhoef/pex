@@ -21,11 +21,12 @@ from transformers import AutoTokenizer
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
-from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss
+from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
 from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN
 from utils.general import savename
 import utils.logging as logging
+from run.eval import eval_bart_text
 
 
 
@@ -155,7 +156,8 @@ def train_with_args(config, args):
             criterion = nn.NLLLoss()
 
         elif args.model[-4:] == "bart":
-            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn')
+
+            tokenizer = AutoTokenizer.from_pretrained(BART_BASE)
             if args.persona_identifier == "token":
                 tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS + [NO_FACT_TOKEN]})
             vocab_size = tokenizer.vocab_size
@@ -163,12 +165,12 @@ def train_with_args(config, args):
             start_token_id = tokenizer.eos_token_id
             nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
             assert nofact_token_id != tokenizer.unk_token_id, "NO_FACT_TOKEN cannot be unknown token"
-            bart_base = "facebook/bart-large-cnn" if args.load == "" else None
+
             if args.model == "bart":
-                model = BartExtractor(bart_base=bart_base, nofact_token_id=nofact_token_id)
+                model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
             else:
                 model = PrefixBart(
-                    bart_base=bart_base, 
+                    bart_base=BART_BASE, 
                     nofact_token_id=nofact_token_id, 
                     freeze=args.freeze, 
                     enc_prefix_size=args.enc_prefix_size,
@@ -180,7 +182,7 @@ def train_with_args(config, args):
 
         with FileLock(os.path.expanduser(args.datadir + ".lock")): 
             traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
-            validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+            validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.valid_samples)
             testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
 
     if args.use_wandb:
@@ -221,6 +223,13 @@ def train_with_args(config, args):
         if args.use_wandb:
             wandb.run.summary["test_accuracy"] = test_stats["valid_acc"]
 
+        logging.info("Reloading model from {}".format(savepath))
+        model.load_state_dict(torch.load(savepath))
+        logging.info("Testing model with {}".format(args.testdata))
+        eval_stats = eval_bart_text(model.to("cpu"), testdata, tokenizer, decoder_max=args.decoder_max)
+        report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
+        logging.report(report)
+
     return train_stats
 
 
@@ -250,8 +259,8 @@ def get_parser():
     parser.add_argument("--traindata", type=str, default="msc/msc_personasummary/session_1/train.txt", help="Dataset file for training")
     parser.add_argument("--validdata", type=str, default="msc/msc_personasummary/session_1/valid.txt", help="Dataset file for validation")
     parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/test.txt", help="Dataset file for testing")
-    parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
     parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
+    parser.add_argument("--valid_samples", type=int, default=None, help="Max number of test samples")
     parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
     
     # Training
@@ -284,6 +293,9 @@ if __name__ == "__main__":
         "bart": BartExtractor,
         "prefixbart": PrefixBart,
     }[args.model].add_cmdline_args(parser)
+
+    if args.model == "seq2seq":
+        Vocab.add_cmdline_args(parser)
 
     # Add cmdline arguments for task/dataset
     parser = {

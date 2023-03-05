@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
-from models.bart_extractor import BartExtractor, PrefixBart
+from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
 from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN, END_TOKEN
 
@@ -198,8 +198,7 @@ if __name__ == "__main__":
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
-    parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/train.txt", help="Dataset file for testing")
-    parser.add_argument("--vocab_size", type=int, default=4000, help="Max number of unique token (excluding special tokens)")
+    parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/test.txt", help="Dataset file for testing")
     parser.add_argument("--test_samples", type=int, default=10, help="Max number of test samples")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
 
@@ -275,7 +274,8 @@ if __name__ == "__main__":
             model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id)
 
         elif args.model[-4:] == "bart":
-            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn')
+
+            tokenizer = AutoTokenizer.from_pretrained(BART_BASE)
             if args.persona_identifier == "token":
                 tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS + [NO_FACT_TOKEN]})
             vocab_size = tokenizer.vocab_size
@@ -283,12 +283,12 @@ if __name__ == "__main__":
             start_token_id = tokenizer.eos_token_id
             nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
             assert nofact_token_id != tokenizer.unk_token_id, "NO_FACT_TOKEN cannot be unknown token"
-            bart_base = "facebook/bart-large-cnn" if args.load == "" else None
+
             if args.model == "bart":
-                model = BartExtractor(bart_base=bart_base, nofact_token_id=nofact_token_id)
+                model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
             else:
                 model = PrefixBart(
-                    bart_base=bart_base, 
+                    bart_base=BART_BASE, 
                     nofact_token_id=nofact_token_id, 
                     freeze=args.freeze, 
                     enc_prefix_size=args.enc_prefix_size,

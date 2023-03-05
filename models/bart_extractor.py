@@ -6,6 +6,7 @@ import utils.logging as logging
 from transformers import BartForConditionalGeneration, BartModel, BartConfig, GenerationConfig
 from transformers.models.bart.modeling_bart import shift_tokens_right
 
+BART_BASE = 'facebook/bart-large-cnn'
 
 class ConditionalFactLoss(nn.Module):
 
@@ -51,26 +52,29 @@ class BartExtractor(nn.Module):
             self.bart = BartForConditionalGeneration.from_pretrained(bart_base)
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
-    def calc_fact_logits(self, lm_logits):
-        nofact_logit = lm_logits[:, self.nofact_token_id]
-        all_tokens_ids = torch.arange(lm_logits.shape[1])
+    def select_fact_logprobs(self, lm_logprobs):
+        logprob_nofact = lm_logprobs[:, self.nofact_token_id]
+        all_tokens_ids = torch.arange(lm_logprobs.shape[1])
         all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
-        fact_logit = lm_logits[:, all_tokens_ids_except_nofact].max(dim=1)[0]
-        fact_logits = torch.stack([nofact_logit, fact_logit], dim=1)
-        return fact_logits
-
+        logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
+        fact_logprobs = torch.stack([logprob_nofact, logprob_fact], dim=1)
+        return fact_logprobs
+    
     def forward(self, input_ids, attention_mask, labels):
         lm_logits = self.bart(input_ids=input_ids, attention_mask=attention_mask, labels=labels).logits
         lm_logprobs = self.logsoftmax(lm_logits)
-        fact_logits = self.calc_fact_logits(lm_logits[:, 1, :])  # Token directly after <bos> token signals whether sequence is a fact
-        fact_logprobs = self.logsoftmax(fact_logits)
+        fact_logprobs = self.select_fact_logprobs(lm_logprobs[:, 1, :])  # Token directly after <bos> token signals whether sequence is a fact
         return fact_logprobs, lm_logprobs
     
     def generate(self, input_ids, **kwargs):
         gen_out = self.bart.generate(input_ids, **kwargs)
         logging.spam(gen_out)
         gen_out_cleaned = torch.stack([
-            (gen if gen[2] != self.nofact_token_id else torch.tensor([2, 0, self.nofact_token_id, 2]))
+            (
+                gen 
+                if gen[2] != self.nofact_token_id 
+                else torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id, self.bart.config.eos_token_id])
+            )
             for gen in gen_out
         ])
         return gen_out_cleaned
