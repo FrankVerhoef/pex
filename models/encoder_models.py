@@ -48,7 +48,7 @@ class UniLSTM(nn.Module):
     def forward(self, embeddings, seq_lengths):
 
         # pack, run through LSTM --> pack_padded_sequece seems to give error or incorrect output on MPS
-        if False: #embeddings.is_mps:
+        if True: #embeddings.is_mps:
             output, _ = self.lstm(torch.transpose(embeddings, 0, 1))
         else:
             packed_padded_x = torch.nn.utils.rnn.pack_padded_sequence(torch.transpose(embeddings, 0, 1), seq_lengths, batch_first=False, enforce_sorted=False)

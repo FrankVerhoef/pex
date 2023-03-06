@@ -7,7 +7,7 @@ torch.manual_seed(123)
 L = 3
 E = 2
 H = 2
-B = 1
+B = 3
 
 embeddings = torch.rand(L, B, E)
 
