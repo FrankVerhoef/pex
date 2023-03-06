@@ -68,14 +68,15 @@ class BartExtractor(nn.Module):
     
     def generate(self, input_ids, **kwargs):
         gen_out = self.bart.generate(input_ids, **kwargs)
-        logging.spam(gen_out)
+        pred_fact = gen_out[:, 2] != self.nofact_token_id
+
+        logging.spam("Generate: pred_fact={}".format(pred_fact))
+        logging.spam("Generate: gen_out={}".format(gen_out))
+        nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id])
+
         gen_out_cleaned = torch.stack([
-            (
-                gen 
-                if gen[2] != self.nofact_token_id 
-                else torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id, self.bart.config.eos_token_id])
-            )
-            for gen in gen_out
+            gen if is_fact else nofact_sequence
+            for is_fact, gen in zip(pred_fact, gen_out)
         ])
         return gen_out_cleaned
 
@@ -231,12 +232,10 @@ class PrefixBart(BartExtractor):
         logging.spam("Generate: pred_fact={}".format(pred_fact))
 
         # Generate fact if model predicts input contains facts
+        nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id])
         gen_out = torch.stack([
-            (
-                self.bart.generate(inputs_embeds=e.unsqueeze(dim=0), **kwargs)[0] 
-                if pred_fact[i] 
-                else torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id, self.bart.config.eos_token_id])
-            ) for i, e in enumerate(encoded.last_hidden_state)
+            self.bart.generate(inputs_embeds=e.unsqueeze(dim=0), **kwargs)[0] if is_fact else nofact_sequence
+            for is_fact, e in zip(pred_fact, encoded.last_hidden_state)
         ])
         logging.spam("Generate: gen_out={}".format(gen_out))
 

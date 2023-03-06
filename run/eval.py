@@ -147,26 +147,26 @@ def eval_bert(model, dataloader, tokenizer):
 def print_bart_predictions(text_in, text_out):
 
     x, y = text_in
-    print('-' * 40)
     print('context:    ', x)
     print('target:     ', y)
     print('prediction: ', text_out)
+    print('-' * 40)
 
 def print_bart_data(xs, ys, pred, tokenizer):
 
     for x, y, p in zip(xs, ys, pred):
-        print('-' * 40)
         print('context:    ', tokenizer.decode(x))
         print('target:     ', tokenizer.decode(y))
         print('prediction: ', tokenizer.decode(p))
+        print('-' * 40)
 
 def print_bert_predictions(xs, ys, pred, tokenizer):
 
     for x, y, p in zip(xs, ys, pred):
-        print('-' * 40)
         print('context:    ', tokenizer.decode(x))
         print('target:     ', y.item())
         print('prediction: ', p.item())
+        print('-' * 40)
 
 def print_predictions(xs, ys, pred, vocab):
 
@@ -175,11 +175,12 @@ def print_predictions(xs, ys, pred, vocab):
             p_len = list(p).index(vocab.tok2ind[END_TOKEN])
         except:
             p_len = len(p)
-        print('-' * 40)
+
         print('context:    ', vocab.vec2text(x))
         print('target:     ', vocab.vec2text(y))
         print('prediction: ', vocab.vec2text(p[:p_len]))
-
+        print('-' * 40)
+        
 if __name__ == "__main__":
     import argparse
 
