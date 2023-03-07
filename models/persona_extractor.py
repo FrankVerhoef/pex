@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+import utils.logging as logging
+
 from models.encoder_models import ENCODERS, ENCODER_TYPES
 from models.decoder_models import DECODERS, DECODER_TYPES
 
@@ -18,12 +20,13 @@ class PersonaExtractor(nn.Module):
         group.add_argument("--decoder_max", type=int, default=20, help="Max number of tokens to generate with decoder")
         return parser
 
-    def __init__(self, encoder_type, encoder_opts, decoder_type, decoder_opts, start_token):
+    def __init__(self, encoder_type, encoder_opts, decoder_type, decoder_opts, start_token, nofact_token_id):
         super().__init__()
         self.embed = nn.Embedding(encoder_opts["input_size"], encoder_opts["embedding_size"])
         self.encoder = ENCODERS[encoder_type](encoder_opts)
         self.decoder = DECODERS[decoder_type](decoder_opts)
         self.start_token = start_token
+        self.nofact_token_id = nofact_token_id
 
 
     def forward(self, xs, xs_len, max=20, teacher_forcing=False, labels=None):
@@ -55,6 +58,11 @@ class PersonaExtractor(nn.Module):
 
         return torch.stack(output, dim=-1).reshape(B, len(output), -1)
   
+    def generate(self, xs, xs_len, max=20):
+        out = self.forward(xs, xs_len, max=max, teacher_forcing=False, labels=None)
+        gen_out = out.argmax(dim=-1)
+        return gen_out
+
     def train_step(self, batch, optimizer, criterion, device):
 
         xs, ys, xs_len, ys_len = batch
@@ -78,17 +86,32 @@ class PersonaExtractor(nn.Module):
         ys = ys.to(device)
 
         with torch.no_grad():
-            output = self.forward(xs, xs_len, max=ys.size(1))
+            output = self.forward(xs, xs_len, max=ys.size(1), teacher_forcing=True, labels=ys)
             loss = criterion(output.transpose(1,2), ys)
-            pred = output.argmax(dim=-1)
 
-        ys, pred = ys.cpu(), pred.cpu()
-        acc = pred.where(ys != criterion.ignore_index, torch.tensor(-1)).eq(ys.view_as(pred)).sum().item() / len(ys)
+        pred = output.cpu().argmax(dim=-1)
+
+        ys = ys.cpu()
+        ignore_mask = ys.ne(criterion.ignore_index)
+
+        # Classification accuracy
+        pred_fact = pred[:, 0] != self.nofact_token_id  # Check for nofact-token, directly at the start-of-sentence
+        label_fact = ys[:, 0] != self.nofact_token_id
+        fact_correct = label_fact.eq(pred_fact)
+        fact_acc = fact_correct.sum().item() / ys.shape[0]
+
+        # LM accuracy
+        token_correct = ys.eq(pred) * ignore_mask
+        token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
 
         stats = {
             "loss": loss.item(),
-            "acc": acc
+            # "classification_loss": classification_loss.item(),
+            # "lm_loss": loss.item(),
+            "acc": token_acc,
+            "token_pred?iction_acc": token_acc
         }
+        logging.debug("Valid: loss {:.4f}, cls_acc {:.4f}, lm_acc {:.4f}".format(loss, fact_acc, token_acc))
 
         return stats
 
@@ -149,7 +172,7 @@ if __name__ == '__main__':
                 }[encoder_type],
                 "output_size": I
             }
-            basemodel = PersonaExtractor(encoder_type, encoder_opts, decoder_type, decoder_opts, start_token=1)
+            basemodel = PersonaExtractor(encoder_type, encoder_opts, decoder_type, decoder_opts, start_token=1, nofact_token_id=2)
 
             for dev in ["cpu", "mps"]:
                 model = copy.deepcopy(basemodel).to(dev)

@@ -124,17 +124,19 @@ def train_with_args(config, args):
 
         if args.model == "seq2seq":
             vocab = Vocab()
-            tokenizer = vocab.text2vec
+            tokenizer = vocab
             if args.persona_identifier == "token":
-                vocab.add_special_tokens(PERSONA_TOKENS)
+                vocab.add_special_tokens(PERSONA_TOKENS + [NO_FACT_TOKEN])
             traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
             vocab.add_to_vocab(traindata.corpus())
             if args.vocab_size is not None:
                 vocab.cut_vocab(max_tokens=args.vocab_size)
-            vocab.save("vocab_{}".format(len(vocab)))
+            vocab.save_vocab(args.checkpoint_dir + "vocab_{}".format(len(vocab)))
             pad_token_id = vocab.tok2ind[PAD_TOKEN]
             start_token_id = vocab.tok2ind[START_TOKEN]
+            nofact_token_id = vocab.convert_tokens_to_ids([NO_FACT_TOKEN])[0]
             vocab_size = len(vocab)
+            batch_format = "padded_sequences"
             encoder_opts = {
                 "input_size": vocab_size,
                 "embedding_size": args.embedding_size,
@@ -152,7 +154,7 @@ def train_with_args(config, args):
                 }[args.encoder],
                 "output_size": vocab_size
             }
-            model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id)
+            model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id, nofact_token_id=nofact_token_id)
             criterion = nn.NLLLoss()
 
         elif args.model[-4:] == "bart":
@@ -181,9 +183,18 @@ def train_with_args(config, args):
             model.bart.resize_token_embeddings(len(tokenizer))
 
         with FileLock(os.path.expanduser(args.datadir + ".lock")): 
-            traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
-            validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.valid_samples)
-            testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+            traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, 
+                len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples,
+                batch_format=batch_format, batch_pad_id=pad_token_id
+            )
+            validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, 
+                len_context=2, persona_identifier=args.persona_identifier, max_samples=args.valid_samples,
+                batch_format=batch_format, batch_pad_id=pad_token_id
+            )
+            testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, 
+                len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples,
+                batch_format=batch_format, batch_pad_id=pad_token_id
+            )
 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")

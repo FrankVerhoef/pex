@@ -48,15 +48,20 @@ def eval_bart_text(model, dataset, tokenizer, decoder_max):
         batch = dataset.batchify([dataset[i]])
 
         with torch.no_grad():
-            pred_tokens = model.generate(
-                batch['input_ids'], 
-                min_length=2,
-                max_new_tokens=decoder_max, 
-                num_beams=1,
-                do_sample=False,
-                # generation_config=model.gen_config
-            )[0]
-        pred_fact = pred_tokens[2] != model.nofact_token_id
+            if dataset.batch_format == "huggingface":
+                pred_tokens = model.generate(
+                    batch['input_ids'], 
+                    min_length=2,
+                    max_new_tokens=decoder_max, 
+                    num_beams=1,
+                    do_sample=False,
+                    # generation_config=model.gen_config
+                )[0]
+                pred_fact = pred_tokens[2] != model.nofact_token_id
+
+            elif dataset.batch_format == "padded_sequences":
+                pred_tokens = model.generate(batch[0], batch[2], max=decoder_max)[0]              
+                pred_fact = pred_tokens[0] != tokenizer.tok2ind[END_TOKEN]
 
         if pred_fact:
             pred_persona = tokenizer.decode(pred_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True)

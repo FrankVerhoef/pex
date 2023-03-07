@@ -32,6 +32,9 @@ class Vocab:
     def __len__(self):
         return len(self.ind2tok)
 
+    def __call__(self, s):
+        return self.tokenize(s)
+
     def tokenize(self, s):
         tokens = [
             (token.text.lower() if not token.text in self.special_tokens else token.text) 
@@ -39,20 +42,23 @@ class Vocab:
         ]
         return tokens
 
-    def text2vec(self, s):
+    def encode(self, s, append_end_token=False):
         tokens = self.tokenize(s)
-        vec = self.tok2vec(tokens)
+        if append_end_token:
+            tokens.append(self.tok2ind[END_TOKEN])
+        vec = self.convert_tokens_to_ids(tokens)
         return vec
 
-    def vec2text(self, vec):
-        tokens = self.vec2tok(vec)
-        text = ' '.join(tokens)
+    def decode(self, vec, **kwargs):
+        skip_special_tokens = kwargs.get('skip_special_tokens', False)
+        tokens = self.convert_ids_to_tokens(vec)
+        text = ' '.join([token for token in tokens if (skip_special_tokens == False) or (token not in self.special_tokens)])
         return text
 
-    def tok2vec(self, tokens):
+    def convert_tokens_to_ids(self, tokens):
         return [self.tok2ind.get(t, self.tok2ind['<UNK>']) for t in tokens]
 
-    def vec2tok(self, vec):
+    def convert_ids_to_tokens(self, vec):
         return [self.ind2tok[i] for i in vec]
 
     def add_special_tokens(self, extra_tokens):
@@ -96,12 +102,12 @@ class Vocab:
             self.tok2ind = {self.ind2tok[i]: i for i in range(len(self.ind2tok))}
             print("Reduced vocab to {} tokens, covering {:.1%} of corpus".format(max_tokens, sum(self.count.values()) / token_count))
 
-    def save(self, path):
+    def save_vocab(self, path):
         with open(path, "w") as f:
             f.write(json.dumps(self.ind2tok) + '\n')
             f.write(json.dumps(list(self.special_tokens)) + '\n')
 
-    def load(self, path):
+    def load_vocab(self, path):
         self.__init__()
         with open(path, "r") as f:
             try:
@@ -127,8 +133,9 @@ if __name__ == "__main__":
     voc = Vocab()
     voc.add_special_tokens(['<P0>', '<P1>'])
     voc.add_to_vocab(sentences)
+    print(voc(sentences[0]))
 
-    voc.save('testvocab')
-    voc.load('testvocab')
+    voc.save_vocab('testvocab')
+    voc.load_vocab('testvocab')
 
     print(voc.tok2ind)

@@ -20,8 +20,9 @@ persona_prefix = {
     1: "<other>"
 }
 
-NO_FACT_TOKEN = '<nofact>'
+# NO_FACT_TOKEN = '<nofact>'
 # NO_FACT_TOKEN = '</s>'
+NO_FACT_TOKEN = ''
 
 class MSC_Turns(Dataset):
     
@@ -31,8 +32,9 @@ class MSC_Turns(Dataset):
         group.add_argument("--persona_identifier", type=str, default=None, choices=[None, "token", "text"], help="Whether to insert persona identifier before each dialogue turn")
         return parser
 
-    def __init__(self, path, tokenizer, len_context=2, persona_identifier=None, max_samples=None):
+    def __init__(self, path, tokenizer, len_context=2, persona_identifier=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Turns, self).__init__()
+        assert batch_format in ["huggingface", "padded_sequences"]
         dialogues = []
         with open(path, "r") as f:
             for line in f:
@@ -41,6 +43,8 @@ class MSC_Turns(Dataset):
         self.persona_prefix = persona_identifier == "text"
         self.len_context = len_context
         self.tokenizer = tokenizer
+        self.batch_format = batch_format
+        self.batch_pad_id = batch_pad_id
         self.turns, self.personas = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
@@ -105,8 +109,24 @@ class MSC_Turns(Dataset):
         # seperate source and target sequences
         utterances, personas = zip(*data)
 
-        # tokenize and convert to tensor
-        encoded = self.tokenizer(text=utterances, text_target=personas, padding=True, return_tensors="pt")
+        if self.batch_format == "huggingface":
+
+            encoded = self.tokenizer(text=utterances, text_target=personas, padding=True, return_tensors="pt")
+
+        elif self.batch_format == "padded_sequences":
+
+            # tokenize and convert to tensor
+            xs = [torch.tensor(self.tokenizer.encode(t, append_end_token=True), dtype=torch.long) for t in utterances]
+            ys = [torch.tensor(self.tokenizer.encode(p, append_end_token=True), dtype=torch.long) for p in personas]
+            
+            # determine lengths of source and target
+            xs_len = [len(x) for x in xs]
+            ys_len = [len(y) for y in ys]
+
+            # pad sequences
+            padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=self.batch_pad_id)
+            padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=self.batch_pad_id)
+            encoded = padded_xs, padded_ys, xs_len, ys_len
 
         return encoded
 
