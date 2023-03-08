@@ -14,7 +14,7 @@ from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
 from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
-from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
+from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN, END_TOKEN
 
 import utils.logging as logging
@@ -61,10 +61,10 @@ def eval_bart_text(model, dataset, tokenizer, decoder_max):
 
             elif dataset.batch_format == "padded_sequences":
                 pred_tokens = model.generate(batch[0], batch[2], max=decoder_max)[0]              
-                pred_fact = pred_tokens[0] != tokenizer.tok2ind[END_TOKEN]
+                pred_fact = pred_tokens[1] != model.nofact_token_id
 
         if pred_fact:
-            pred_persona = tokenizer.decode(pred_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+            pred_persona = tokenizer.decode(pred_tokens.tolist(), skip_special_tokens=True)
         else:
             pred_persona = NO_FACT_TOKEN
 
@@ -76,7 +76,7 @@ def eval_bart_text(model, dataset, tokenizer, decoder_max):
             pred_personas.append(pred_persona)
         else:
             target_facts.append(0)
-        pred_facts.append(pred_fact)
+        pred_facts.append(pred_fact.int().item())
 
     target_facts = torch.tensor(target_facts)
     pred_facts =  torch.tensor(pred_facts)

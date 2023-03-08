@@ -1,0 +1,59 @@
+from tokenizers import (
+    models,
+    normalizers,
+    pre_tokenizers,
+    processors,
+    trainers,
+    Tokenizer,
+)
+
+from tokenizers.processors import TemplateProcessing
+
+START_TOKEN = '<SOS>'
+END_TOKEN = '<EOS>'
+UNK_TOKEN = '<UNK>'
+PAD_TOKEN = '<PAD>'
+SPECIAL_TOKENS = [START_TOKEN, END_TOKEN, UNK_TOKEN, PAD_TOKEN]
+
+def train_tokenizer(corpus, max_size):
+
+    tokenizer = Tokenizer(models.WordPiece(unk_token=UNK_TOKEN))
+
+    tokenizer.normalizer = normalizers.Sequence([
+        normalizers.NFD(), 
+        normalizers.Lowercase(), 
+        normalizers.StripAccents()]
+    )
+
+    tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
+        pre_tokenizers.WhitespaceSplit(), 
+        pre_tokenizers.Punctuation()
+    ])
+
+    trainer = trainers.WordPieceTrainer(vocab_size=max_size, special_tokens=SPECIAL_TOKENS)
+    tokenizer.train_from_iterator(corpus, trainer=trainer)
+
+    tokenizer.post_processor = TemplateProcessing(
+        single=START_TOKEN + " $A " + END_TOKEN,
+        special_tokens=[
+            (START_TOKEN, tokenizer.token_to_id(START_TOKEN)),
+            (END_TOKEN, tokenizer.token_to_id(END_TOKEN)),
+        ],
+    )
+
+    return tokenizer
+
+
+if __name__ == '__main__':
+
+    from dataset.msc_summary import MSC_Turns
+
+    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
+    msc_turns = MSC_Turns(datapath, tokenizer=None, len_context=3, persona_identifier=None, max_samples=1000)
+
+    tokenizer = train_tokenizer(msc_turns.corpus(), max_size=4000)
+    enc = tokenizer.encode("Hey, how are you doing?")
+    print(enc.ids)
+    print(tokenizer.encode("").ids)
+
+

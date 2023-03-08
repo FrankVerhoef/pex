@@ -22,8 +22,8 @@ from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
-from dataset.msc_summary_hf import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
-from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN
+from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
+from dataset.tokenizer import train_tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN, START_TOKEN
 from utils.general import savename
 import utils.logging as logging
 from run.eval import eval_bart_text
@@ -123,19 +123,24 @@ def train_with_args(config, args):
         logging.info("Set up {} to {}".format(args.model, args.task))
 
         if args.model == "seq2seq":
-            vocab = Vocab()
-            tokenizer = vocab
+            tokenizer = train_tokenizer(
+                corpus=MSC_Turns(
+                    args.datadir + args.traindata, 
+                    tokenizer=None, 
+                    len_context=2, 
+                    persona_identifier=args.persona_identifier, 
+                    max_samples=args.train_samples
+                ),
+                max_size=args.vocab_size
+            )
             if args.persona_identifier == "token":
-                vocab.add_special_tokens(PERSONA_TOKENS + [NO_FACT_TOKEN])
-            traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
-            vocab.add_to_vocab(traindata.corpus())
-            if args.vocab_size is not None:
-                vocab.cut_vocab(max_tokens=args.vocab_size)
-            vocab.save_vocab(args.checkpoint_dir + "vocab_{}".format(len(vocab)))
-            pad_token_id = vocab.tok2ind[PAD_TOKEN]
-            start_token_id = vocab.tok2ind[START_TOKEN]
-            nofact_token_id = vocab.convert_tokens_to_ids([NO_FACT_TOKEN])[0]
-            vocab_size = len(vocab)
+                tokenizer.add_special_tokens(PERSONA_TOKENS + [NO_FACT_TOKEN])
+            else:
+                assert tokenizer.token_to_id(NO_FACT_TOKEN) != tokenizer.token_to_id(UNK_TOKEN), "NO_FACT_TOKEN must be known token"
+            pad_token_id = tokenizer.token_to_id(PAD_TOKEN)
+            eos_token_id = tokenizer.token_to_id(END_TOKEN)
+            nofact_token_id = tokenizer.token_to_id(NO_FACT_TOKEN) if NO_FACT_TOKEN != '' else eos_token_id
+            vocab_size = tokenizer.get_vocab_size()
             batch_format = "padded_sequences"
             encoder_opts = {
                 "input_size": vocab_size,
@@ -154,8 +159,8 @@ def train_with_args(config, args):
                 }[args.encoder],
                 "output_size": vocab_size
             }
-            model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=start_token_id, nofact_token_id=nofact_token_id)
-            criterion = nn.NLLLoss()
+            model = PersonaExtractor(args.encoder, encoder_opts, args.decoder, decoder_opts, start_token=eos_token_id, nofact_token_id=nofact_token_id)
+            criterion = nn.NLLLoss(ignore_index=pad_token_id)
 
         elif args.model[-4:] == "bart":
 
@@ -306,7 +311,7 @@ if __name__ == "__main__":
     }[args.model].add_cmdline_args(parser)
 
     if args.model == "seq2seq":
-        Vocab.add_cmdline_args(parser)
+        parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
 
     # Add cmdline arguments for task/dataset
     parser = {

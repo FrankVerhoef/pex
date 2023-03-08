@@ -7,32 +7,45 @@ from torch.utils.data import Dataset
 import json
 import random
 
-from dataset.vocab import END_TOKEN, PAD_TOKEN
+import utils.logging as logging
 
 persona_token = {
     0: '<self>',
     1: '<other>'
 }
 PERSONA_TOKENS = list(persona_token.values())
-# extra_tokens = ['<P0>', '<P1>']
+
+persona_prefix = {
+    0: "<self>",
+    1: "<other>"
+}
+
+# NO_FACT_TOKEN = '<nofact>'
+# NO_FACT_TOKEN = '</s>'
+NO_FACT_TOKEN = ''
+BATCH_FORMATS = ["huggingface", "padded_sequences"]
 
 class MSC_Turns(Dataset):
     
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Turns')
-        group.add_argument("--persona_tokens", type=bool, default=False, help="Whether to insert special persona token before each dialogue turn")
+        group.add_argument("--persona_identifier", type=str, default=None, choices=[None, "token", "text"], help="Whether to insert persona identifier before each dialogue turn")
         return parser
 
-    def __init__(self, path, text2vec, len_context=2, persona_tokens=False, max_samples=None):
+    def __init__(self, path, tokenizer, len_context=2, persona_identifier=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Turns, self).__init__()
+        assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         dialogues = []
         with open(path, "r") as f:
             for line in f:
                 dialogues.append(json.loads(line))
-        self.persona_tokens = persona_tokens
+        self.persona_tokens = persona_identifier == "token"
+        self.persona_prefix = persona_identifier == "text"
         self.len_context = len_context
-        self.text2vec = text2vec
+        self.tokenizer = tokenizer
+        self.batch_format = batch_format
+        self.batch_pad_id = batch_pad_id
         self.turns, self.personas = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
@@ -43,6 +56,7 @@ class MSC_Turns(Dataset):
                 
                 turn = []
                 for j in range(self.len_context):
+                    # p = '<P{}>'.format((self.len_context - j) % 2)
                     p = (self.len_context - j) % 2
                     t = d["dialog"][i+j].get("text","")
                     turn.append((p, t))
@@ -51,7 +65,7 @@ class MSC_Turns(Dataset):
                 if "persona_text" in d["dialog"][i+self.len_context-1].keys():
                     persona = d["dialog"][i+self.len_context-1]["persona_text"] + ' '
                 else:
-                    persona = ''
+                    persona = NO_FACT_TOKEN
                 personas.append(persona)
         
         if max_samples is not None:
@@ -66,15 +80,21 @@ class MSC_Turns(Dataset):
         return len(self.turns)
     
     def __getitem__(self, i):
+        """
+        #TODO: decide whether to include space between persona token and utterance
+        """
+        last_p, last_t = self.turns[i][-1]
         if self.persona_tokens:
-            turns = ' '.join([persona_token[p] + ' ' + t for p, t in self.turns[i]])
+            history = ' '.join([persona_token[p] + ' ' + t for p, t in self.turns[i][:-1]])
+            last_utterance = persona_token[last_p] + ' ' + last_t
+        elif self.persona_prefix:
+            history = ' '.join([persona_prefix[p] + ' ' + t for p, t in self.turns[i][:-1]])
+            last_utterance = persona_prefix[last_p] + ' ' + last_t
         else:
-            turns = ' '.join([t for _, t in self.turns[i]])
-        return turns, self.personas[i]
+            history = ' '.join([t for p, t in self.turns[i][:-1]])
+            last_utterance = last_t
+        return history + ' ' + last_utterance, self.personas[i]
     
-    def get_turn(self, i):
-        return self.turns[i]
-
     def corpus(self):
         return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
 
@@ -82,44 +102,58 @@ class MSC_Turns(Dataset):
         """
             Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
-        assert self.text2vec is not None, "Need to specify function to vectorize dataset"
+        assert self.tokenizer is not None, "Need to specify function to vectorize dataset"
 
         # seperate source and target sequences
-        turns, personas = zip(*data)
+        utterances, personas = zip(*data)
 
-        # tokenize and convert to tensor
-        xs = [torch.tensor(self.text2vec(t + END_TOKEN), dtype=torch.long) for t in turns]
-        ys = [torch.tensor(self.text2vec(p + END_TOKEN), dtype=torch.long) for p in personas]
-        
-        # determine lengths of source and target
-        xs_len = [len(x) for x in xs]
-        ys_len = [len(y) for y in ys]
+        if self.batch_format == "huggingface":
 
-        # pad sequences
-        pad_value = self.text2vec(PAD_TOKEN)[0]
-        padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=pad_value)
-        padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=pad_value)
+            encoded = self.tokenizer(text=utterances, text_target=personas, padding=True, return_tensors="pt")
 
-        return padded_xs, padded_ys, xs_len, ys_len
+        elif self.batch_format == "padded_sequences":
+
+            # tokenize and convert to tensor
+            xs = [torch.tensor(self.tokenizer.encode(t).ids, dtype=torch.long) for t in utterances]
+            ys = [torch.tensor(self.tokenizer.encode(p).ids, dtype=torch.long) for p in personas]
+            
+            # determine lengths of source and target
+            xs_len = [len(x) for x in xs]
+            ys_len = [len(y) for y in ys]
+
+            # pad sequences
+            padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=self.batch_pad_id)
+            padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=self.batch_pad_id)
+            encoded = padded_xs, padded_ys, xs_len, ys_len
+
+        return encoded
 
 
 if __name__ == "__main__":
+
+    from transformers import AutoTokenizer
+    from dataset.tokenizer import train_tokenizer
+    logging.set_log_level("SPAM")
+    logging.info("Unit test {}".format(__file__))
+
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
 
     # Test extraction of dialogue turns and persona sentences
-    text2vec = lambda x: random.choices(range(10), k=len(x.split()))  # return list with random integers
-    msc_turns = MSC_Turns(datapath, text2vec, len_context=2, persona_tokens=True)
+    # tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
+    tokenizer = train_tokenizer(
+        corpus=MSC_Turns(datapath, tokenizer=None, max_samples=1000).corpus(),
+        max_size=4000
+    )
 
-    batch = [msc_turns[i] for i in range(10)]
+    msc_turns = MSC_Turns(datapath, tokenizer, len_context=3, persona_identifier="token", batch_format="padded_sequences", batch_pad_id=-1)
 
-    for item in batch:
-        print(item[0])
-        print(item[1])
-        print('-'*40)
+    data = [msc_turns[i] for i in range(10)]
 
-    padded_xs, padded_ys, xs_len, ys_len = msc_turns.batchify(batch)
-    print(padded_xs)
-    print(padded_ys)
-    print(xs_len)
-    print(ys_len)
-    print('-' * 40)
+    for item in data:
+        logging.verbose(item[0])
+        logging.verbose(item[1])
+        logging.verbose('-'*40)
+
+    batch = msc_turns.batchify(data)
+    # logging.info("Components of batch: {}".format(str(batch.keys())))
+    logging.spam(batch)
