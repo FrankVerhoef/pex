@@ -2,6 +2,8 @@
 ### General util functions
 ###
 
+import torch
+
 def savename(args):
     name = args.save
     if args.model == "bert":
@@ -28,3 +30,5 @@ def print_grads(model):
     for p in model.parameters():
         print("\t{:<30} {}".format(str(p.grad.shape), p.grad.norm()))
 
+def padded_tensor(tensorlist, pad_value=0):
+    return torch.nn.utils.rnn.pad_sequence(tensorlist, batch_first=True, padding_value=pad_value)
