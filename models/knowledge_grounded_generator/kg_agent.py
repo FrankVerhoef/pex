@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
+import random
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, GenerationConfig, PretrainedConfig
 
 from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph, blacklist
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
@@ -235,7 +236,20 @@ class KnowledgeGroundedAgent:
     def batch_act(self, obs_batch, model, device):
         batch = self.batchify(obs_batch)
         L = batch['inputs'].input_ids.shape[1]
-        output = model.generate(batch, device)
+        model.to(device)
+        input_ids = batch['inputs'].input_ids.to(device)
+        kg_input = model._kg_input(batch, device)
+        output = model.generate(
+            inputs=input_ids,
+            kg_input=kg_input,
+            generation_config=GenerationConfig(
+                pad_token_id=model.gpt2model.config.eos_token_id,
+                use_cache=True,
+                num_beams=3,
+                do_sample=True,
+                max_new_tokens=10
+            )
+        )
         output_gen = output[:, L:]
         responses = self.model_tokenizer.batch_decode(output_gen)
         return responses
@@ -245,6 +259,7 @@ def get_parser():
     parser = argparse.ArgumentParser(description="Train a KnowledgeGroundedDecoder")
 
     # General, loading, saving, logging
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--loglevel", type=str, default="DEBUG", choices=logging.get_all_levels())    
     parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "mps", "cuda"])
@@ -270,6 +285,8 @@ if __name__ == "__main__":
 
     parser = get_parser()
     args = parser.parse_known_args()[0]
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     parser = KnowledgeGroundedAgent.add_cmdline_args(parser)
     parser = KnowledgeGroundedDecoder.add_cmdline_args(parser)
@@ -282,7 +299,7 @@ if __name__ == "__main__":
     tokenizer.pad_token = tokenizer.eos_token
     # tokenizer.add_special_tokens({"pad_token": '<PAD>'})
     agent = KnowledgeGroundedAgent(vars(args), tokenizer)
-    model = KnowledgeGroundedDecoder(vars(args), tokenizer)
+    model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
     model.to(args.device)
     criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -292,12 +309,18 @@ if __name__ == "__main__":
         "labels": ["Your family is important since birth"],
     }
     obs2 = {
-        "text": "Why do you play soccer?", # I think is is a very rough game. I prefer to play tennis.",
+        "text": "Shall we play soccer?", # I think is is a very rough game. I prefer to play tennis.",
         "labels": ["It is fun and a great sport to play as a team"],
     }
+    obs3 = {
+        "text": "The dinner was great, but now I want to go home.", 
+        "labels": ["Yes, the food was delicious"],
+    }
+
     observed = agent.observe(obs)
     observed2 = agent.observe(obs2)
-    obs_batch = [observed, observed2]
+    observed3 = agent.observe(obs3)
+    obs_batch = [observed3, observed2]
     # print("OBSERVATION")
     # print(obs_batch)
 

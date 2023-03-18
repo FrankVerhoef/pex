@@ -5,9 +5,13 @@ import torch.nn.functional as F
 
 from torch_scatter import scatter_max, scatter_mean, scatter_add
 from transformers import GPT2LMHeadModel
-from transformers.generation.logits_process import LogitsProcessor, LogitsProcessorList
+from transformers import PreTrainedModel
+from transformers.utils import ModelOutput
+
 from utils import logging
 
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 class KG_loss(nn.Module):
 
@@ -194,7 +198,10 @@ class KG_Probs_Model(nn.Module):
 
         # Calculate probability for concepts
         index = kg_mem["vocab_map"].unsqueeze(1).expand(concept_probs.size(0), concept_probs.size(1), -1)
-        concept_probs_vocab = concept_probs.gather(2, index)
+        if concept_probs.shape[2] > 0:
+            concept_probs_vocab = concept_probs.gather(2, index)
+        else:
+            concept_probs_vocab = torch.zeros_like(index, device=lm_probs.device)
         invalid_mask = (kg_mem["map_mask"] == 0).unsqueeze(1)
         concept_probs_vocab.masked_fill_(invalid_mask, 0)
 
@@ -259,59 +266,29 @@ class KG_Probs_Model(nn.Module):
         return total_concept_score
 
 
-class KG_LogitsProcessor(LogitsProcessor):
+@dataclass
+class KGModelOutput(ModelOutput):
 
-    def __init__(self, gpt2model, kg_probs, inputs, triple_repr, kg_mem):
+    logits: torch.FloatTensor = None
+    gate: torch.FloatTensor = None
+    lm_probs: torch.FloatTensor = None
+    concept_probs_vocab: torch.FloatTensor = None
+    triple_prob: torch.FloatTensor = None
+    is_concept: torch.FloatTensor = None
+    triple_repr: Optional[torch.FloatTensor] = None
+    past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+    last_hidden_state: Optional[torch.FloatTensor] = None
+    attentions: Optional[Tuple[torch.FloatTensor]] = None
 
-        self.gpt2model = gpt2model
-        self.kg_probs = kg_probs
-        self.triple_repr = triple_repr
-        self.kg_mem = kg_mem
-        self.call_count = 0
-        self.input_repr = self.gpt2model(
-            input_ids = inputs.input_ids[:, :-1],
-            attention_mask = inputs.attention_mask[:, :-1],
-            output_hidden_states=True
-        )
-        self.attention_mask = inputs.attention_mask
-        self.call_count += 1
 
-    def __call__(self, input_ids, scores):
-
-        self.call_count += 1
-        logging.spam("Call: {}\n{}".format(self.call_count, input_ids))
-        B = input_ids.shape[0]
-        dev = input_ids.device
-
-       # Calculate probabilities according to language model
-        lm_output = self.gpt2model(
-            input_ids=input_ids[:, -1].view(-1, 1), 
-            past_key_values=self.input_repr.past_key_values,
-            attention_mask=self.attention_mask,
-            output_hidden_states=True, 
-            output_attentions=True
-        )
-        lm_hidden_states = lm_output.hidden_states[-1]
-        lm_probs = nn.functional.softmax(scores, dim=-1).unsqueeze(dim=1)
-
-        # Combine hidden states with knowledge triples to calculate adjusted probabilities
-        probs, gate, concept_probs_vocab, triple_prob, is_concept = self.kg_probs(lm_hidden_states, lm_probs, self.triple_repr, self.kg_mem)
-
-        self.input_repr = lm_output
-        self.attention_mask = torch.cat([self.attention_mask, torch.ones((B, 1), dtype=torch.long, device=dev)], dim=1)
-        kg_scores = probs.exp().squeeze()
-
-        return kg_scores    # Note: these are not typical logits, but combined and exponentiated probabilities
-    
-
-class KnowledgeGroundedDecoder(nn.Module):
+class KnowledgeGroundedDecoder(PreTrainedModel):
 
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('KnowledgeGroundedDecoder')
-        group.add_argument(
-            '--embedding_size', type=int, default=768, help='Hidden size.'
-        )
+        # group.add_argument(
+        #     '--embedding_size', type=int, default=768, help='Hidden size.'
+        # )
         group.add_argument(
             "--num_hops",
             type=int,
@@ -363,12 +340,13 @@ class KnowledgeGroundedDecoder(nn.Module):
         )
         return parser
     
-    def __init__(self, opt, tokenizer):
-        super().__init__()
+    def __init__(self, opt, tokenizer, config):
+        super().__init__(config)
 
         # Model and parameters for language model
         self.gpt2model = GPT2LMHeadModel.from_pretrained("gpt2")
         self.gpt2model.resize_token_embeddings(len(tokenizer))
+        self.softmax = nn.Softmax(dim=-1)
         if opt['fixed_lm'] == True:
             self.fix_lm_weights()
 
@@ -377,7 +355,7 @@ class KnowledgeGroundedDecoder(nn.Module):
 
         # Graph convolutionel network to calculate concept probabilities
         self.kg_probs = KG_Probs_Model(
-            opt['embedding_size'],
+            self.gpt2model.config.n_embd,   # This should match with the size of the last hidden layer of the language model
             opt['num_hops'],
             opt['gamma'],
             opt['aggregate_method'],
@@ -385,59 +363,144 @@ class KnowledgeGroundedDecoder(nn.Module):
             opt['gate']
         )
 
-        # Gate to control generation via language model or knowledge model
-        self.fixed_gate_value = opt['gate']
-        self.gate_linear = nn.Linear(opt['embedding_size'], 1)
-        self.sigmoid = nn.Sigmoid()
-
         logging.info("Initialized KnowledgeGroundedDecoder")
 
     def fix_lm_weights(self):
         for param in self.gpt2model.parameters():
             param.requires_grad = False
     
-    def forward(self, inputs, decoder_input, kg_input):
+    
+    def forward(self, 
+        input_ids, 
+        attention_mask=None, 
+        past_key_values=None, 
+        triple_repr=None, 
+        kg_input=None,
+        return_dict=True,
+        output_attentions=True,
+        output_hidden_states=True
+    ):
 
         logging.debug("Forward KnowledgeGroundedDecoder")
 
         # Calculate probabilities according to language model
+        position_ids = None
+        if attention_mask is not None:
+            position_ids = (torch.cumsum(attention_mask, dim=1) - 1).clip(0)
+            position_ids = position_ids[:, -input_ids.shape[1]:]
         lm_output = self.gpt2model(
-            input_ids=torch.cat([inputs.input_ids, decoder_input.input_ids], dim=1),
-            attention_mask=torch.cat([inputs.attention_mask, decoder_input.attention_mask], dim=1),
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            return_dict=return_dict,
             output_hidden_states=True, 
-            output_attentions=True
+            output_attentions=output_attentions
         )
         lm_hidden_states = lm_output.hidden_states[-1]
         lm_probs = self.softmax(lm_output.logits)
 
         # Calculate triple representations
-        triple_repr = self.triple_encoder(kg_input)
-        kg_input["triple_repr"] = triple_repr
+        if triple_repr is None:
+            triple_repr = self.triple_encoder(kg_input)
 
         # Combine hidden states with knowledge triples to calculate adjusted probabilities
-        probs, gate, concept_probs_vocab, triple_prob, is_concept = self.kg_probs(lm_hidden_states, lm_probs, kg_input)
-
-        return probs, gate, lm_probs, concept_probs_vocab, triple_prob, is_concept
-    
-
-    def generate(self, batch, device):
-    
-        logging.debug("NEW Generate KnowledgeGroundedDecoder")
-     
-        inputs = batch['inputs'].to(device)
-        kg_mem = self._kg_input(batch, device)
-        triple_repr = self.triple_encoder(kg_mem)
-        kg_logits_processor = KG_LogitsProcessor(self.gpt2model.transformer, self.kg_probs, inputs, triple_repr, kg_mem)
-
-        preds = self.gpt2model.generate(
-            **inputs,
-            num_beams=1, do_sample=False,
-            return_dict_in_generate=False,
-            output_scores=False,
-            max_new_tokens=20,
-            logits_processor=LogitsProcessorList([kg_logits_processor]), 
+        probs, gate, concept_probs_vocab, triple_prob, is_concept = self.kg_probs(
+            lm_hidden_states, lm_probs, triple_repr, kg_input
         )
-        return preds
+
+        return KGModelOutput(
+            logits=probs,
+            gate=gate,
+            lm_probs=lm_probs,
+            concept_probs_vocab=concept_probs_vocab,
+            triple_prob=triple_prob, 
+            is_concept=is_concept,
+            triple_repr=triple_repr,
+            past_key_values=lm_output.past_key_values,
+            last_hidden_state=lm_hidden_states,
+            attentions=lm_output.attentions
+        )
+
+    ###
+    ### Functions to adjust generation behaviour
+    ###
+
+    def _expand_inputs_for_generation(self, expand_size=1, is_encoder_decoder=False, input_ids=None, **model_kwargs):
+
+        logging.verbose("EXPAND INPUTS {}".format(expand_size))
+
+        # Apply regular expansion to inouts and model_kwargs
+        input_ids, model_kwargs = super()._expand_inputs_for_generation(
+            expand_size=expand_size,
+            is_encoder_decoder=is_encoder_decoder,
+            input_ids=input_ids,
+            **model_kwargs
+        )
+
+        # Also apply expansion to triple_repr and kg_input
+        triple_repr = model_kwargs.get('triple_repr')
+        kg_input = model_kwargs.get('kg_input')
+        if triple_repr is not None:
+            model_kwargs['triple_repr'] = triple_repr.repeat_interleave(expand_size, dim=0)
+        elif kg_input is not None:
+            model_kwargs['kg_input'] = {
+                k: v.repeat_interleave(expand_size, dim=0)
+                for k, v in kg_input.items()
+            }
+
+        return input_ids, model_kwargs
+
+    def prepare_inputs_for_generation(self, decoder_input_ids, past_key_values=None, attention_mask=None, **kwargs):
+
+        logging.verbose("PREPARE INPUTS {}".format(decoder_input_ids))
+
+        # If past_key_values are present, only use last token as decoder input
+        if past_key_values is not None:
+            decoder_input_ids = decoder_input_ids[:, -1:]
+
+        # Calculate triple representation if not previously done (only needed once)
+        triple_repr = kwargs.get("triple_repr")
+        kg_input = kwargs.get("kg_input")
+        if triple_repr is None:
+            triple_repr = self.triple_encoder(kg_input)
+        
+        return {
+            "input_ids": decoder_input_ids,
+            "past_key_values": past_key_values,
+            "attention_mask": attention_mask,
+            "triple_repr": triple_repr,
+            "kg_input": kg_input
+        }
+
+    def _update_model_kwargs_for_generation(self, outputs, model_kwargs, is_encoder_decoder=False, standardize_cache_format=False, ):
+
+        # Apply regular update function (e.g. to update past_key_values)
+        model_kwargs = super()._update_model_kwargs_for_generation(outputs, model_kwargs, is_encoder_decoder, standardize_cache_format)
+
+        # Make sure triple_repr is included in model_kwargs, so it is only calculated once
+        model_kwargs['triple_repr'] = outputs.triple_repr
+
+        return model_kwargs
+
+    @staticmethod
+    def _reorder_cache(past, beam_idx):
+        # Shape of past: Tuple of num_layers
+        # Each layer has 2 (or more) tensors of shape B, num_layers, sequence_length, key_dim (=64)
+        logging.verbose("REORDER {}".format(beam_idx))
+
+        reordered_past = ()
+        for layer_past in past:
+            # cached cross_attention states don't have to be reordered -> they are always the same
+            reordered_past += (
+                tuple(past_state.index_select(0, beam_idx) for past_state in layer_past[:2]) + layer_past[2:],
+            )
+   
+        return reordered_past
+
+    ###
+    ### Train step and validation step
+    ###
 
     def _kg_input(self, batch, device):
         return {
@@ -459,7 +522,11 @@ class KnowledgeGroundedDecoder(nn.Module):
         kg_input = self._kg_input(batch, device)
     
         optimizer.zero_grad()
-        probs, gate, lm_probs, concept_probs, triple_prob, is_concept = self.forward(inputs, labels, kg_input)
+        probs, gate, lm_probs, concept_probs, triple_prob, is_concept = self.forward(
+            input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
+            attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
+            kg_input=kg_input
+        )
         loss, gen_loss, triple_loss, gate_loss = criterion(
             probs, labels.input_ids, 
             triple_prob, batch['triple_labels'], 
