@@ -619,18 +619,3 @@ if __name__ == "__main__":
     }
     encoding = triple_encoder(kg_input)
     print(encoding)
-
-
-
-    opt = {
-        "num_hops": 2,
-        "aggregate_method": "max",
-        "alpha": 0.7,
-        "beta": 0.2,
-        "gamma": 0.33,
-        'fixed_lm': False,
-        'block_src': False,
-        'gate': 0.0 # Gate=0.0 means output should be equal to regular GPT2 output
-    }
-
-    model = KnowledgeGroundedDecoder(opt, tokenizer, config=PretrainedConfig())
