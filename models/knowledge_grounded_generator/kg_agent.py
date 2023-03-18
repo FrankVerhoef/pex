@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch import optim
 import random
 
-from transformers import AutoTokenizer, GenerationConfig, PretrainedConfig
+from transformers import AutoTokenizer, GenerationConfig, PretrainedConfig, BatchEncoding
 
 from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph, blacklist
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
@@ -182,12 +182,12 @@ class KnowledgeGroundedAgent:
             return_attention_mask=True,
             return_tensors='pt'
         )
-        batch['labels'] = self.model_tokenizer(
-            [obs['labels'][0] for obs in obs_batch], 
-            padding=True, 
-            return_attention_mask=True,
-            return_tensors='pt'
-        )
+        # tokenizer uses LEFT padding, but need to use RIGHT padding for labels
+        tokenized_labels = [self.model_tokenizer.encode(obs['labels'][0], return_tensors='pt').squeeze() for obs in obs_batch]
+        batch['labels'] = BatchEncoding({
+            'input_ids': padded_tensor(tokenized_labels, pad_value=self.model_tokenizer.pad_token_id),
+            'attention_mask': padded_tensor([torch.ones(len(sequence), dtype=torch.long) for sequence in tokenized_labels], pad_value=0)
+        })
         batch['concept_ids'] = padded_tensor(
             [obs['concept_token_ids'] for obs in obs_batch],
             pad_value=self.model_tokenizer.pad_token_id          
@@ -321,23 +321,27 @@ if __name__ == "__main__":
     observed2 = agent.observe(obs2)
     observed3 = agent.observe(obs3)
     obs_batch = [observed3, observed2]
-    # print("OBSERVATION")
-    # print(obs_batch)
+    print("OBSERVATION")
+    print(obs_batch)
 
-    # batch = agent.batchify(obs_batch)
-    # print("BATCH")
-    # print(batch)
+    batch = agent.batchify(obs_batch)
+    print("BATCH")
+    print(batch)
 
-    # output = model.train_step(batch, optimizer, criterion, args.device)
-    # print("OUTPUT")
-    # print(output)
+    output = model.train_step(batch, optimizer, criterion, args.device)
+    print("TRAIN_STEP")
+    print(output)
 
-    responses = agent.batch_act(obs_batch, model, args.device)
-    print("ACT")
-    for context, response in zip(obs_batch, responses):
-        print("Context:  ", context['text'])
-        print("Label:    ", context['labels'])
-        print("Response: ", response)
-        print("-" * 20)
+    output = model.valid_step(batch, criterion, args.device)
+    print("VALID_STEP")
+    print(output)
+
+    # responses = agent.batch_act(obs_batch, model, args.device)
+    # print("ACT")
+    # for context, response in zip(obs_batch, responses):
+    #     print("Context:  ", context['text'])
+    #     print("Label:    ", context['labels'])
+    #     print("Response: ", response)
+    #     print("-" * 20)
 
 

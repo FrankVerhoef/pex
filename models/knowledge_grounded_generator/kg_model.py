@@ -4,8 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch_scatter import scatter_max, scatter_mean, scatter_add
-from transformers import GPT2LMHeadModel
-from transformers import PreTrainedModel
+from transformers import GPT2LMHeadModel, PreTrainedModel, BatchEncoding
 from transformers.utils import ModelOutput
 
 from utils import logging
@@ -522,15 +521,16 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         kg_input = self._kg_input(batch, device)
     
         optimizer.zero_grad()
-        probs, gate, lm_probs, concept_probs, triple_prob, is_concept = self.forward(
+        output = self.forward(
             input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
             attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
             kg_input=kg_input
         )
+        len_labels = labels.input_ids.shape[1]
         loss, gen_loss, triple_loss, gate_loss = criterion(
-            probs, labels.input_ids, 
-            triple_prob, batch['triple_labels'], 
-            gate, batch['gate_labels']
+            output.logits[:, -len_labels:], labels.input_ids, 
+            output.triple_prob[:, -len_labels:], batch['triple_labels'], 
+            output.gate[:, -len_labels:], batch['gate_labels']
         )
         logging.debug("Train: loss {:.4f}, gen_loss {:.4f}, triple_loss {:.4f} gate_loss {:.4f}".format(
             loss.mean().item(), 
@@ -552,20 +552,24 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         kg_input = self._kg_input(batch, device)
     
         with torch.no_grad():
-            probs, gate, lm_probs, concept_probs, triple_prob, is_concept = self.forward(inputs, labels, kg_input)
+            output = self.forward(
+                input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
+                attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
+                kg_input=kg_input
+            )
+            len_labels = labels.input_ids.shape[1]
             loss, gen_loss, triple_loss, gate_loss = criterion(
-                probs, labels.input_ids, 
-                triple_prob, batch['triple_labels'], 
-                gate, batch['gate_labels']
+                output.logits[:, -len_labels:], labels.input_ids, 
+                output.triple_prob[:, -len_labels:], batch['triple_labels'], 
+                output.gate[:, -len_labels:], batch['gate_labels']
             )
 
-        pred = probs.cpu().argmax(dim=-1)
-        ys = ys.cpu()
-        ignore_mask = ys.ne(criterion.ignore_index)
+        pred = output.logits[:, -len_labels:].cpu().argmax(dim=-1)
+        labels = labels.to("cpu")
 
         # LM accuracy
-        token_correct = ys.eq(pred) * ignore_mask
-        token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
+        token_correct = labels['input_ids'].eq(pred) * labels['attention_mask']
+        token_acc = (token_correct.sum() / labels['attention_mask'].sum()).item() 
 
         stats = {
             "loss": loss.mean().item(),
@@ -616,52 +620,17 @@ if __name__ == "__main__":
     encoding = triple_encoder(kg_input)
     print(encoding)
 
-    ###
-    ### Test KnowledgeGroundedDecoder
-    ###
 
-    e = torch.tensor(range(10)).unsqueeze(dim=1).expand(10,768).float()
-    embedding = nn.Embedding.from_pretrained(e)
-    num_hops=2
-
-    triple_encoder = TripleEncoder(embedding=embedding, num_hops=num_hops)
-
-    # Change inner parameters
-    r = torch.tensor(range(40)).unsqueeze(dim=1).expand(40,768).float()
-    triple_encoder.relation_embd = nn.Embedding.from_pretrained(r)
-    triple_encoder.W_s = nn.ModuleList([nn.Identity() for _ in range(num_hops)]) 
-    triple_encoder.W_r = nn.ModuleList([nn.Identity() for _ in range(num_hops)]) 
-    triple_encoder.W_n = nn.ModuleList([nn.Identity() for _ in range(num_hops)]) 
-
-    c2i = {"A":0, "F":1, "G": 2, "N": 3, "B": 4, "H":5, "C":6, "E":7, "D":8, "K":9}
-    i2c = ["A", "F", "G", "N", "B", "H", "C", "E", "D", "K"]
-
-    concept_ids = torch.tensor([[0, 1, 4, 5, 7, 2, 8, 6]])
-    relation_ids = torch.tensor([[1, 1, 2, 3, 1, 1, 2, 3, 3]])
-    head_ids = torch.tensor([[0, 0, 0, 0, 1, 4, 4, 3, 2]])
-    tail_ids = torch.tensor([[1, 4, 3, 2, 5, 6, 3, 7, 7]])
-    triple_labels = torch.tensor([[0, 1, 1, 1, 0, 1, 1, 0, 1]])
-    kg_input = {
-        'concept_ids': concept_ids,
-        'relation_ids': relation_ids,
-        'head_idx': head_ids,
-        'tail_idx': tail_ids,
-        'triple_labels': triple_labels
-    }
-
-    encoding = triple_encoder(kg_input)
-    print(encoding)
 
     opt = {
         "num_hops": 2,
         "aggregate_method": "max",
-        "embedding_size": 768,
-        "max_concepts": 400,
-        "max_triples": 800,
         "alpha": 0.7,
         "beta": 0.2,
         "gamma": 0.33,
-        'hidden_size': 256,
+        'fixed_lm': False,
+        'block_src': False,
+        'gate': 0.0 # Gate=0.0 means output should be equal to regular GPT2 output
     }
 
-    # model = KnowledgeGroundedDecoder(opt)
+    model = KnowledgeGroundedDecoder(opt, tokenizer, config=PretrainedConfig())
