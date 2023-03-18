@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch_scatter import scatter_max, scatter_mean, scatter_add
-from transformers import GPT2LMHeadModel, PreTrainedModel, BatchEncoding
+from transformers import GPT2LMHeadModel, PreTrainedModel
 from transformers.utils import ModelOutput
 
 from utils import logging
@@ -85,16 +85,16 @@ class TripleEncoder(nn.Module):
             E = embedding dimension for concepts (is same as embedding dim for relations)
         """
         logging.debug("Forward TripleEncoder")
-        logging.debug("\tEncoding {} concepts and {} relations".format(kg_input['concept_ids'].shape, kg_input['relation_ids'].shape))
+        logging.debug("\tEncoding {} concepts and {} relations".format(kg_input.concept_ids.shape, kg_input.relation_ids.shape))
 
         # Embed concepts and relations
-        concept_repr = self.concept_embd(kg_input['concept_ids'])
-        rel_repr = self.relation_embd(kg_input['relation_ids'])
+        concept_repr = self.concept_embd(kg_input.concept_ids)
+        rel_repr = self.relation_embd(kg_input.relation_ids)
 
         # Calculate GCN representations for concepts and relations, using 'num_hops' layers
-        head_idx = kg_input['head_idx']
-        tail_idx = kg_input['tail_idx']
-        triple_labels = kg_input['triple_labels']
+        head_idx = kg_input.head_idx
+        tail_idx = kg_input.tail_idx
+        triple_labels = kg_input.triple_labels
         node_repr, rel_repr = self._comp_gcn(
             concept_repr, 
             rel_repr,
@@ -187,7 +187,7 @@ class KG_Probs_Model(nn.Module):
             self.triple_linear(triple_repr).transpose(1, 2)
         )
         triple_prob = self.sigmoid(triple_logits)
-        invalid_mask = (kg_mem["triple_labels"] == -1).unsqueeze(1)
+        invalid_mask = (kg_mem.triple_labels == -1).unsqueeze(1)
         triple_prob = triple_prob.masked_fill(invalid_mask, 0)
         # B x L x Mt
 
@@ -196,12 +196,12 @@ class KG_Probs_Model(nn.Module):
         concept_probs = self.softmax(concept_scores)
 
         # Calculate probability for concepts
-        index = kg_mem["vocab_map"].unsqueeze(1).expand(concept_probs.size(0), concept_probs.size(1), -1)
+        index = kg_mem.vocab_map.unsqueeze(1).expand(concept_probs.size(0), concept_probs.size(1), -1)
         if concept_probs.shape[2] > 0:
             concept_probs_vocab = concept_probs.gather(2, index)
         else:
             concept_probs_vocab = torch.zeros_like(index, device=lm_probs.device)
-        invalid_mask = (kg_mem["map_mask"] == 0).unsqueeze(1)
+        invalid_mask = (kg_mem.map_mask == 0).unsqueeze(1)
         concept_probs_vocab.masked_fill_(invalid_mask, 0)
 
         # Determine gate value (which determines whether to take token from language model or select a concept)
@@ -224,7 +224,7 @@ class KG_Probs_Model(nn.Module):
         concept_label: B x Mc
         triple_label: B x Mt
         '''
-        distance = kg_mem["distances"]
+        distance = kg_mem.distances
 
         # Init binary vector with source concept == 1 and others 0, and expand to size B, L, M
         concept_scores = []
@@ -232,18 +232,18 @@ class KG_Probs_Model(nn.Module):
         init_mask = torch.zeros_like(distance).unsqueeze(1).expand(*concept_size).to(distance.device).float()
         init_mask.masked_fill_((distance == 0).unsqueeze(1), 1)
         final_mask = init_mask.clone()
-        init_mask.masked_fill_((kg_mem["concept_labels"] == -1).unsqueeze(1), 0)
+        init_mask.masked_fill_((kg_mem.concept_labels == -1).unsqueeze(1), 0)
         concept_scores.append(init_mask)
 
-        head = kg_mem["head_idx"].unsqueeze(1).expand(triple_prob.size(0), triple_prob.size(1), -1)
-        tail = kg_mem["tail_idx"].unsqueeze(1).expand(triple_prob.size(0), triple_prob.size(1), -1)
+        head = kg_mem.head_idx.unsqueeze(1).expand(triple_prob.size(0), triple_prob.size(1), -1)
+        tail = kg_mem.tail_idx.unsqueeze(1).expand(triple_prob.size(0), triple_prob.size(1), -1)
 
         for _ in range(self.num_hops):
 
             # Calculate triple head score
             node_score = concept_scores[-1]
             triple_head_score = node_score.gather(2, head)
-            triple_head_score.masked_fill_((kg_mem["triple_labels"] == -1).unsqueeze(1), 0)
+            triple_head_score.masked_fill_((kg_mem.triple_labels == -1).unsqueeze(1), 0)
             
             # Aggregate scores to tail nodes
             update_value = triple_head_score * self.gamma + triple_prob
@@ -252,7 +252,7 @@ class KG_Probs_Model(nn.Module):
                 scatter_max(update_value, tail, dim=-1, out=out)
             elif self.aggregate_method == "avg":
                 scatter_mean(update_value, tail, dim=-1, out=out)
-            out.masked_fill_((kg_mem["concept_labels"] == -1).unsqueeze(1), 0)           
+            out.masked_fill_((kg_mem.concept_labels == -1).unsqueeze(1), 0)           
             concept_scores.append(out)
              
         total_concept_score = final_mask
@@ -279,6 +279,38 @@ class KGModelOutput(ModelOutput):
     last_hidden_state: Optional[torch.FloatTensor] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
+
+@dataclass(frozen=True)
+class KG_Info:
+    concept_ids: torch.LongTensor
+    relation_ids: torch.LongTensor
+    distances: torch.LongTensor
+    head_idx: torch.LongTensor
+    tail_idx: torch.LongTensor
+    vocab_map: torch.LongTensor = None
+    map_mask: torch.LongTensor = None
+    concept_labels: torch.LongTensor = None
+    triple_labels: torch.LongTensor = None
+    gate_labels: torch.LongTensor = None
+
+    def to(self, device):
+        self.concept_ids.to(device),
+        self.relation_ids.to(device),
+        self.distances.to(device),
+        self.head_idx.to(device)
+        self.tail_idx.to(device)
+        self.vocab_map.to(device)
+        self.map_mask.to(device)
+        self.concept_labels.to(device)
+        self.triple_labels.to(device)
+        self.gate_labels.to(device)
+        return self
+
+    def repeat_interleave(self, expand_size, dim=0):
+        for attribute, value in self.__dict__.items():
+            if value is not None:
+                self.__dict__[attribute] = value.repeat_interleave(expand_size, dim=0)
+        return self
 
 class KnowledgeGroundedDecoder(PreTrainedModel):
 
@@ -443,10 +475,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         if triple_repr is not None:
             model_kwargs['triple_repr'] = triple_repr.repeat_interleave(expand_size, dim=0)
         elif kg_input is not None:
-            model_kwargs['kg_input'] = {
-                k: v.repeat_interleave(expand_size, dim=0)
-                for k, v in kg_input.items()
-            }
+            model_kwargs['kg_input'] = kg_input.repeat_interleave(expand_size, dim=0)
 
         return input_ids, model_kwargs
 
@@ -501,25 +530,13 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     ### Train step and validation step
     ###
 
-    def _kg_input(self, batch, device):
-        return {
-            'concept_ids': batch['concept_ids'].to(device),
-            'relation_ids': batch['relation_ids'].to(device),
-            'distances': batch['distances'].to(device),
-            'head_idx': batch['head_idx'].to(device),
-            'tail_idx': batch['tail_idx'].to(device),
-            'concept_labels': batch['concept_labels'].to(device),
-            'triple_labels': batch['triple_labels'].to(device),
-            'vocab_map': batch['vocab_map'].to(device),
-            'map_mask': batch['map_mask'].to(device)
-        }
-
     def train_step(self, batch, optimizer, criterion, device):
 
-        inputs = batch['inputs'].to(device)
-        labels = batch['labels'].to(device) 
-        kg_input = self._kg_input(batch, device)
-    
+        inputs, labels, kg_input = batch
+        inputs.to(device)
+        labels.to(device)
+        kg_input.to(device)
+
         optimizer.zero_grad()
         output = self.forward(
             input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
@@ -529,8 +546,8 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         len_labels = labels.input_ids.shape[1]
         loss, gen_loss, triple_loss, gate_loss = criterion(
             output.logits[:, -len_labels:], labels.input_ids, 
-            output.triple_prob[:, -len_labels:], batch['triple_labels'], 
-            output.gate[:, -len_labels:], batch['gate_labels']
+            output.triple_prob[:, -len_labels:], kg_input.triple_labels, 
+            output.gate[:, -len_labels:], kg_input.gate_labels
         )
         logging.debug("Train: loss {:.4f}, gen_loss {:.4f}, triple_loss {:.4f} gate_loss {:.4f}".format(
             loss.mean().item(), 
@@ -547,9 +564,10 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def valid_step(self, batch, criterion, device):
 
-        inputs = batch['inputs'].to(device)
-        labels = batch['labels'].to(device) 
-        kg_input = self._kg_input(batch, device)
+        inputs, labels, kg_input = batch
+        inputs.to(device)
+        labels.to(device)
+        kg_input.to(device)
     
         with torch.no_grad():
             output = self.forward(
@@ -560,8 +578,8 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
             len_labels = labels.input_ids.shape[1]
             loss, gen_loss, triple_loss, gate_loss = criterion(
                 output.logits[:, -len_labels:], labels.input_ids, 
-                output.triple_prob[:, -len_labels:], batch['triple_labels'], 
-                output.gate[:, -len_labels:], batch['gate_labels']
+                output.triple_prob[:, -len_labels:], kg_input.triple_labels, 
+                output.gate[:, -len_labels:], kg_input.gate_labels
             )
 
         pred = output.logits[:, -len_labels:].cpu().argmax(dim=-1)
@@ -590,7 +608,9 @@ if __name__ == "__main__":
     ###
     ### Test triple encoder
     ###
-    
+
+    from models.knowledge_grounded_generator.kg_agent import KG_Info
+
     e = torch.tensor(range(10)).unsqueeze(dim=1).expand(10,8).float()
     embedding = nn.Embedding.from_pretrained(e)
     num_hops=2
@@ -610,12 +630,14 @@ if __name__ == "__main__":
     head_idx = torch.tensor([[0, 0, 0, 0, 1, 4, 4, 3, 2]])
     tail_idx = torch.tensor([[1, 4, 3, 2, 5, 6, 3, 7, 7]])
     triple_labels = torch.tensor([[0, 1, 1, 1, 0, 1, 1, 0, 1]])
-    kg_input = {
-        'concept_ids': concept_ids,
-        'relation_ids': relation_ids,
-        'head_idx': head_idx,
-        'tail_idx': tail_idx,
-        'triple_labels': triple_labels
-    }
+    distances = torch.tensor([[0, 0, 0, 1, 1, 1, 2, 2, 2]])
+    kg_input = KG_Info(
+        concept_ids = concept_ids,
+        relation_ids = relation_ids,
+        distances=distances,
+        head_idx = head_idx,
+        tail_idx = tail_idx,
+        triple_labels = triple_labels
+    )
     encoding = triple_encoder(kg_input)
     print(encoding)

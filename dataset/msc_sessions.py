@@ -91,7 +91,7 @@ class MSC_Session(Dataset):
         return history, last_utterance
     
     def corpus(self):
-        return [' '.join([*self.__getitem__(i)]) for i in range(len(self.history))]
+        return [' '.join([*(self.__getitem__(i)[:2])]) for i in range(len(self.history))]
 
     def batchify(self, data):
         """
