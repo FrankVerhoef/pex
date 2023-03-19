@@ -6,7 +6,9 @@ import torch
 
 def savename(args):
     name = args.save
-    if args.model == "bert":
+    if args.model == "kg_gen":
+        name += "kgg"
+    elif args.model == "bert":
         name += "bert"
     elif args.model[-4:] == "bart":
         name += args.model
