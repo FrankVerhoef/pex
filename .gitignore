@@ -8,5 +8,8 @@ launch.json
 # Byte-compiled / optimized / DLL files
 *.py[cod]
 
+# Jupyter notebook checkpoints
+/notebooks/.ipynb_checkpoints/
+
 # MacOs
 .DS_Store
