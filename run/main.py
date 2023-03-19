@@ -17,16 +17,18 @@ from ray import air, tune
 from ray.tune.schedulers import ASHAScheduler, HyperBandScheduler
 
 import transformers
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
+from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
+from models.knowledge_grounded_generator.kg_agent import KG_enriched_MSC_Session
 from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.tokenizer import train_tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN, START_TOKEN
 from utils.general import savename
 import utils.logging as logging
-from run.eval import eval_bart_text
+from run.eval import eval_bart_text, eval_gen_text
 
 
 
@@ -201,6 +203,18 @@ def train_with_args(config, args):
                 batch_format=batch_format, batch_pad_id=pad_token_id
             )
 
+    elif args.task == "dialog":
+        logging.info("Set up {} to {}".format(args.model, args.task))
+        tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
+        tokenizer.pad_token = tokenizer.eos_token
+        with FileLock(os.path.expanduser(args.datadir + ".lock")): 
+            traindata = KG_enriched_MSC_Session(vars(args), args.datadir + args.traindata, tokenizer, max_samples=args.train_samples, batch_pad_id=tokenizer.pad_token_id)
+            validdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.validdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
+            testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
+        model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+        criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
         wandb.config.update(args)  # Converts args to a dictionary and logs it in wandb
@@ -242,7 +256,10 @@ def train_with_args(config, args):
         logging.info("Reloading model from {}".format(savepath))
         model.load_state_dict(torch.load(savepath))
         logging.info("Testing model with {}".format(args.testdata))
-        eval_stats = eval_bart_text(model.to("cpu"), testdata, tokenizer, decoder_max=args.decoder_max)
+        if args.model[-4:] == "bart":
+            eval_stats = eval_bart_text(model.to("cpu"), testdata, tokenizer, decoder_max=args.decoder_max)
+        elif args.model == "kg_gen":
+            eval_stats = eval_gen_text(model.to("cpu"), testdata, tokenizer, decoder_max=args.decoder_max, batch_size=4)
         report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
         logging.report(report)
 
@@ -263,12 +280,12 @@ def get_parser():
     parser.add_argument("--load", type=str, default="", help="filename of model to load")
     parser.add_argument("--save", type=str, default="", help="filename to save the model")
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
-    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify"])
+    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
     parser.add_argument("--do_grid_search", default=False, action='store_true')
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart"], help="Model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen"], help="Model")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
@@ -308,6 +325,7 @@ if __name__ == "__main__":
         "bert": PrefixBert,
         "bart": BartExtractor,
         "prefixbart": PrefixBart,
+        "kg_gen": KnowledgeGroundedDecoder,
     }[args.model].add_cmdline_args(parser)
 
     if args.model == "seq2seq":
@@ -316,7 +334,8 @@ if __name__ == "__main__":
     # Add cmdline arguments for task/dataset
     parser = {
         "classify": MSC_Turn_Facts,
-        "generate": MSC_Turns
+        "generate": MSC_Turns,
+        "dialog": KG_enriched_MSC_Session,
     }[args.task].add_cmdline_args(parser)
     
     args = parser.parse_args()

@@ -12,6 +12,55 @@ from utils import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+
+@dataclass(frozen=True)
+class KG_Info:
+    concept_ids: torch.LongTensor
+    relation_ids: torch.LongTensor
+    distances: torch.LongTensor
+    head_idx: torch.LongTensor
+    tail_idx: torch.LongTensor
+    vocab_map: torch.LongTensor = None
+    map_mask: torch.LongTensor = None
+    concept_labels: torch.LongTensor = None
+    triple_labels: torch.LongTensor = None
+    gate_labels: torch.LongTensor = None
+
+    def to(self, device):
+        self.concept_ids.to(device),
+        self.relation_ids.to(device),
+        self.distances.to(device),
+        self.head_idx.to(device)
+        self.tail_idx.to(device)
+        self.vocab_map.to(device)
+        self.map_mask.to(device)
+        self.concept_labels.to(device)
+        self.triple_labels.to(device)
+        self.gate_labels.to(device)
+        return self
+
+    def repeat_interleave(self, expand_size, dim=0):
+        for attribute, value in self.__dict__.items():
+            if value is not None:
+                self.__dict__[attribute] = value.repeat_interleave(expand_size, dim=0)
+        return self
+
+
+@dataclass
+class KGModelOutput(ModelOutput):
+
+    logits: torch.FloatTensor = None
+    gate: torch.FloatTensor = None
+    lm_probs: torch.FloatTensor = None
+    concept_probs_vocab: torch.FloatTensor = None
+    triple_prob: torch.FloatTensor = None
+    is_concept: torch.FloatTensor = None
+    triple_repr: Optional[torch.FloatTensor] = None
+    past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+    last_hidden_state: Optional[torch.FloatTensor] = None
+    attentions: Optional[Tuple[torch.FloatTensor]] = None
+
+
 class KG_loss(nn.Module):
 
     def __init__(self, ignore_index, invalid, alpha, beta):
@@ -265,61 +314,11 @@ class KG_Probs_Model(nn.Module):
         return total_concept_score
 
 
-@dataclass
-class KGModelOutput(ModelOutput):
-
-    logits: torch.FloatTensor = None
-    gate: torch.FloatTensor = None
-    lm_probs: torch.FloatTensor = None
-    concept_probs_vocab: torch.FloatTensor = None
-    triple_prob: torch.FloatTensor = None
-    is_concept: torch.FloatTensor = None
-    triple_repr: Optional[torch.FloatTensor] = None
-    past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    last_hidden_state: Optional[torch.FloatTensor] = None
-    attentions: Optional[Tuple[torch.FloatTensor]] = None
-
-
-@dataclass(frozen=True)
-class KG_Info:
-    concept_ids: torch.LongTensor
-    relation_ids: torch.LongTensor
-    distances: torch.LongTensor
-    head_idx: torch.LongTensor
-    tail_idx: torch.LongTensor
-    vocab_map: torch.LongTensor = None
-    map_mask: torch.LongTensor = None
-    concept_labels: torch.LongTensor = None
-    triple_labels: torch.LongTensor = None
-    gate_labels: torch.LongTensor = None
-
-    def to(self, device):
-        self.concept_ids.to(device),
-        self.relation_ids.to(device),
-        self.distances.to(device),
-        self.head_idx.to(device)
-        self.tail_idx.to(device)
-        self.vocab_map.to(device)
-        self.map_mask.to(device)
-        self.concept_labels.to(device)
-        self.triple_labels.to(device)
-        self.gate_labels.to(device)
-        return self
-
-    def repeat_interleave(self, expand_size, dim=0):
-        for attribute, value in self.__dict__.items():
-            if value is not None:
-                self.__dict__[attribute] = value.repeat_interleave(expand_size, dim=0)
-        return self
-
 class KnowledgeGroundedDecoder(PreTrainedModel):
 
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('KnowledgeGroundedDecoder')
-        # group.add_argument(
-        #     '--embedding_size', type=int, default=768, help='Hidden size.'
-        # )
         group.add_argument(
             "--num_hops",
             type=int,
@@ -359,8 +358,8 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         )
         group.add_argument(
             "--fixed_lm",
-            type=bool,
             default=False,
+            action='store_true',
             help="Freeze the weights of the GPT2 language model during training."
         )
         group.add_argument(
@@ -369,6 +368,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
             default=True,
             help="Blocking source concepts in reasoning stimulates generation of new related concepts."
         )
+        group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
         return parser
     
     def __init__(self, opt, tokenizer, config):
@@ -393,7 +393,6 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
             opt['block_src'],
             opt['gate']
         )
-
         logging.info("Initialized KnowledgeGroundedDecoder")
 
     def fix_lm_weights(self):
@@ -412,7 +411,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         output_hidden_states=True
     ):
 
-        logging.debug("Forward KnowledgeGroundedDecoder")
+        logging.verbose("Forward KnowledgeGroundedDecoder")
 
         # Calculate probabilities according to language model
         position_ids = None
@@ -481,7 +480,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def prepare_inputs_for_generation(self, decoder_input_ids, past_key_values=None, attention_mask=None, **kwargs):
 
-        logging.verbose("PREPARE INPUTS {}".format(decoder_input_ids))
+        logging.verbose("PREPARE INPUTS shape {}".format(decoder_input_ids.shape))
 
         # If past_key_values are present, only use last token as decoder input
         if past_key_values is not None:
@@ -502,6 +501,8 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         }
 
     def _update_model_kwargs_for_generation(self, outputs, model_kwargs, is_encoder_decoder=False, standardize_cache_format=False, ):
+
+        logging.verbose("UPDATE KWARGS {}".format(model_kwargs.keys()))
 
         # Apply regular update function (e.g. to update past_key_values)
         model_kwargs = super()._update_model_kwargs_for_generation(outputs, model_kwargs, is_encoder_decoder, standardize_cache_format)
@@ -591,7 +592,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
         stats = {
             "loss": loss.mean().item(),
-            "token_prediction_acc": token_acc
+            "acc": token_acc
         }
 
         logging.debug("Valid: loss {:.4f}, gen_loss {:.4f}, triple_loss {:.4f} gate_loss {:.4f}".format(

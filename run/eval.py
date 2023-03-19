@@ -9,13 +9,15 @@ from tqdm import tqdm
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, multiclass_accuracy, binary_f1_score, bleu_score
 
 import transformers
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PretrainedConfig, GenerationConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
 from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
+from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder
 from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN, END_TOKEN
+from models.knowledge_grounded_generator.kg_agent import KG_enriched_MSC_Session
 
 import utils.logging as logging
 
@@ -33,6 +35,52 @@ def eval(model, dataloader, vocab, decoder_max):
 
         print_predictions(xs, ys, pred, vocab)
 
+def eval_gen_text(model, testdata, tokenizer, decoder_max, batch_size=1):
+
+    model.eval()
+    target_responses = []
+    pred_responses = []
+
+    for start_index in range(0, len(testdata), batch_size):
+        data = [testdata[start_index + i] for i in range(batch_size) if start_index + i < len(testdata)]
+        inputs, labels, kg_input = testdata.batchify(data)
+        L = inputs.input_ids.shape[1]
+
+        with torch.no_grad():
+            output = model.generate(
+                inputs=inputs.input_ids,
+                kg_input=kg_input,
+                generation_config=GenerationConfig(
+                    pad_token_id=model.gpt2model.config.eos_token_id,
+                    use_cache=True,
+                    num_beams=3,
+                    do_sample=True,
+                    max_new_tokens=decoder_max
+                )
+            )
+        responses = tokenizer.batch_decode(output[:, L:])
+        print("Generated {} responses".format(len(responses)))
+        print_responses(data, responses)
+        target_responses.extend([labels[0] for _, labels, _ in data])
+        pred_responses.extend(responses)
+
+    try:
+        bleu_4 = bleu_score(target_responses, pred_responses).item()
+    except ValueError:
+        bleu_4 = 0
+
+    stats = {
+        "bleu": bleu_4
+    }
+
+    return stats
+
+def print_responses(data, responses):
+    for (x, y, _), p in zip(data, responses):
+        print('context:    ', x)
+        print('target:     ', y)
+        print('prediction: ', p)
+        print('-' * 40)
 
 def eval_bart_text(model, dataset, tokenizer, decoder_max):
 
@@ -195,18 +243,18 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--load", type=str, default='', help="filename of model to load") #, required=True)
-    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify"])
+    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
     parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())
     parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
 
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart"], help="Encoder model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen"], help="Encoder model")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
     parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/test.txt", help="Dataset file for testing")
     parser.add_argument("--test_samples", type=int, default=10, help="Max number of test samples")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
 
     args = parser.parse_known_args()[0]
 
@@ -224,13 +272,15 @@ if __name__ == "__main__":
         "seq2seq": PersonaExtractor,
         "bert": PrefixBert,
         "bart": BartExtractor,
-        "prefixbart": PrefixBart
+        "prefixbart": PrefixBart,
+        "kg_gen": KnowledgeGroundedDecoder,
     }[args.model].add_cmdline_args(parser)
 
     # Add cmdline arguments for task/dataset
     parser = {
         "classify": MSC_Turn_Facts,
-        "generate": MSC_Turns
+        "generate": MSC_Turns,
+        "dialog": KG_enriched_MSC_Session,
     }[args.task].add_cmdline_args(parser)
 
     args = parser.parse_args()
@@ -303,12 +353,19 @@ if __name__ == "__main__":
                 )
             model.bart.resize_token_embeddings(len(tokenizer))
 
+        testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
+        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=True, collate_fn=testdata.batchify)
+
+
+    elif args.task == "dialog":
+        tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
+        tokenizer.pad_token = tokenizer.eos_token
+        testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
+        model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+
     if args.load != '':
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
         model.load_state_dict(torch.load(args.checkpoint_dir + args.load))
-
-    testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
-    test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=True, collate_fn=testdata.batchify)
 
     if args.model == 'bert':
         eval_stats = eval_bert(model, test_loader, tokenizer)
@@ -323,4 +380,7 @@ if __name__ == "__main__":
         logging.report(report)
     elif args.model == 'seq2seq':
         eval(model, test_loader, vocab, decoder_max=args.decoder_max)
+    elif args.model == "kg_gen":
+        eval_stats = eval_gen_text(model, testdata, tokenizer, decoder_max=args.decoder_max, batch_size=args.batch_size)
+        logging.report(eval_stats)
 

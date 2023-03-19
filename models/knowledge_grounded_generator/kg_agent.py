@@ -1,13 +1,11 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch import optim
 import random
 from dataclasses import dataclass
 
 from transformers import AutoTokenizer, GenerationConfig, PretrainedConfig, BatchEncoding
 
-from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph, blacklist
+from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss, KG_Info
 from utils import logging
 from utils.general import padded_tensor
@@ -23,6 +21,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         Add CLI arguments.
         """
         # Add custom arguments only for this model.
+        parser = super().add_cmdline_args(parser)
         group = parser.add_argument_group('KG enriched MSC dataset')
         group.add_argument(
             '--kg-datadir', 
@@ -69,12 +68,12 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
         return parser
 
-    def __init__(self, opt, path, model_tokenizer, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, opt, path, model_tokenizer, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super().__init__(
             path, 
             model_tokenizer, 
-            speaker_prefixes=speaker_prefixes, 
-            include_persona=include_persona, 
+            speaker_prefixes=opt['speaker_prefixes'],
+            include_persona=opt['include_persona'], 
             max_samples=max_samples, 
             batch_format=batch_format, 
             batch_pad_id=batch_pad_id
@@ -118,17 +117,17 @@ class KG_enriched_MSC_Session(MSC_Session):
         return text, [label], kg_info
 
     def _get_kg_info(self, text, labels=None):
-        logging.debug('Get KG info')
+        logging.verbose('Get KG info')
 
         kg_info = dict()
         if labels is None:
             labels = []
-        logging.debug("Text  : {}".format(text))
-        logging.debug("Labels: {}".format(labels))
+        logging.verbose("Text  : {}".format(text))
+        logging.verbose("Labels: {}".format(labels))
 
         # Match input text and label with concepts in knowledge graph
         concepts = self.kg.match_mentioned_concepts(text, ' '.join(labels), self.overlapping_concepts)
-        logging.debug("Concepts: {}:{} + {}:{}".format(
+        logging.verbose("Concepts: {}:{} + {}:{}".format(
             len(concepts['source_concepts']), 
             concepts['source_concepts'], 
             len(concepts['target_concepts']), 
@@ -151,7 +150,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         filtered_data = self.kg.filter_directed_triple(related_concepts, max_concepts=self.max_concepts, max_triples=self.max_triples)
         del related_concepts
 
-        logging.spam("Related concepts {}: {}".format(
+        logging.verbose("Related concepts {}: {}".format(
             len(filtered_data['concept_ids']), 
             self.kg.formatted_concepts_string(filtered_data, 10)
         ))
@@ -181,7 +180,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         kg_info['tail_idx'] = torch.LongTensor(filtered_data['tail_idx'])
         kg_info['triple_labels'] = torch.LongTensor(filtered_data['triple_labels'])
 
-        logging.spam("Relations {}: {}".format(
+        logging.verbose("Relations {}: {}".format(
             len(kg_info['head_idx']),
             self.kg.formatted_triples_string(filtered_data, 5)
         ))
@@ -236,9 +235,9 @@ def batch_act(obs_batch, model, tokenizer, device, collate_fn):
         generation_config=GenerationConfig(
             pad_token_id=model.gpt2model.config.eos_token_id,
             use_cache=True,
-            num_beams=3,
-            do_sample=True,
-            max_new_tokens=10
+            num_beams=1,
+            do_sample=False,
+            max_new_tokens=20
         )
     )
     output_gen = output[:, L:]
@@ -296,64 +295,35 @@ if __name__ == "__main__":
         vars(args), 
         datapath, 
         tokenizer, 
-        speaker_prefixes=None, 
-        include_persona=False, 
         max_samples=None, 
         batch_format="huggingface", 
-        batch_pad_id=-tokenizer.pad_token_id
+        batch_pad_id=tokenizer.pad_token_id
     )
     model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
-    model.to(args.device)
     criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     # Test extraction of dialogue turns and persona sentences
     # msc_turns = MSC_Session(datapath, tokenizer, speaker_prefixes=['<self>', '<other>'], include_persona=True, batch_format="huggingface", batch_pad_id=-1)
-
     # data = [msc_turns[i] for i in range(10)]
-    # for item in data:
-    #     logging.verbose(item[0])
-    #     logging.verbose(item[1])
-    #     logging.verbose('-'*40)
+
     data = [dataset[i] for i in range(5)]
     for item in data:
         logging.verbose(item[0])
         logging.verbose(item[1])
         logging.verbose('-'*40)
-    # obs = {
-    #     "text": "I like my mother and sister. It is good to be with them.", #We often go out together to the park, or to a restaurant",
-    #     "labels": ["Your family is important since birth"],
-    # }
-    # obs2 = {
-    #     "text": "Shall we play soccer?", # I think is is a very rough game. I prefer to play tennis.",
-    #     "labels": ["It is fun and a great sport to play as a team"],
-    # }
-    # obs3 = {
-    #     "text": "The dinner was great, but now I want to go home.", 
-    #     "labels": ["Yes, the food was delicious"],
-    # }
-
-    # observed = dataset.observe(obs)
-    # observed2 = dataset.observe(obs2)
-    # observed3 = dataset.observe(obs3)
-    # obs_batch = [observed3, observed2]
-    # print("OBSERVATION")
-    # print(obs_batch)
 
     batch = dataset.batchify(data)
-    print("BATCH")
-    print(batch)
+    logging.spam("BATCH\n{}".format(batch))
 
-    # output = model.train_step(batch, optimizer, criterion, args.device)
-    # print("TRAIN_STEP")
-    # print(output)
+    output = model.train_step(batch, optimizer, criterion, args.device)
+    logging.report("Train_step output: {}".format(output))
 
     output = model.valid_step(batch, criterion, args.device)
-    print("VALID_STEP")
-    print(output)
+    logging.report("Valid_step output: {}".format(output))
 
     responses = batch_act(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
-    print("ACT")
+    print("GENERATE")
     for (text, label, kg_info), response in zip(data, responses):
         print("Context:  ", text)
         print("Label:    ", label)

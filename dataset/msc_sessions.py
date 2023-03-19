@@ -43,15 +43,15 @@ class MSC_Session(Dataset):
         all_history, all_next_utterance = [], []
         
         for d in dialogues:
-            turns = d["dialog"]
-            personas = d["personas"]
+            turns = d.get("dialog", [])
+            personas = d.get("personas", None)
             num_turns = len(turns)
             if num_turns < 2:
                 continue
             for len_history in range(1, num_turns):
                 
-                if self.include_persona:
-                    # Include the persona sentences corresponding to the last speaker in the dialog
+                if self.include_persona and personas is not None:
+                    # Include the persona sentences corresponding to the last speaker in the dialog (who has ID=0, representing the bot)
                     p = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
                     history = [(0, t) for t in personas[p]]
                 else:
