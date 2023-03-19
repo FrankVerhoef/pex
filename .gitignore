@@ -1,15 +1,19 @@
 # User defined
-/data/
 /checkpoints/
-/wandb/
+/data/
 /logs/
-launch.json
+/slurm/outputs/
+/wandb/
+
 
 # Byte-compiled / optimized / DLL files
 *.py[cod]
 
 # Jupyter notebook checkpoints
-/notebooks/.ipynb_checkpoints/
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
 
 # MacOs
 .DS_Store
