@@ -207,7 +207,7 @@ def train_with_args(config, args):
         logging.info("Set up {} to {}".format(args.model, args.task))
         tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
         tokenizer.pad_token = tokenizer.eos_token
-        with FileLock(os.path.expanduser(args.datadir + ".lock")): 
+        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             traindata = KG_enriched_MSC_Session(vars(args), args.datadir + args.traindata, tokenizer, max_samples=args.train_samples, batch_pad_id=tokenizer.pad_token_id)
             validdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.validdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
             testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
