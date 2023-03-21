@@ -14,13 +14,20 @@
 module purge
 module load 2022
 module load Anaconda3/2022.05
+module load CUDA/11.7.0
 
 source activate pex
 
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
+mkdir "$TMPDIR"/checkpoints
+
 srun python -u run/main.py \
-        --device gpu  \
-	--datadir ./data/ \
-	--kg-datadir ./data/kg_data/ \
+        --device cuda  \
+	--datadir "$TMPDIR"/data/ \
+	--kg-datadir "$TMPDIR"/data/kg_data/ \
+        --checkpoint_dir "$TMPDIR"/checkpoints/ \
 	--task dialog  \
         --model kg_gen  \
         --kg kg.graph-sm  \
@@ -37,4 +44,7 @@ srun python -u run/main.py \
         --epochs 1  \
         --save test  \
         --loglevel INFO  \
-        --logdir ./logs/  \
+        --logdir "$TMPDIR"/logs/  \
+
+cp "$TMPDIR"/logs/* ./logs
+cp "$TMPDIR"/checkpoints/* ./checkpoints
