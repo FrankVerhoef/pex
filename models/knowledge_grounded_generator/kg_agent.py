@@ -26,7 +26,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         group.add_argument(
             '--kg-datadir', 
             type=str, 
-            default='/users/FrankVerhoef/Programming/Project_AI/ParlAI/data/kg_data/', 
+            default='./data/kg_data/', 
             help='dir for knowledge graph data'
         )
         group.add_argument(
