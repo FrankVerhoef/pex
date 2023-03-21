@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "pex"
+version = "0.1.0"
+description = "Persona Extractor"
+authors = ["Frank Verhoef <fsa.verhoef@chello.nl>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9.16"
+numpy = "^1.24.2"
+torch = "^2.0.0"
+torchvision = "^0.15.1"
+torchaudio = "^2.0.1"
+transformers = "^4.27.1"
+networkx = "^3.0"
+spacy = "^3.5.1"
+wandb = "^0.14.0"
+pandas = "^1.5.3"
+torcheval = "^0.0.6"
+filelock = "^3.10.0"
+
+[[tool.poetry.source]]
+name = "torch-scatter"
+url = "https://data.pyg.org/whl/torch-2.0.0+cpu.html"
+default = false
+secondary = false
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
