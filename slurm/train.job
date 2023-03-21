@@ -2,7 +2,7 @@
 
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --job-name=Train PEX
+#SBATCH --job-name=Train_PEX
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=3
 #SBATCH --time=00:15:00
@@ -18,8 +18,10 @@ module load Anaconda3/2022.05
 source activate pex
 
 srun python -u run/main.py \
-        --device cpu  \
-        --task dialog  \
+        --device gpu  \
+	--datadir ./data/ \
+	--kg-datadir ./data/kg_data/ \
+	--task dialog  \
         --model kg_gen  \
         --kg kg.graph-sm  \
         --batch_size 16  \
@@ -34,5 +36,5 @@ srun python -u run/main.py \
         --decoder_max 25  \
         --epochs 1  \
         --save test  \
-        --loglevel VERBOSE  \
+        --loglevel INFO  \
         --logdir ./logs/  \
