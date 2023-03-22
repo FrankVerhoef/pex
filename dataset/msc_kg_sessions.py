@@ -1,12 +1,9 @@
 import torch
-from torch import optim
-import random
-from dataclasses import dataclass
 
-from transformers import AutoTokenizer, GenerationConfig, PretrainedConfig, BatchEncoding
+from transformers import BatchEncoding
 
 from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph
-from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss, KG_Info
+from models.knowledge_grounded_generator.kg_model import KG_Info
 from utils import logging
 from utils.general import padded_tensor
 
@@ -26,7 +23,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         group.add_argument(
             '--kg-datadir', 
             type=str, 
-            default='/users/FrankVerhoef/Programming/Project_AI/ParlAI/data/kg_data/', 
+            default='/users/FrankVerhoef/Programming/PEX/data/kg_data/', 
             help='dir for knowledge graph data'
         )
         group.add_argument(
@@ -38,7 +35,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         group.add_argument(
             '--kg', 
             type=str, 
-            default='kg.graph', 
+            default='kg.graph-sm', 
             help='file with knowledge graph'
         )
         group.add_argument(

@@ -23,7 +23,7 @@ from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import BertClassifier, PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
-from models.knowledge_grounded_generator.kg_agent import KG_enriched_MSC_Session
+from dataset.msc_kg_sessions import KG_enriched_MSC_Session
 from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.tokenizer import train_tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN, START_TOKEN
 from utils.general import savename
