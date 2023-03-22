@@ -606,11 +606,66 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
 if __name__ == "__main__":
 
+    import argparse
+    import random
+    from torch import optim
+    from transformers import AutoTokenizer, PretrainedConfig, GenerationConfig
+    from dataset.msc_kg_sessions import KG_enriched_MSC_Session
+
+    def get_parser():
+
+        parser = argparse.ArgumentParser(description="Train a KnowledgeGroundedDecoder", conflict_handler='resolve')
+
+        # General, loading, saving, logging
+        parser.add_argument("--seed", type=int, default=42, help="Random seed")
+        parser.add_argument("--loglevel", type=str, default="DEBUG", choices=logging.get_all_levels())
+        parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "mps", "cuda"])
+        
+        # Training
+        parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+        parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
+
+        return parser
+
+    def batch_act(obs_batch, model, tokenizer, device, collate_fn):
+        inputs, labels, kg_info = collate_fn(obs_batch)
+        L = inputs.input_ids.shape[1]
+        model.to(device)
+        input_ids = inputs.input_ids.to(device)
+        kg_input = kg_info.to(device)
+        output = model.generate(
+            inputs=input_ids,
+            kg_input=kg_input,
+            generation_config=GenerationConfig(
+                pad_token_id=model.gpt2model.config.eos_token_id,
+                use_cache=True,
+                num_beams=1,
+                do_sample=False,
+                max_new_tokens=20
+            )
+        )
+        output_gen = output[:, L:]
+        responses = tokenizer.batch_decode(output_gen)
+        return responses
+
+    parser = get_parser()
+    args = parser.parse_known_args()[0]
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    parser = KG_enriched_MSC_Session.add_cmdline_args(parser)
+    parser = KnowledgeGroundedDecoder.add_cmdline_args(parser)
+
+    args = parser.parse_args()
+    logging.set_log_level(args.loglevel)
+    logging.info("UNIT TEST {}".format(__file__))
+    logging.info("Args = {}".format(vars(args)))
+
     ###
     ### Test triple encoder
     ###
 
-    from models.knowledge_grounded_generator.kg_agent import KG_Info
+    from dataset.msc_kg_sessions import KG_Info
 
     e = torch.tensor(range(10)).unsqueeze(dim=1).expand(10,8).float()
     embedding = nn.Embedding.from_pretrained(e)
@@ -624,7 +679,6 @@ if __name__ == "__main__":
     triple_encoder.W_s = nn.ModuleList([nn.Identity() for _ in range(num_hops)]) 
     triple_encoder.W_r = nn.ModuleList([nn.Identity() for _ in range(num_hops)]) 
     triple_encoder.W_n = nn.ModuleList([nn.Identity() for _ in range(num_hops)]) 
-
 
     concept_ids = torch.tensor([[0, 1, 4, 5, 7, 2, 8, 6]])
     relation_ids = torch.tensor([[1, 1, 2, 3, 1, 1, 2, 3, 3]])
@@ -641,4 +695,43 @@ if __name__ == "__main__":
         triple_labels = triple_labels
     )
     encoding = triple_encoder(kg_input)
-    print(encoding)
+    logging.verbose("Triple encoder output: {}".format(encoding))
+
+    ###
+    ### Test decoder
+    ###
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
+    tokenizer.pad_token = tokenizer.eos_token
+
+    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/session_2/train.txt'
+    dataset = KG_enriched_MSC_Session(
+        vars(args), 
+        datapath, 
+        tokenizer, 
+        max_samples=None, 
+        batch_format="huggingface", 
+        batch_pad_id=tokenizer.pad_token_id
+    )
+    model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+    criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+
+    data = [dataset[i] for i in range(args.batch_size)]
+    batch = dataset.batchify(data)
+
+    responses = batch_act(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
+    responses_stringlist = [
+        "Context:  {}\n"
+        "Label:    {}\n"
+        "Response: {}\n"
+        "{}\n".format(text, label, response, "-" * 20)
+        for (text, label, kg_info), response in zip(data, responses)
+    ]
+    logging.success("Generate output:\n{}".format('\n'.join(responses_stringlist)))
+
+    output = model.train_step(batch, optimizer, criterion, args.device)
+    logging.report("Train_step output: {}".format(output))
+
+    output = model.valid_step(batch, criterion, args.device)
+    logging.report("Valid_step output: {}".format(output))

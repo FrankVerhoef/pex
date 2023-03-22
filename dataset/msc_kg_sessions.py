@@ -1,12 +1,9 @@
 import torch
-from torch import optim
-import random
-from dataclasses import dataclass
 
-from transformers import AutoTokenizer, GenerationConfig, PretrainedConfig, BatchEncoding
+from transformers import BatchEncoding
 
 from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph
-from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss, KG_Info
+from models.knowledge_grounded_generator.kg_model import KG_Info
 from utils import logging
 from utils.general import padded_tensor
 
@@ -26,7 +23,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         group.add_argument(
             '--kg-datadir', 
             type=str, 
-            default='./data/kg_data/', 
+            default='/users/FrankVerhoef/Programming/PEX/data/kg_data/', 
             help='dir for knowledge graph data'
         )
         group.add_argument(
@@ -38,7 +35,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         group.add_argument(
             '--kg', 
             type=str, 
-            default='kg.graph', 
+            default='kg.graph-sm', 
             help='file with knowledge graph'
         )
         group.add_argument(
@@ -65,6 +62,12 @@ class KG_enriched_MSC_Session(MSC_Session):
             choices=["excl-tgt-in-src", "excl-src-in-tgt", "keep-src-and-tgt"],
             default="excl-src-in-tgt",
             help="How to ensure disjoint sets of concepts."
+        )
+        group.add_argument(
+            "--num_hops",
+            type=int,
+            default=2,
+            help="Number of hops in the graph to look for related concepts."
         )
         return parser
 
@@ -222,69 +225,16 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         return inputs, labels, kg_info
 
-    
-def batch_act(obs_batch, model, tokenizer, device, collate_fn):
-    inputs, labels, kg_info = collate_fn(obs_batch)
-    L = inputs.input_ids.shape[1]
-    model.to(device)
-    input_ids = inputs.input_ids.to(device)
-    kg_input = kg_info.to(device)
-    output = model.generate(
-        inputs=input_ids,
-        kg_input=kg_input,
-        generation_config=GenerationConfig(
-            pad_token_id=model.gpt2model.config.eos_token_id,
-            use_cache=True,
-            num_beams=1,
-            do_sample=False,
-            max_new_tokens=20
-        )
-    )
-    output_gen = output[:, L:]
-    responses = tokenizer.batch_decode(output_gen)
-    return responses
-
-def get_parser():
-
-    parser = argparse.ArgumentParser(description="Train a KnowledgeGroundedDecoder")
-
-    # General, loading, saving, logging
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--loglevel", type=str, default="DEBUG", choices=logging.get_all_levels())    
-    parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "mps", "cuda"])
-    
-    # Dataset
-    parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
-    parser.add_argument("--traindata", type=str, default="msc/msc_personasummary/session_1/train.txt", help="Dataset file for training")
-    parser.add_argument("--validdata", type=str, default="msc/msc_personasummary/session_1/valid.txt", help="Dataset file for validation")
-    parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/test.txt", help="Dataset file for testing")
-    parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
-    parser.add_argument("--valid_samples", type=int, default=None, help="Max number of test samples")
-    parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
-    
-    # Training
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
-    parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
-
-    return parser
-
 if __name__ == "__main__":
     import argparse
     from transformers import AutoTokenizer
 
-    parser = get_parser()
-    args = parser.parse_known_args()[0]
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
+    parser = argparse.ArgumentParser(description="Test KG_enriched_MSC_Session")
     parser = KG_enriched_MSC_Session.add_cmdline_args(parser)
-    parser = KnowledgeGroundedDecoder.add_cmdline_args(parser)
 
     args = parser.parse_args()
     print(vars(args))
-    logging.set_log_level(args.loglevel)
+    logging.set_log_level("SPAM")
     logging.info("Unit test {}".format(__file__))
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
@@ -299,34 +249,19 @@ if __name__ == "__main__":
         batch_format="huggingface", 
         batch_pad_id=tokenizer.pad_token_id
     )
-    model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
-    criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     # Test extraction of dialogue turns and persona sentences
     # msc_turns = MSC_Session(datapath, tokenizer, speaker_prefixes=['<self>', '<other>'], include_persona=True, batch_format="huggingface", batch_pad_id=-1)
     # data = [msc_turns[i] for i in range(10)]
 
     data = [dataset[i] for i in range(5)]
-    for item in data:
-        logging.verbose(item[0])
-        logging.verbose(item[1])
-        logging.verbose('-'*40)
+    itemstrings = [
+        "Text:   {}\n" \
+        "Labels: {}\n" \
+        "{}\n".format(item[0], item[1], '-'*40)
+        for item in data
+    ]
+    logging.verbose("ITEMS\n{}".format('\n'.join(itemstrings)))
 
     batch = dataset.batchify(data)
     logging.spam("BATCH\n{}".format(batch))
-
-    output = model.train_step(batch, optimizer, criterion, args.device)
-    logging.report("Train_step output: {}".format(output))
-
-    output = model.valid_step(batch, criterion, args.device)
-    logging.report("Valid_step output: {}".format(output))
-
-    responses = batch_act(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
-    print("GENERATE")
-    for (text, label, kg_info), response in zip(data, responses):
-        print("Context:  ", text)
-        print("Label:    ", label)
-        print("Response: ", response)
-        print("-" * 20)
-

@@ -17,7 +17,7 @@ from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder
 from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
 from dataset.vocab import Vocab, PAD_TOKEN, START_TOKEN, END_TOKEN
-from models.knowledge_grounded_generator.kg_agent import KG_enriched_MSC_Session
+from dataset.msc_kg_sessions import KG_enriched_MSC_Session
 
 import utils.logging as logging
 
