@@ -137,6 +137,7 @@ class TripleEncoder(nn.Module):
         logging.debug("\tEncoding {} concepts and {} relations".format(kg_input.concept_ids.shape, kg_input.relation_ids.shape))
 
         # Embed concepts and relations
+        logging.debug("Embedding device={}, concept_ids device={}".format(self.concept_embd.weight.device, kg_input.concept_ids.device))
         concept_repr = self.concept_embd(kg_input.concept_ids)
         rel_repr = self.relation_embd(kg_input.relation_ids)
 
