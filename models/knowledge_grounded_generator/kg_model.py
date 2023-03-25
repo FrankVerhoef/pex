@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 
-@dataclass(frozen=True)
+@dataclass
 class KG_Info:
     concept_ids: torch.LongTensor
     relation_ids: torch.LongTensor
@@ -27,16 +27,21 @@ class KG_Info:
     gate_labels: torch.LongTensor = None
 
     def to(self, device):
-        self.concept_ids.to(device),
-        self.relation_ids.to(device),
-        self.distances.to(device),
-        self.head_idx.to(device)
-        self.tail_idx.to(device)
-        self.vocab_map.to(device)
-        self.map_mask.to(device)
-        self.concept_labels.to(device)
-        self.triple_labels.to(device)
-        self.gate_labels.to(device)
+        self.concept_ids = self.concept_ids.to(device)
+        self.relation_ids = self.relation_ids.to(device)
+        self.distances = self.distances.to(device)
+        self.head_idx = self.head_idx.to(device)
+        self.tail_idx = self.tail_idx.to(device)
+        if self.vocab_map is not None:
+            self.vocab_map = self.vocab_map.to(device)
+        if self.map_mask is not None:
+            self.map_mask= self.map_mask.to(device)
+        if self.concept_labels is not None:
+            self.concept_labels = self.concept_labels.to(device)
+        if self.triple_labels is not None:
+            self.triple_labels = self.triple_labels.to(device)
+        if self.gate_labels is not None:
+            self.gate_labels = self.gate_labels.to(device)
         return self
 
     def repeat_interleave(self, expand_size, dim=0):
