@@ -268,7 +268,7 @@ def train_with_args(config, args):
 
 def get_parser():
 
-    parser = argparse.ArgumentParser(description="Train a model")
+    parser = argparse.ArgumentParser(description="Train a model", conflict_handler="resolve")
 
     # General, loading, saving, logging
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
