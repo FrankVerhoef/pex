@@ -4,25 +4,12 @@
 
 import torch
 from torch.utils.data import Dataset
+from torcheval.metrics.functional import bleu_score, binary_accuracy, binary_f1_score, binary_confusion_matrix
 import json
 import random
 
 import utils.logging as logging
 
-persona_token = {
-    0: '<self>',
-    1: '<other>'
-}
-PERSONA_TOKENS = list(persona_token.values())
-
-persona_prefix = {
-    0: "<self>",
-    1: "<other>"
-}
-
-# NO_FACT_TOKEN = '<nofact>'
-# NO_FACT_TOKEN = '</s>'
-NO_FACT_TOKEN = ''
 BATCH_FORMATS = ["huggingface", "padded_sequences"]
 
 class MSC_Turns(Dataset):
@@ -30,20 +17,22 @@ class MSC_Turns(Dataset):
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Turns')
-        group.add_argument("--persona_identifier", type=str, default=None, choices=[None, "token", "text"], help="Whether to insert persona identifier before each dialogue turn")
+        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
+        group.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
+        group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         return parser
 
-    def __init__(self, path, tokenizer, len_context=2, persona_identifier=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, path, tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token='', max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Turns, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         dialogues = []
         with open(path, "r") as f:
             for line in f:
                 dialogues.append(json.loads(line))
-        self.persona_tokens = persona_identifier == "token"
-        self.persona_prefix = persona_identifier == "text"
-        self.len_context = len_context
         self.tokenizer = tokenizer
+        self.len_context = len_context
+        self.speaker_prefixes = speaker_prefixes
+        self.nofact_token = nofact_token
         self.batch_format = batch_format
         self.batch_pad_id = batch_pad_id
         self.turns, self.personas = self.transform(dialogues, max_samples)
@@ -56,16 +45,15 @@ class MSC_Turns(Dataset):
                 
                 turn = []
                 for j in range(self.len_context):
-                    # p = '<P{}>'.format((self.len_context - j) % 2)
                     p = (self.len_context - j) % 2
                     t = d["dialog"][i+j].get("text","")
                     turn.append((p, t))
                 turns.append(turn)
 
                 if "persona_text" in d["dialog"][i+self.len_context-1].keys():
-                    persona = d["dialog"][i+self.len_context-1]["persona_text"] + ' '
+                    persona = d["dialog"][i+self.len_context-1]["persona_text"]
                 else:
-                    persona = NO_FACT_TOKEN
+                    persona = self.nofact_token
                 personas.append(persona)
         
         if max_samples is not None:
@@ -84,12 +72,10 @@ class MSC_Turns(Dataset):
         #TODO: decide whether to include space between persona token and utterance
         """
         last_p, last_t = self.turns[i][-1]
-        if self.persona_tokens:
-            history = ' '.join([persona_token[p] + ' ' + t for p, t in self.turns[i][:-1]])
-            last_utterance = persona_token[last_p] + ' ' + last_t
-        elif self.persona_prefix:
-            history = ' '.join([persona_prefix[p] + ' ' + t for p, t in self.turns[i][:-1]])
-            last_utterance = persona_prefix[last_p] + ' ' + last_t
+
+        if self.speaker_prefixes is not None:
+            history = ' '.join([self.speaker_prefixes[p] + ' ' + t for p, t in self.turns[i][:-1]])
+            last_utterance = self.speaker_prefixes[last_p] + ' ' + last_t
         else:
             history = ' '.join([t for p, t in self.turns[i][:-1]])
             last_utterance = last_t
@@ -100,7 +86,7 @@ class MSC_Turns(Dataset):
 
     def batchify(self, data):
         """
-            Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
+        Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
         assert self.tokenizer is not None, "Need to specify function to vectorize dataset"
 
@@ -129,6 +115,75 @@ class MSC_Turns(Dataset):
         return encoded
 
 
+    def evaluate(self, model, device="cpu", decoder_max=20):
+
+        def print_predictions(text_in, text_out):
+
+            x, y = text_in
+            print('context:    ', x)
+            print('target:     ', y)
+            print('prediction: ', text_out)
+            print('-' * 40)
+
+        model = model.to(device)
+        model.eval()
+        target_personas = []
+        pred_personas = []
+        target_facts = []
+        pred_facts = []
+
+        for i in range(self.__len__()):
+
+            target_persona = self.__getitem__(i)[1]
+            batch = self.batchify([self.__getitem__(i)])  # Batch with one sample
+
+            with torch.no_grad():
+                if self.batch_format == "huggingface":
+                    pred_tokens = model.generate(
+                        batch['input_ids'].to(device), 
+                        min_length=2,
+                        max_new_tokens=decoder_max, 
+                        num_beams=1,
+                        do_sample=False,
+                    )[0]
+                    pred_fact = pred_tokens[2] != model.nofact_token_id
+
+                elif self.batch_format == "padded_sequences":
+                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)[0]              
+                    pred_fact = pred_tokens[0] != model.nofact_token_id
+
+            if pred_fact:
+                pred_persona = self.tokenizer.decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
+            else:
+                pred_persona = self.nofact_token
+
+            print_predictions(self.__getitem__(i), pred_persona)
+
+            if target_persona != self.nofact_token:
+                target_facts.append(1)
+                target_personas.append(target_persona)
+                pred_personas.append(pred_persona)
+            else:
+                target_facts.append(0)
+            pred_facts.append(pred_fact.int().item())
+
+        target_facts = torch.tensor(target_facts)
+        pred_facts =  torch.tensor(pred_facts)
+        
+        try:
+            bleu_4 = bleu_score(pred_personas, target_personas).item()
+        except ValueError:
+            bleu_4 = 0
+
+        stats = {
+            "test_acc": binary_accuracy(pred_facts, target_facts).item(),
+            "f1": binary_f1_score(pred_facts, target_facts).item(),
+            "cm": binary_confusion_matrix(pred_facts, target_facts).tolist(),
+            "bleu": bleu_4
+        }
+
+        return stats
+
 if __name__ == "__main__":
 
     from transformers import AutoTokenizer
@@ -137,6 +192,9 @@ if __name__ == "__main__":
     logging.info("Unit test {}".format(__file__))
 
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
+    speaker_prefixes = ["<me>", "<you>"]
+    nofact_token = '<nofact>'
+    add_tokens = speaker_prefixes + [nofact_token]
 
     # Test extraction of dialogue turns and persona sentences
     # tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
@@ -144,8 +202,9 @@ if __name__ == "__main__":
         corpus=MSC_Turns(datapath, tokenizer=None, max_samples=1000).corpus(),
         max_size=4000
     )
+    tokenizer.add_tokens(add_tokens)
 
-    msc_turns = MSC_Turns(datapath, tokenizer, len_context=3, persona_identifier="token", batch_format="padded_sequences", batch_pad_id=-1)
+    msc_turns = MSC_Turns(datapath, tokenizer, len_context=3, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token, batch_format="padded_sequences", batch_pad_id=-1)
 
     data = [msc_turns[i] for i in range(10)]
 

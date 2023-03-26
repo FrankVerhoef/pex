@@ -4,7 +4,7 @@ import torch.nn as nn
 import utils.logging as logging
 
 from transformers import BartForConditionalGeneration, BartModel, BartConfig, GenerationConfig
-from transformers.models.bart.modeling_bart import shift_tokens_right
+
 
 BART_BASE = 'facebook/bart-large-cnn'
 
@@ -226,7 +226,7 @@ class PrefixBart(BartExtractor):
 
     def generate(self, input_ids, **kwargs):
 
-        # Encode input an calculate probability it contains a fact
+        # Encode input and calculate probability it contains a fact
         encoded, fact_logprobs = self.encode(input_ids=input_ids, attention_mask=None)
         pred_fact = fact_logprobs.argmax(dim=-1)
         logging.spam("Generate: pred_fact={}".format(pred_fact))
@@ -243,16 +243,17 @@ class PrefixBart(BartExtractor):
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer
-    from run.eval import print_bart_predictions
-    from dataset.msc_summary_hf import MSC_Turns, NO_FACT_TOKEN, PERSONA_TOKENS
+    from dataset.msc_summary import MSC_Turns
 
     logging.set_log_level(logging.SPAM)
     logging.set_only_message(True)
 
     # Settings for test
     datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
-    persona_identifier = "text"
-    model_class = "prefixbart"
+    speaker_prefixes = None #["<me>", "<you>"]
+    nofact_token = '' #'<nofact>'
+    add_tokens = None #speaker_prefixes + [nofact_token]
+    model_class = "bart"
     lm_loss_factor = 0.5
     freeze=None
     enc_prefix_size=0
@@ -261,9 +262,11 @@ if __name__ == "__main__":
 
     # Setup
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
-    nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
-    if persona_identifier == "token":
-        tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS + [NO_FACT_TOKEN]})
+    if add_tokens is not None:
+        num_added_toks = tokenizer.add_tokens(add_tokens)
+    nofact_token_id = tokenizer.convert_tokens_to_ids(nofact_token) if nofact_token != '' else tokenizer.eos_token_id
+    assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(nofact_token)
+
     if model_class == "bart":
         model = BartExtractor(bart_base="facebook/bart-base", nofact_token_id=nofact_token_id)
     else:
@@ -278,7 +281,7 @@ if __name__ == "__main__":
     model.bart.resize_token_embeddings(len(tokenizer))
     criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=lm_loss_factor)
 
-    msc_turns = MSC_Turns(datapath, tokenizer, len_context=2, persona_identifier=persona_identifier)
+    msc_turns = MSC_Turns(datapath, tokenizer, len_context=2, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
     data = [msc_turns[i] for i in range(10)]
     batch = msc_turns.batchify(data)
 
@@ -292,7 +295,7 @@ if __name__ == "__main__":
         print('-' * 40)
         print(data[i][0])
         print(data[i][1])
-        print(response[i] if pred_fact[i] else NO_FACT_TOKEN)
+        print(response[i] if pred_fact[i] else nofact_token)
 
     # Test loss function and valid_step
     valid_stats = model.valid_step(batch, criterion, device="cpu")

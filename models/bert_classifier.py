@@ -70,7 +70,7 @@ class PrefixBert(BertClassifier):
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('PrefixBert')
-        group.add_argument("--freeze", type=int, default=0, help="Layers to freeze for finetuning; None=none, 0=only embeddings, 12=all")
+        group.add_argument("--freeze", type=int, default=None, help="Layers to freeze for finetuning; None=none, 0=only embeddings, 12=all")
         group.add_argument("--prefix_size", type=int, default=0, help="Insert prefix in BERT")
         group.add_argument("--prefix_aggr", type=str, default="concat", choices=["concat", "max", "avg"], help="How to aggregate prefix hidden states")
         return parser

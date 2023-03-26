@@ -16,20 +16,17 @@ import ray
 from ray import air, tune
 from ray.tune.schedulers import ASHAScheduler, HyperBandScheduler
 
-import transformers
 from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
-from models.bert_classifier import BertClassifier, PrefixBert
+from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
-from dataset.msc_summary import MSC_Turns, PERSONA_TOKENS, NO_FACT_TOKEN
-from dataset.tokenizer import train_tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN, START_TOKEN
+from dataset.msc_summary import MSC_Turns
+from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from utils.general import savename
 import utils.logging as logging
-from run.eval import eval_bart_text, eval_gen_text
-
 
 
 def train(model, trainloader, validloader, optimizer, criterion, 
@@ -106,42 +103,53 @@ def train_with_args(config, args):
             logging.info("Override/set {} to {}".format(k, v))
             setattr(args, k, v)
 
-    if args.task == 'classify':
+    logging.info("Set up {} to {}".format(args.model, args.task))
 
-        logging.info("Set up {} to {}".format(args.model, args.task))
-        tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+    if args.task == 'classify': 
+        
+        # Classify whether dialog turns contain a fact
+
+        if args.model == "bert":
+
+            tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+            if args.add_tokens is not None:
+                num_added_toks = tokenizer.add_tokens(args.add_tokens)
+                if (args.freeze is not None) and (num_added_toks > 0):
+                    logging.warning("Added tokens {} are not trained, because part of model parameters is frozen (freeze={})".format(args.add_tokens, args.freeze))
+            model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr)
+            model.bert.resize_token_embeddings(len(tokenizer))
+            criterion = nn.NLLLoss(reduction='mean')
+
+        else:
+            assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
+
         with FileLock(os.path.expanduser(args.datadir + ".lock")): 
-            traindata = MSC_Turn_Facts(args.datadir + args.traindata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples)
-            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
-            testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples)
-        if args.persona_identifier == "token":
-            num_added_toks = tokenizer.add_tokens(PERSONA_TOKENS)
-        model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr)
-        model.bert.resize_token_embeddings(len(tokenizer))
-        criterion = nn.NLLLoss(reduction='mean')
+            traindata = MSC_Turn_Facts(args.datadir + args.traindata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.train_samples)
+            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.test_samples)
+            testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.test_samples)
 
-    elif args.task == 'generate':
+    elif args.task == 'generate': 
 
-        logging.info("Set up {} to {}".format(args.model, args.task))
+        # Generate the fact(s) that are implied by the dialog turns (if any)
 
         if args.model == "seq2seq":
-            tokenizer = train_tokenizer(
-                corpus=MSC_Turns(
-                    args.datadir + args.traindata, 
-                    tokenizer=None, 
-                    len_context=2, 
-                    persona_identifier=args.persona_identifier, 
-                    max_samples=args.train_samples
-                ),
-                max_size=args.vocab_size
-            )
-            if args.persona_identifier == "token":
-                tokenizer.add_special_tokens(PERSONA_TOKENS + [NO_FACT_TOKEN])
+
+            if args.load == '':
+                tokenizer = train_tokenizer(
+                    corpus=MSC_Turns(args.datadir + args.traindata, tokenizer=None, max_samples=args.train_samples),
+                    max_size=args.vocab_size
+                )
+                if args.add_tokens is not None:
+                    num_added_toks = tokenizer.add_tokens(args.add_tokens)
             else:
-                assert tokenizer.token_to_id(NO_FACT_TOKEN) != tokenizer.token_to_id(UNK_TOKEN), "NO_FACT_TOKEN must be known token"
+                tokenizer = Tokenizer.from_pretrained(args.checkpoint_dir + savename(args) + '_tokenizer.json')
+            if args.save != '':
+                tokenizer.save(args.checkpoint_dir + savename(args) + '_tokenizer')
             pad_token_id = tokenizer.token_to_id(PAD_TOKEN)
             eos_token_id = tokenizer.token_to_id(END_TOKEN)
-            nofact_token_id = tokenizer.token_to_id(NO_FACT_TOKEN) if NO_FACT_TOKEN != '' else eos_token_id
+            unk_token_id = tokenizer.token_to_id(UNK_TOKEN)
+            nofact_token_id = tokenizer.token_to_id(args.nofact_token) if args.nofact_token != '' else eos_token_id
+            assert nofact_token_id != unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
             vocab_size = tokenizer.get_vocab_size()
             batch_format = "padded_sequences"
             encoder_opts = {
@@ -167,13 +175,12 @@ def train_with_args(config, args):
         elif args.model[-4:] == "bart":
 
             tokenizer = AutoTokenizer.from_pretrained(BART_BASE)
-            if args.persona_identifier == "token":
-                tokenizer.add_special_tokens({'additional_special_tokens': PERSONA_TOKENS + [NO_FACT_TOKEN]})
-            vocab_size = tokenizer.vocab_size
+            if args.add_tokens is not None:
+                num_added_toks = tokenizer.add_tokens(args.add_tokens)
             pad_token_id = tokenizer.pad_token_id
-            start_token_id = tokenizer.eos_token_id
-            nofact_token_id = tokenizer.convert_tokens_to_ids(NO_FACT_TOKEN)
-            assert nofact_token_id != tokenizer.unk_token_id, "NO_FACT_TOKEN cannot be unknown token"
+            nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
+            assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
+            batch_format = "huggingface"
 
             if args.model == "bart":
                 model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
@@ -186,34 +193,41 @@ def train_with_args(config, args):
                     dec_prefix_size=args.dec_prefix_size,
                     prefix_aggr=args.prefix_aggr
                 )
-            criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=args.lm_loss_factor)
             model.bart.resize_token_embeddings(len(tokenizer))
+            criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=args.lm_loss_factor)
+
+        else:
+            assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
         with FileLock(os.path.expanduser(args.datadir + ".lock")): 
-            traindata = MSC_Turns(args.datadir + args.traindata, tokenizer, 
-                len_context=2, persona_identifier=args.persona_identifier, max_samples=args.train_samples,
-                batch_format=batch_format, batch_pad_id=pad_token_id
-            )
-            validdata = MSC_Turns(args.datadir + args.validdata, tokenizer, 
-                len_context=2, persona_identifier=args.persona_identifier, max_samples=args.valid_samples,
-                batch_format=batch_format, batch_pad_id=pad_token_id
-            )
-            testdata = MSC_Turns(args.datadir + args.testdata, tokenizer, 
-                len_context=2, persona_identifier=args.persona_identifier, max_samples=args.test_samples,
-                batch_format=batch_format, batch_pad_id=pad_token_id
-            )
+            dataset_config = {
+                'tokenizer': tokenizer,
+                'len_context': 2,
+                'speaker_prefixes': args.speaker_prefixes,
+                'nofact_token': args.nofact_token,
+                'batch_format': batch_format,
+                'batch_pad_id': pad_token_id
+            } 
+            traindata = MSC_Turns(args.datadir + args.traindata, max_samples=args.train_samples, **dataset_config)
+            validdata = MSC_Turns(args.datadir + args.validdata, max_samples=args.valid_samples, **dataset_config)
+            testdata = MSC_Turns(args.datadir + args.testdata, max_samples=args.test_samples, **dataset_config)
 
-    elif args.task == "dialog":
-        logging.info("Set up {} to {}".format(args.model, args.task))
-        tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
-        tokenizer.pad_token = tokenizer.eos_token
+    elif args.task == "dialog": # Generate next utterance based on previous dialog turns
+
+        if args.model == "kg_gen":
+        
+            tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
+            tokenizer.pad_token = tokenizer.eos_token
+            model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+            criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
+
+        else:
+            assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
+
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             traindata = KG_enriched_MSC_Session(vars(args), args.datadir + args.traindata, tokenizer, max_samples=args.train_samples, batch_pad_id=tokenizer.pad_token_id)
             validdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.validdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
             testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
-        model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
-        criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
-        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
@@ -255,11 +269,21 @@ def train_with_args(config, args):
 
         logging.info("Reloading model from {}".format(savepath))
         model.load_state_dict(torch.load(savepath))
-        logging.info("Testing model with {}".format(args.testdata))
-        if args.model[-4:] == "bart":
-            eval_stats = eval_bart_text(model.to("cpu"), testdata, tokenizer, decoder_max=args.decoder_max)
-        elif args.model == "kg_gen":
-            eval_stats = eval_gen_text(model.to("cpu"), testdata, tokenizer, decoder_max=args.decoder_max, batch_size=4)
+        if args.task == "classify":
+            eval_kwargs = {'device': args.device}
+        elif args.task == "generate":
+            if args.device == 'mps':
+                args.device = 'cpu'
+                logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
+            eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
+        elif args.task == "dialog":
+            if args.device == 'mps':
+                args.device = 'cpu'
+                logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
+            eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
+
+        logging.info("Evaluating model on testdata {} with arguments {}".format(args.testdata, eval_kwargs))
+        eval_stats = testdata.evaluate(model, **eval_kwargs)
         report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
         logging.report(report)
 
@@ -274,20 +298,19 @@ def get_parser():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--log_interval", type=int, default=10, help="report interval")
-    parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
     parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
     parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
     parser.add_argument("--load", type=str, default="", help="filename of model to load")
     parser.add_argument("--save", type=str, default="", help="filename to save the model")
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
-    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
     parser.add_argument("--do_grid_search", default=False, action='store_true')
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
     # Encoder and decoder model
     parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen"], help="Model")
 
-    # Dataset
+    # Task and Dataset
+    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--traindata", type=str, default="msc/msc_personasummary/session_1/train.txt", help="Dataset file for training")
     parser.add_argument("--validdata", type=str, default="msc/msc_personasummary/session_1/valid.txt", help="Dataset file for validation")
@@ -300,6 +323,7 @@ def get_parser():
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
+    parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
 
     return parser
 

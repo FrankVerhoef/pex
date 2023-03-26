@@ -95,8 +95,8 @@ class PersonaExtractor(nn.Module):
         ignore_mask = ys.ne(criterion.ignore_index)
 
         # Classification accuracy
-        pred_fact = pred[:, 1] != self.nofact_token_id  # Check for nofact-token, directly after the start-of-sentence
-        label_fact = ys[:, 1] != self.nofact_token_id
+        pred_fact = pred[:, 0] != self.nofact_token_id  # Check for nofact-token, directly at the start-of-sentence
+        label_fact = ys[:, 0] != self.nofact_token_id
         fact_correct = label_fact.eq(pred_fact)
         fact_acc = fact_correct.sum().item() / ys.shape[0]
 

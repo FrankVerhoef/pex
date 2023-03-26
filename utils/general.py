@@ -7,11 +7,11 @@ import torch
 def savename(args):
     name = args.save
     if args.model == "kg_gen":
-        name += "kgg"
+        name += "_kgg"
     elif args.model == "bert":
-        name += "bert"
+        name += "_bert"
     elif args.model[-4:] == "bart":
-        name += args.model
+        name += '_' + args.model
     elif args.model == "seq2seq":
         name += "_seq2seq_{}_{}_I{}_E{}_H{}".format(
             args.encoder,
@@ -21,6 +21,11 @@ def savename(args):
             args.hidden_size
         )
     return name
+
+def loadname_prefix(name):
+    prefix_end = name.index('_')
+    prefix = name[:prefix_end]
+    return prefix
 
 def print_params(model):
     print("Model parameters")

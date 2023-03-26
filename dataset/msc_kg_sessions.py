@@ -1,6 +1,7 @@
 import torch
+from torcheval.metrics.functional import bleu_score
 
-from transformers import BatchEncoding
+from transformers import BatchEncoding, GenerationConfig
 
 from models.knowledge_grounded_generator.kg_utils import NORELATION_TOKEN, ConceptGraph
 from models.knowledge_grounded_generator.kg_model import KG_Info
@@ -224,6 +225,57 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
 
         return inputs, labels, kg_info
+
+
+    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1):
+
+        def print_responses(data, responses):
+            for (x, y, _), p in zip(data, responses):
+                print('context:    ', x)
+                print('target:     ', y)
+                print('prediction: ', p)
+                print('-' * 40)
+
+        model = model.to(device)
+        model.eval()
+        target_responses = []
+        pred_responses = []
+
+        for start_index in range(0, self.__len__(), batch_size):
+            data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
+            inputs, labels, kg_input = self.batchify(data)
+            L = inputs.input_ids.shape[1]
+
+            with torch.no_grad():
+                output = model.generate(
+                    inputs=inputs.input_ids.to(device),
+                    kg_input=kg_input.to(device),
+                    generation_config=GenerationConfig(
+                        pad_token_id=model.gpt2model.config.eos_token_id,
+                        use_cache=True,
+                        num_beams=3,
+                        do_sample=True,
+                        max_new_tokens=decoder_max
+                    )
+                )
+                output = output.cpu()
+            responses = self.tokenizer.batch_decode(output[:, L:])
+            print("Generated {} responses".format(len(responses)))
+            print_responses(data, responses)
+            target_responses.extend([labels[0] for _, labels, _ in data])
+            pred_responses.extend(responses)
+
+        try:
+            bleu_4 = bleu_score(target_responses, pred_responses).item()
+        except ValueError:
+            bleu_4 = 0
+
+        stats = {
+            "bleu": bleu_4
+        }
+
+        return stats
+
 
 if __name__ == "__main__":
     import argparse

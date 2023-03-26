@@ -10,9 +10,6 @@ import random
 import utils.logging as logging
 
 
-# NO_FACT_TOKEN = '<nofact>'
-# NO_FACT_TOKEN = '</s>'
-NO_FACT_TOKEN = ''
 BATCH_FORMATS = ["huggingface", "padded_sequences"]
 
 class MSC_Session(Dataset):
