@@ -3,6 +3,9 @@
 /data/
 /logs/
 /slurm/outputs/
+
+# Wandb
+.secrets
 /wandb/
 
 
