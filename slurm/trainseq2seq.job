@@ -1,0 +1,51 @@
+#!/bin/bash
+
+#SBATCH --partition gpu
+#SBATCH --nodes 1
+#SBATCH --gpus 1
+#SBATCH --job-name Train_S2S
+#SBATCH --time 00:30:00
+#SBATCH --mem 32G
+#SBATCH --output slurm/outputs/train_%A.out
+
+#source ./slurm/.secrets
+
+module purge
+module load 2022
+module load Anaconda3/2022.05
+module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
+
+source activate pex
+
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
+mkdir "$TMPDIR"/checkpoints
+
+srun python -u run/main.py \
+	--task generate  \
+        --vocab_size 6000 \
+        --traindata msc/msc_personasummary/session_1/train.txt  \
+        --validdata msc/msc_personasummary/session_1/valid.txt  \
+        --testdata msc/msc_personasummary/session_1/test.txt \
+        --train_samples 5000  \
+        --valid_samples 500 \
+        --test_samples 10  \
+	--speaker_prefixes \<self\> \<other\> \
+	--nofact_token \<nofact\> \
+	--add_tokens \<self\> \<other\> \<nofact\> \
+        --model seq2seq \
+        --encoder poolbilstm  \
+        --batch_size 16  \
+        --learning_rate 0.0001 \
+        --epochs 1  \
+	--valid_interval 100 \
+        --device cuda  \
+        --loglevel DEBUG  \
+        --logdir "$TMPDIR"/logs/  \
+	--datadir "$TMPDIR"/data/ \
+        --checkpoint_dir "$TMPDIR"/checkpoints/ \
+        --save test  \
+
+cp "$TMPDIR"/logs/* ./logs
+cp "$TMPDIR"/checkpoints/* ./checkpoints

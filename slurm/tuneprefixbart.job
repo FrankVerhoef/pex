@@ -1,0 +1,44 @@
+#!/bin/bash
+
+#SBATCH --partition gpu
+#SBATCH --nodes 1
+#SBATCH --gpus 1
+#SBATCH --job-name Tune_Bart
+#SBATCH --time 08:00:00
+#SBATCH --mem 32G
+#SBATCH --output slurm/outputs/train_%A.out
+
+#source ./slurm/.secrets
+
+module purge
+module load 2022
+module load Anaconda3/2022.05
+module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
+
+source activate pex
+
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
+
+srun python -u run/main.py \
+	--task generate  \
+        --traindata msc/msc_personasummary/session_1/train.txt  \
+        --validdata msc/msc_personasummary/session_1/valid.txt  \
+        --testdata msc/msc_personasummary/session_1/test.txt \
+        --speaker_prefixes \<self\> \<other\> \
+        --model prefixbart \
+        --decoder_max 20 \
+        --batch_size 32  \
+        --learning_rate 0.0001 \
+        --epochs 1  \
+        --patience 4 \
+	--valid_interval 100 \
+        --device cuda  \
+        --loglevel INFO  \
+        --logdir "$TMPDIR"/logs/  \
+	--datadir "$TMPDIR"/data/ \
+        --checkpoint_dir "$TMPDIR"/checkpoints/ \
+        --do_grid_search
+
+cp "$TMPDIR"/logs/* ./logs
