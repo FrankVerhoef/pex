@@ -3,8 +3,8 @@
 #SBATCH --partition gpu
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH --job-name Train_PEX
-#SBATCH --time 00:15:00
+#SBATCH --job-name Train_KGgen
+#SBATCH --time 00:30:00
 #SBATCH --mem 32G
 #SBATCH --output slurm/outputs/train_%A.out
 
@@ -23,27 +23,28 @@ mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/checkpoints
 
 srun python -u run/main.py \
-        --device cuda  \
-	--datadir "$TMPDIR"/data/ \
-	--kg-datadir "$TMPDIR"/data/kg_data/ \
-        --checkpoint_dir "$TMPDIR"/checkpoints/ \
 	--task dialog  \
-        --model kg_gen  \
-        --kg kg.graph-sm  \
-        --batch_size 16  \
-        --learning_rate 0.0001 \
-        --fixed_lm \
         --traindata msc/msc_dialogue/session_2/train.txt  \
         --validdata msc/msc_dialogue/session_2/valid.txt  \
         --testdata msc/msc_dialogue/session_2/test.txt \
-        --train_samples 100  \
-        --valid_samples 10 \
+        --train_samples 500  \
+        --valid_samples 100 \
         --test_samples 10  \
-        --decoder_max 25  \
+        --kg-datadir "$TMPDIR"/data/kg_data/ \
+        --kg kg.graph-sm \
+        --model kg_gen \
+        --fixed_lm \
+        --decoder_max 20 \
+        --batch_size 16  \
+        --learning_rate 0.0001 \
         --epochs 1  \
-        --save test  \
-        --loglevel DEBUG  \
+	--valid_interval 100 \
+        --device cuda  \
+        --loglevel INFO  \
         --logdir "$TMPDIR"/logs/  \
+	--datadir "$TMPDIR"/data/ \
+        --checkpoint_dir "$TMPDIR"/checkpoints/ \
+        --save test  \
 
 cp "$TMPDIR"/logs/* ./logs
 cp "$TMPDIR"/checkpoints/* ./checkpoints
