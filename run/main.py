@@ -30,15 +30,19 @@ import utils.logging as logging
 
 
 def train(model, trainloader, validloader, optimizer, criterion, 
-    device, epochs, log_interval, valid_interval,
+    device, epochs, log_interval, valid_interval, patience,
     do_grid_search, use_wandb):
 
     train_losses = []
     max_accuracy = -1
+    min_loss = float('inf')
     step = 0
     model.to(device)
     best_model = model
     num_batches = len(trainloader)
+    if patience is None:
+        patience = num_batches
+    patience_count = patience * epochs
 
     for epoch in range(epochs):
 
@@ -60,7 +64,9 @@ def train(model, trainloader, validloader, optimizer, criterion,
                 model.eval()
                 valid_stats = eval(model, validloader, criterion, device)
                 valid_acc = valid_stats['valid_acc']
+                valid_loss = valid_stats['valid_loss']
                 logging.info("Epoch {}, step {}: Validation stats={}".format(epoch, step, valid_stats))
+                patience_count -= 1
                 model.train()
 
                 if use_wandb:
@@ -68,12 +74,25 @@ def train(model, trainloader, validloader, optimizer, criterion,
                     wandb.log(valid_stats, step=step)
 
                 if do_grid_search:
-                    tune.report(valid_acc=valid_acc)
+                    tune.report(valid_acc=valid_acc, valid_loss=valid_loss)
+                    # tune.report(valid_loss=valid_loss)
 
                 if valid_acc > max_accuracy:
                         max_accuracy = valid_acc
                         logging.info("Best accuracy improved to {:.2%}".format(max_accuracy))
+                        patience_count = patience
                         best_model = copy.deepcopy(model)
+                # if valid_loss < min_loss:
+                #         min_loss = valid_loss
+                #         logging.info("Best loss improved to {:.4f}".format(min_loss))
+                #         patience_count = patience
+                #         best_model = copy.deepcopy(model)
+            if patience_count < 0:
+                logging.info("Training loop terminated because it ran out of patience after {} validation interval(s) without improvement".format(patience + 1))
+                break
+        if patience_count < 0: 
+            logging.info("Training loop terminated after epoch {}, step {}".format(epoch, step))
+            break
 
     return best_model, {"valid_acc": max_accuracy}
 
@@ -123,9 +142,9 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        with FileLock(os.path.expanduser(args.datadir + ".lock")): 
+        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             traindata = MSC_Turn_Facts(args.datadir + args.traindata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.train_samples)
-            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.test_samples)
+            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.valid_samples)
             testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.test_samples)
 
     elif args.task == 'generate': 
@@ -199,7 +218,7 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        with FileLock(os.path.expanduser(args.datadir + ".lock")): 
+        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             dataset_config = {
                 'tokenizer': tokenizer,
                 'len_context': 2,
@@ -226,7 +245,7 @@ def train_with_args(config, args):
 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             traindata = KG_enriched_MSC_Session(vars(args), args.datadir + args.traindata, tokenizer, max_samples=args.train_samples, batch_pad_id=tokenizer.pad_token_id)
-            validdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.validdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
+            validdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.validdata, tokenizer, max_samples=args.valid_samples, batch_pad_id=tokenizer.pad_token_id)
             testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
 
     if args.use_wandb:
@@ -244,10 +263,12 @@ def train_with_args(config, args):
     if args.valid_interval is None:
         args.valid_interval = len(train_loader)
 
+    logging.info("Use train/valid/test dataset with {}/{}/{} samples".format(len(traindata), len(validdata), len(testdata)))
     logging.info("Start training")
+
     best_model, train_stats = train(
         model, train_loader, valid_loader, optimizer, criterion, 
-        device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval,
+        device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval, patience=args.patience,
         do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
     )
 
@@ -324,6 +345,7 @@ def get_parser():
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
     parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
+    parser.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
 
     return parser
 
@@ -376,21 +398,32 @@ if __name__ == "__main__":
             logging_level="warning",
             )
         search_space = {
-            "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
-            "learning_rate": tune.grid_search([1e-4, 1e-3]),
-            # "batch_size": tune.grid_search([16, 64]),
+            # "seed": tune.grid_search([42, 123, 2206]),
+            # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
+            "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
+            "batch_size": tune.grid_search([16, 32, 64]),
             # "prefix_size": tune.grid_search([0, 5]),
-            # "freeze": tune.sample_from(lambda spec: {0:None, 1:8, 2:12}[random.randint(0,2)] if spec.config.prefix_size == 0 else 12),
+            # # If there is a prefix, then freeze all Bert layers
+            # # If the is no prefix, then vary the number of frozen layers
+            # "freeze": tune.sample_from(
+            #         lambda spec: {
+            #             0: None, 
+            #             1: 8, 
+            #             2: 12
+            #         }[random.randint(0,2)]
+            #         if spec.config.prefix_size == 0 else 12
+            #     ),
         }
+        trainable_with_resources = tune.with_resources(partial(train_with_args, args=args), {"gpu": 1})
         tuner = tune.Tuner(
-            trainable=partial(train_with_args, args=args),
+            trainable=trainable_with_resources,
             param_space=search_space,
             tune_config=tune.TuneConfig(
                 scheduler=HyperBandScheduler(),
                 metric="valid_acc", 
                 mode="max",
                 num_samples=1,
-                max_concurrent_trials=4
+                max_concurrent_trials=8
             ),
             run_config = air.RunConfig(
                 verbose=3,
