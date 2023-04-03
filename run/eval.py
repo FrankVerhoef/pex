@@ -38,7 +38,9 @@ if __name__ == "__main__":
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
-    parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/test.txt", help="Dataset file for testing")
+    parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
+    parser.add_argument("--testdata", type=str, default="msc/msc_dialogue/session_2/test.txt", help="Dataset file for testing")
+
     parser.add_argument("--test_samples", type=int, default=10, help="Max number of test samples")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
 
@@ -88,8 +90,17 @@ if __name__ == "__main__":
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
-
-        testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.test_samples)
+        dataset_config = {
+            'basedir': args.datadir + args.basedir,
+            'sessions': args.sessions,
+            'tokenizer': tokenizer,
+            'len_context': args.len_context,
+            'speaker_prefixes': args.speaker_prefixes,
+            'nofact_token': args.nofact_token,
+            'batch_format': 'huggingface',
+            'batch_pad_id': tokenizer.pad_token_id
+        } 
+        testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
 
     elif args.task == 'generate':
 
@@ -153,17 +164,17 @@ if __name__ == "__main__":
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
-
         dataset_config = {
+            'basedir': args.datadir + args.basedir,
+            'sessions': args.sessions,
             'tokenizer': tokenizer,
-            'len_context': 2,
+            'len_context': args.len_context,
             'speaker_prefixes': args.speaker_prefixes,
             'nofact_token': args.nofact_token,
             'batch_format': batch_format,
             'batch_pad_id': pad_token_id
         } 
-        testdata = MSC_Turns(args.datadir + args.testdata, max_samples=args.test_samples, **dataset_config)
-        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=True, collate_fn=testdata.batchify)
+        testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
 
     elif args.task == "dialog":
 

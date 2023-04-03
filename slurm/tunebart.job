@@ -23,9 +23,8 @@ mkdir "$TMPDIR"/logs
 
 srun python -u run/main.py \
 	--task generate  \
-        --traindata msc/msc_personasummary/session_1/train.txt  \
-        --validdata msc/msc_personasummary/session_1/valid.txt  \
-        --testdata msc/msc_personasummary/session_1/test.txt \
+        --basedir msc/msc_personasummary/  \
+        --sessions 1  \
         --model bart \
         --decoder_max 20 \
         --batch_size 16  \

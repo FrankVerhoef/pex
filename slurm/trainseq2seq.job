@@ -25,9 +25,8 @@ mkdir "$TMPDIR"/checkpoints
 srun python -u run/main.py \
 	--task generate  \
         --vocab_size 6000 \
-        --traindata msc/msc_personasummary/session_1/train.txt  \
-        --validdata msc/msc_personasummary/session_1/valid.txt  \
-        --testdata msc/msc_personasummary/session_1/test.txt \
+        --basedir msc/msc_personasummary/  \
+        --sessions 1  \
         --train_samples 5000  \
         --valid_samples 500 \
         --test_samples 10  \

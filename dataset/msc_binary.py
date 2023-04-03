@@ -10,8 +10,19 @@ class MSC_Turn_Facts(MSC_Turns):
     Builds on the MSC_Turns dataset
     """
 
-    def __init__(self, path, tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token='', max_samples=None, batch_format="huggingface", batch_pad_id=0):
-        super().__init__(path, tokenizer, len_context, speaker_prefixes, nofact_token, max_samples, batch_format, batch_pad_id)
+    def __init__(self, basedir='./', sessions=[1], subset='train', tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token='', max_samples=None, batch_format="huggingface", batch_pad_id=0):
+        super().__init__(
+            basedir=basedir, 
+            sessions=sessions, 
+            subset=subset, 
+            tokenizer=tokenizer,
+            len_context=len_context, 
+            speaker_prefixes=speaker_prefixes, 
+            nofact_token=nofact_token, 
+            max_samples=max_samples, 
+            batch_format=batch_format, 
+            batch_pad_id=batch_pad_id
+        )
         assert self.batch_format == 'huggingface', "batch_format '{}' is incompatible with class {}".format(self.batch_format, self.__class__.__name__)
 
     def __getitem__(self, index):

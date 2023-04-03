@@ -142,10 +142,20 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            traindata = MSC_Turn_Facts(args.datadir + args.traindata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.train_samples)
-            validdata = MSC_Turn_Facts(args.datadir + args.validdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.valid_samples)
-            testdata = MSC_Turn_Facts(args.datadir + args.testdata, tokenizer, len_context=2, speaker_prefixes=args.speaker_prefixes, max_samples=args.test_samples)
+        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'sessions': args.sessions,
+                'tokenizer': tokenizer,
+                'len_context': args.len_context,
+                'speaker_prefixes': args.speaker_prefixes,
+                'nofact_token': args.nofact_token,
+                'batch_format': 'huggingface',
+                'batch_pad_id': tokenizer.pad_token_id
+            } 
+            traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
+            validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
+            testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
 
     elif args.task == 'generate': 
 
@@ -155,7 +165,7 @@ def train_with_args(config, args):
 
             if args.load == '':
                 tokenizer = train_tokenizer(
-                    corpus=MSC_Turns(args.datadir + args.traindata, tokenizer=None, max_samples=args.train_samples),
+                    corpus=MSC_Turns(basedir=args.basedir, sessions=args.sessions, subset='train', tokenizer=None, max_samples=args.train_samples),
                     max_size=args.vocab_size
                 )
                 if args.add_tokens is not None:
@@ -220,16 +230,18 @@ def train_with_args(config, args):
 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'sessions': args.sessions,
                 'tokenizer': tokenizer,
-                'len_context': 2,
+                'len_context': args.len_context,
                 'speaker_prefixes': args.speaker_prefixes,
                 'nofact_token': args.nofact_token,
                 'batch_format': batch_format,
                 'batch_pad_id': pad_token_id
             } 
-            traindata = MSC_Turns(args.datadir + args.traindata, max_samples=args.train_samples, **dataset_config)
-            validdata = MSC_Turns(args.datadir + args.validdata, max_samples=args.valid_samples, **dataset_config)
-            testdata = MSC_Turns(args.datadir + args.testdata, max_samples=args.test_samples, **dataset_config)
+            traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
+            validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
+            testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
 
     elif args.task == "dialog": # Generate next utterance based on previous dialog turns
 
@@ -303,7 +315,7 @@ def train_with_args(config, args):
                 logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
             eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
 
-        logging.info("Evaluating model on testdata {} with arguments {}".format(args.testdata, eval_kwargs))
+        logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
         eval_stats = testdata.evaluate(model, **eval_kwargs)
         report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
         logging.report(report)
@@ -333,9 +345,10 @@ def get_parser():
     # Task and Dataset
     parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
-    parser.add_argument("--traindata", type=str, default="msc/msc_personasummary/session_1/train.txt", help="Dataset file for training")
-    parser.add_argument("--validdata", type=str, default="msc/msc_personasummary/session_1/valid.txt", help="Dataset file for validation")
-    parser.add_argument("--testdata", type=str, default="msc/msc_personasummary/session_1/test.txt", help="Dataset file for testing")
+    parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
+    parser.add_argument("--traindata", type=str, default="msc/msc_dialogue/session_2/train.txt", help="Dataset file for training")
+    parser.add_argument("--validdata", type=str, default="msc/msc_dialogue/session_2/valid.txt", help="Dataset file for validation")
+    parser.add_argument("--testdata", type=str, default="msc/msc_dialogue/session_2/test.txt", help="Dataset file for testing")
     parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
     parser.add_argument("--valid_samples", type=int, default=None, help="Max number of test samples")
     parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")

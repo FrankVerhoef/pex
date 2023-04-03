@@ -20,15 +20,25 @@ class MSC_Turns(Dataset):
         group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
+        group.add_argument("--len_context", default=2, type=int, help="Number of utterances to include in context")
+        group.add_argument("--sessions", default=[1], nargs='+', help="MSC sessions to include in dataset")
         return parser
 
-    def __init__(self, path, tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token='', max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, basedir='./', sessions=[1], subset='train', tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token='', max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Turns, self).__init__()
-        assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
+        assert batch_format in BATCH_FORMATS, f"batch_format '{batch_format}' is invalid; should be one of {BATCH_FORMATS}"
+        assert len_context > 1, f"len_context '{len_context}' is invalid; should be at least 1"
+        self.sessions = sessions
+        self.subset = subset
         dialogues = []
-        with open(path, "r") as f:
-            for line in f:
-                dialogues.append(json.loads(line))
+        for s in self.sessions:
+            filepath = f"{basedir}session_{s}/{subset}.txt"
+            try:
+                with open(filepath, "r") as f:
+                    for line in f:
+                        dialogues.append(json.loads(line))
+            except FileNotFoundError:
+                logging.warning(f"File '{filepath}' not found -> skipped")
         self.tokenizer = tokenizer
         self.len_context = len_context
         self.speaker_prefixes = speaker_prefixes
