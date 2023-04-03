@@ -43,6 +43,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--test_samples", type=int, default=10, help="Max number of test samples")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+    parser.add_argument("--print_max", type=int, default=20, help="Max number of test examples to print")
 
     args = parser.parse_known_args()[0]
 

@@ -125,7 +125,7 @@ class MSC_Turns(Dataset):
         return encoded
 
 
-    def evaluate(self, model, device="cpu", decoder_max=20):
+    def evaluate(self, model, device="cpu", decoder_max=20, print_max=20):
 
         def print_predictions(text_in, text_out):
 
@@ -167,7 +167,9 @@ class MSC_Turns(Dataset):
             else:
                 pred_persona = self.nofact_token
 
-            print_predictions(self.__getitem__(i), pred_persona)
+            if print_max > 0:
+                print_predictions(self.__getitem__(i), pred_persona)
+                print_max -= 1
 
             if target_persona != self.nofact_token:
                 target_facts.append(1)
