@@ -8,7 +8,7 @@
 #SBATCH --mem 32G
 #SBATCH --output slurm/outputs/train_%A.out
 
-#source ./slurm/.secrets
+source ./slurm/.secrets
 
 module purge
 module load 2022

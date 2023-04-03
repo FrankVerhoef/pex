@@ -4,11 +4,11 @@
 #SBATCH --nodes 1
 #SBATCH --gpus 1
 #SBATCH --job-name Train_Bart
-#SBATCH --time 00:30:00
+#SBATCH --time 01:30:00
 #SBATCH --mem 32G
 #SBATCH --output slurm/outputs/train_%A.out
 
-#source ./slurm/.secrets
+source ./slurm/.secrets
 
 module purge
 module load 2022
@@ -25,22 +25,24 @@ mkdir "$TMPDIR"/checkpoints
 srun python -u run/main.py \
 	--task generate  \
         --basedir msc/msc_personasummary/  \
-        --sessions 1  \
-        --train_samples 5000  \
-        --valid_samples 500 \
-        --test_samples 10  \
+        --speaker_prefixes \<self\> \<other\> \
+        --nofact_token \<nofact\> \
+        --add_tokens \<self\> \<other\> \<nofact\> \
+        --sessions 1 2 3 \
         --model bart \
         --decoder_max 20 \
-        --batch_size 16  \
-        --learning_rate 0.0001 \
+        --batch_size 64  \
+        --learning_rate 0.00001 \
         --epochs 1  \
-	--valid_interval 100 \
+	--valid_interval 25 \
+        --patience 4 \
         --device cuda  \
-        --loglevel SPAM  \
+        --loglevel INFO  \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
         --save test  \
+        --use_wandb
 
 cp "$TMPDIR"/logs/* ./logs
 cp "$TMPDIR"/checkpoints/* ./checkpoints

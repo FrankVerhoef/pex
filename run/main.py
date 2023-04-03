@@ -411,10 +411,18 @@ if __name__ == "__main__":
             logging_level="warning",
             )
         search_space = {
-            # "seed": tune.grid_search([42, 123, 2206]),
+            "seed": tune.grid_search([42, 123, 2206]),
             # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
-            "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
-            "batch_size": tune.grid_search([16, 32, 64]),
+            "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
+            "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "<nofact>"),
+            "add_tokens": tune.sample_from(
+                lambda spec: 
+                    spec.config.speaker_prefixes 
+                    if spec.config.speaker_prefixes is None 
+                    else spec.config.speaker_prefixes + [spec.config.nofact_token]
+                ),
+            # "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
+            # "batch_size": tune.grid_search([16, 32, 64]),
             # "prefix_size": tune.grid_search([0, 5]),
             # # If there is a prefix, then freeze all Bert layers
             # # If the is no prefix, then vary the number of frozen layers
@@ -435,7 +443,7 @@ if __name__ == "__main__":
                 scheduler=HyperBandScheduler(),
                 metric="valid_acc", 
                 mode="max",
-                num_samples=1,
+                num_samples=2,
                 max_concurrent_trials=8
             ),
             run_config = air.RunConfig(
