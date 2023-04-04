@@ -39,3 +39,14 @@ def print_grads(model):
 
 def padded_tensor(tensorlist, pad_value=0):
     return torch.nn.utils.rnn.pad_sequence(tensorlist, batch_first=True, padding_value=pad_value)
+
+def padded_tensor_left(tensorlist, pad_value=0):
+    max_len = max([len(t) for t in tensorlist])
+    padded = torch.full((len(tensorlist), max_len), fill_value=pad_value)
+    for i in range(len(tensorlist)):
+        l = len(tensorlist[i])
+        if l < max_len:
+            padded[i, -l:] = tensorlist[i]
+        else:
+            padded[i, :] = tensorlist[i]
+    return padded
