@@ -29,6 +29,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--load", type=str, default='', help="filename of model to load") #, required=True)
     parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
+    parser.add_argument("--log_interval", type=int, default=100, help="report interval")
     parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())
     parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
@@ -41,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
     parser.add_argument("--testdata", type=str, default="msc/msc_dialogue/session_2/test.txt", help="Dataset file for testing")
 
-    parser.add_argument("--test_samples", type=int, default=10, help="Max number of test samples")
+    parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--print_max", type=int, default=20, help="Max number of test examples to print")
 
@@ -194,20 +195,16 @@ if __name__ == "__main__":
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
         model.load_state_dict(torch.load(args.checkpoint_dir + args.load))
 
-    if args.task == "classify":
-        eval_kwargs = {'device': args.device}
-    elif args.task == "generate":
+    eval_kwargs = {'device': args.device, 'log_interval': args.log_interval}
+    if args.task in ["generate", "dialog"]:
         if args.device == 'mps':
-            args.device = 'cpu'
+            eval_kwargs['device'] = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
-    elif args.task == "dialog":
-        if args.device == 'mps':
-            args.device = 'cpu'
-            logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': args.batch_size}
+        eval_kwargs.update({'decoder_max': args.decoder_max})
+    if args.task == "dialog":
+        eval_kwargs.update({'batch_size': args.batch_size})
 
-    logging.info("Evaluating model on testdata {} with arguments {}".format(args.testdata, eval_kwargs))
+    logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
     eval_stats = testdata.evaluate(model, **eval_kwargs)
     report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
     logging.report(report)

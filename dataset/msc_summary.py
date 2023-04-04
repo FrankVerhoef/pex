@@ -125,7 +125,7 @@ class MSC_Turns(Dataset):
         return encoded
 
 
-    def evaluate(self, model, device="cpu", decoder_max=20, print_max=20):
+    def evaluate(self, model, device="cpu", decoder_max=20, print_max=20, log_interval=100):
 
         def print_predictions(text_in, text_out):
 
@@ -178,6 +178,9 @@ class MSC_Turns(Dataset):
             else:
                 target_facts.append(0)
             pred_facts.append(pred_fact.int().item())
+
+            if (i + 1) % log_interval == 0:
+                logging.verbose(f"Evaluated {i}/{self.__len__()} samples")
 
         target_facts = torch.tensor(target_facts)
         pred_facts =  torch.tensor(pred_facts)

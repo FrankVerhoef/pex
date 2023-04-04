@@ -1,0 +1,41 @@
+#!/bin/bash
+
+#SBATCH --partition gpu
+#SBATCH --nodes 1
+#SBATCH --gpus 1
+#SBATCH --job-name Test_Bart
+#SBATCH --time 01:30:00
+#SBATCH --mem 8G
+#SBATCH --output slurm/outputs/train_%A.out
+
+source ./slurm/.secrets
+
+module purge
+module load 2022
+module load Anaconda3/2022.05
+module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
+
+source activate pex
+
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
+mkdir "$TMPDIR"/checkpoints
+
+srun python -u run/eval.py \
+	--task generate  \
+        --basedir msc/msc_personasummary/  \
+        --speaker_prefixes \<self\> \<other\> \
+        --nofact_token \<nofact\> \
+        --add_tokens \<self\> \<other\> \<nofact\> \
+        --sessions 1 2 3 \
+        --model bart \
+        --decoder_max 30 \
+        --device cuda  \
+        --loglevel VERBOSE  \
+        --logdir "$TMPDIR"/logs/  \
+	--datadir "$TMPDIR"/data/ \
+        --checkpoint_dir ./checkpoints/ \
+        --load test_bart  \
+
+cp "$TMPDIR"/logs/* ./logs
