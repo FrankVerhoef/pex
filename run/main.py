@@ -23,7 +23,7 @@ from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
-from dataset.msc_summary import MSC_Turns
+from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from utils.general import savename
 import utils.logging as logging

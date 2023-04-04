@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 import utils.logging as logging
+from utils.general import padded_tensor
 
 from transformers import BartForConditionalGeneration, BartModel, BartConfig, GenerationConfig
 
@@ -74,10 +75,13 @@ class BartExtractor(nn.Module):
         logging.spam("Generate: gen_out={}".format(gen_out))
         nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id])
 
-        gen_out_cleaned = torch.stack([
-            gen if is_fact else nofact_sequence
-            for is_fact, gen in zip(pred_fact, gen_out)
-        ])
+        gen_out_cleaned = padded_tensor(
+            [
+                gen if is_fact else nofact_sequence
+                for is_fact, gen in zip(pred_fact, gen_out)
+            ],
+            pad_value=self.bart.config.pad_token_id
+        )
         return gen_out_cleaned
 
     def train_step(self, batch, optimizer, criterion, device):
@@ -243,7 +247,7 @@ class PrefixBart(BartExtractor):
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer
-    from dataset.msc_summary import MSC_Turns
+    from dataset.msc_summary_turns import MSC_Turns
 
     logging.set_log_level(logging.SPAM)
     logging.set_only_message(True)

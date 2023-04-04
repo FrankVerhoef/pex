@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset
-from dataset.msc_summary import MSC_Turns
+from dataset.msc_summary_turns import MSC_Turns
 import torch
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score
 

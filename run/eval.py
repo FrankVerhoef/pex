@@ -11,7 +11,7 @@ from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder
-from dataset.msc_summary import MSC_Turns
+from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import Tokenizer, PAD_TOKEN, END_TOKEN, UNK_TOKEN
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
 
