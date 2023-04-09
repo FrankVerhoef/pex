@@ -211,7 +211,6 @@ if __name__ == "__main__":
     logging.set_log_level("SPAM")
     logging.info("Unit test {}".format(__file__))
 
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
     sessions = [1]
     subset = 'train'
@@ -222,7 +221,7 @@ if __name__ == "__main__":
     # Test extraction of dialogue turns and persona sentences
     # tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
     tokenizer = train_tokenizer(
-        corpus=MSC_Turns(datapath, tokenizer=None, max_samples=1000).corpus(),
+        corpus=MSC_Turns(basedir=basedir, sessions=sessions, subset='train', tokenizer=None, max_samples=1000).corpus(),
         max_size=4000
     )
     tokenizer.add_tokens(add_tokens)

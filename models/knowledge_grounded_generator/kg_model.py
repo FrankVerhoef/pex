@@ -710,11 +710,13 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
     tokenizer.pad_token = tokenizer.eos_token
 
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/session_2/train.txt'
+    basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/'
     dataset = KG_enriched_MSC_Session(
         vars(args), 
-        datapath, 
-        tokenizer, 
+        basedir=basedir,
+        sessions=[2],
+        subset='train', 
+        tokenizer=tokenizer, 
         max_samples=None, 
         batch_format="huggingface", 
         batch_pad_id=tokenizer.pad_token_id

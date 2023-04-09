@@ -46,8 +46,8 @@ if __name__ == '__main__':
 
     from dataset.msc_summary_turns import MSC_Turns
 
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
-    msc_turns = MSC_Turns(datapath, tokenizer=None, len_context=3, speaker_prefixes=None, max_samples=1000)
+    basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
+    msc_turns = MSC_Turns(basedir=basedir, sessions=[1], subset='train', tokenizer=None, len_context=3, speaker_prefixes=None, max_samples=1000)
 
     tokenizer = train_tokenizer(msc_turns.corpus(), max_size=4000)
     enc = tokenizer.encode("Hey, how are you doing?")

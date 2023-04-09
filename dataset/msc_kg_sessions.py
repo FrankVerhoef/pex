@@ -203,6 +203,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         inputs = self.tokenizer(
             [text for text in text_batch], 
             padding=True, 
+            truncation=True,
             return_attention_mask=True,
             return_tensors='pt'
         )
@@ -315,7 +316,16 @@ if __name__ == "__main__":
     )
 
     # Test extraction of dialogue turns and persona sentences
-    # msc_turns = MSC_Session(datapath, tokenizer, speaker_prefixes=['<self>', '<other>'], include_persona=True, batch_format="huggingface", batch_pad_id=-1)
+    # msc_turns = MSC_Session(
+    #     basedir=datadir+basedir, 
+    #     sessions=args.sessions, 
+    #     subset=subset, 
+    #     tokenizer=tokenizer, 
+    #     speaker_prefixes=['<self>', '<other>'], 
+    #     include_persona=True, 
+    #     batch_format="huggingface", 
+    #     batch_pad_id=-1
+    # )
     # data = [msc_turns[i] for i in range(10)]
 
     data = [dataset[i] for i in range(5)]
