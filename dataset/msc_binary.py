@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import torch
-from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score
+from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
 
 class MSC_Turn_Facts(MSC_Turns):
 
@@ -90,6 +90,8 @@ class MSC_Turn_Facts(MSC_Turns):
         stats = {
             "test_acc": binary_accuracy(all_preds, all_labels).item(),
             "f1": binary_f1_score(all_preds, all_labels).item(),
+            "precision": binary_precision(all_preds, all_labels).item(),
+            "recall": binary_recall(all_preds, all_labels).item(),
             "cm": binary_confusion_matrix(all_preds, all_labels).tolist()
         }
 
@@ -100,7 +102,10 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
 
     # Define setup
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
+    datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
+    basedir = 'msc/msc_personasummary/'
+    sessions = [2]
+    subset='train'
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
     speaker_prefixes=["[me]", "[you]"]
     add_tokens = None
@@ -110,7 +115,16 @@ if __name__ == "__main__":
         num_added_toks = tokenizer.add_tokens(add_tokens)
     
     # Test extraction of dialogue turns and persona facts
-    msc_turns = MSC_Turn_Facts(datapath, tokenizer=tokenizer, len_context=4, speaker_prefixes=speaker_prefixes)
+    msc_turns = MSC_Turn_Facts(
+        basedir=datadir+basedir, 
+        sessions=sessions, 
+        subset=subset, 
+        tokenizer=tokenizer, 
+        len_context=4, 
+        speaker_prefixes=speaker_prefixes,
+        batch_pad_id=tokenizer.pad_token_id,
+        batch_format="huggingface"
+    )
 
     batch = [msc_turns[i] for i in range(10)]
 

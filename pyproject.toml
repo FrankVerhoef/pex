@@ -21,6 +21,7 @@ filelock = "^3.10.0"
 ray = {extras = ["tune"], version = "^2.3.1"}
 protobuf = ">=3.20.0,<3.21.0"
 matplotlib = "^3.7.1"
+torchmetrics = "^0.11.4"
 
 [[tool.poetry.source]]
 name = "torch-scatter"

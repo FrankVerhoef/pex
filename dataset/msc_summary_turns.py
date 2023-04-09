@@ -4,7 +4,8 @@
 
 import torch
 from torch.utils.data import Dataset
-from torcheval.metrics.functional import bleu_score, binary_accuracy, binary_f1_score, binary_confusion_matrix
+from torcheval.metrics.functional import bleu_score, binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
+from torchmetrics.functional.text.rouge import rouge_score
 import json
 import random
 
@@ -189,12 +190,16 @@ class MSC_Turns(Dataset):
             bleu_4 = bleu_score(pred_personas, target_personas).item()
         except ValueError:
             bleu_4 = 0
+        rouge_scores = rouge_score(pred_personas, target_personas, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
         stats = {
             "test_acc": binary_accuracy(pred_facts, target_facts).item(),
             "f1": binary_f1_score(pred_facts, target_facts).item(),
+            "precision": binary_precision(pred_facts, target_facts).item(),
+            "recall": binary_recall(pred_facts, target_facts).item(),
             "cm": binary_confusion_matrix(pred_facts, target_facts).tolist(),
-            "bleu": bleu_4
+            "bleu": bleu_4,
+            "rouge": rouge_scores
         }
 
         return stats

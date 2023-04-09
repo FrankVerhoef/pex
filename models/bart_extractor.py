@@ -5,6 +5,7 @@ import utils.logging as logging
 from utils.general import padded_tensor
 
 from transformers import BartForConditionalGeneration, BartModel, BartConfig, GenerationConfig
+from torchmetrics.functional.text.perplexity import perplexity
 
 
 BART_BASE = 'facebook/bart-large-cnn'
@@ -51,6 +52,9 @@ class BartExtractor(nn.Module):
             self.bart = BartForConditionalGeneration(config=BartConfig())
         else:
             self.bart = BartForConditionalGeneration.from_pretrained(bart_base)
+        self.nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id, self.bart.config.eos_token_id])
+        if self.nofact_token_id == self.bart.config.eos_token_id:
+            self.nofact_sequence = self.nofact_sequence[:-1]
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
     def select_fact_logprobs(self, lm_logprobs):
@@ -68,16 +72,32 @@ class BartExtractor(nn.Module):
         return fact_logprobs, lm_logprobs
     
     def generate(self, input_ids, **kwargs):
+
+        # # determine relevant length of each sequence
+        # relevant = kwargs.get("attention_mask")
+        # if relevant is None:
+        #     relevant = input_ids != self.bart.config.pad_token_id
+        # else:
+        #     del kwargs['attention_mask']
+        # input_lengths = relevant.sum(dim=1)
+
+        # # generate output tokens for earch input sequence individually
+        # gen_out = padded_tensor(
+        #     [
+        #         self.bart.generate(input_sequence[:l].unsqueeze(dim=0), **kwargs).squeeze(dim=0)
+        #         for input_sequence, l in zip(input_ids, input_lengths)
+        #     ],
+        #     pad_value=self.bart.config.pad_token_id
+        # )
         gen_out = self.bart.generate(input_ids, **kwargs)
         pred_fact = gen_out[:, 2] != self.nofact_token_id
 
         logging.spam("Generate: pred_fact={}".format(pred_fact))
         logging.spam("Generate: gen_out={}".format(gen_out))
-        nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id])
 
         gen_out_cleaned = padded_tensor(
             [
-                gen if is_fact else nofact_sequence
+                gen if is_fact else self.nofact_sequence
                 for is_fact, gen in zip(pred_fact, gen_out)
             ],
             pad_value=self.bart.config.pad_token_id
@@ -122,14 +142,18 @@ class BartExtractor(nn.Module):
         token_correct = batch['labels'].eq(pred) * ignore_mask
         token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
 
+        # LM perplexity
+        ppl = perplexity(preds=lm_logprobs, target=y, ignore_index=self.bart.config.pad_token_id)
+
         stats = {
             "loss": loss.item(),
             "classification_loss": classification_loss.item(),
             "lm_loss": lm_loss.item(),
             "acc": fact_acc,
+            "perplexity": ppl, 
             "token_prediction_acc": token_acc
         }
-        logging.debug("Valid: loss {:.4f}, cls_loss {:.4f}, lm_loss {:.4f}, cls_acc {:.4f}, lm_acc {:.4f}".format(loss, classification_loss, lm_loss, fact_acc, token_acc))
+        logging.debug("Valid: loss {:.4f}, cls_loss {:.4f}, lm_loss {:.4f}, cls_acc {:.4f}, lm_acc {:.4f}, ppl {:.4f}".format(loss, classification_loss, lm_loss, fact_acc, token_acc, ppl))
 
         return stats
 
@@ -253,7 +277,10 @@ if __name__ == "__main__":
     logging.set_only_message(True)
 
     # Settings for test
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/session_1/train.txt'
+    basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
+    sessions = [1]
+    subset = 'train'
+    len_context = 2
     speaker_prefixes = None #["<me>", "<you>"]
     nofact_token = '' #'<nofact>'
     add_tokens = None #speaker_prefixes + [nofact_token]
@@ -285,7 +312,7 @@ if __name__ == "__main__":
     model.bart.resize_token_embeddings(len(tokenizer))
     criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=lm_loss_factor)
 
-    msc_turns = MSC_Turns(datapath, tokenizer, len_context=2, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    msc_turns = MSC_Turns(basedir=basedir, sessions=sessions, subset=subset, tokenizer=tokenizer, len_context=len_context, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
     data = [msc_turns[i] for i in range(10)]
     batch = msc_turns.batchify(data)
 
