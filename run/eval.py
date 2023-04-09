@@ -14,6 +14,7 @@ from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecode
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import Tokenizer, PAD_TOKEN, END_TOKEN, UNK_TOKEN
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
+from dataset.convai2 import ConvAI2
 
 from utils.general import loadname_prefix, savename
 import utils.logging as logging
@@ -72,7 +73,11 @@ if __name__ == "__main__":
         "generate": MSC_Turns,
         "dialog": KG_enriched_MSC_Session,
     }[args.task].add_cmdline_args(parser)
-
+    
+    args = parser.parse_known_args()[0]
+    if 1 in args.sessions:
+        parser = ConvAI2.add_cmdline_args(parser)
+    
     if args.model == "seq2seq":
         parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
 
@@ -188,8 +193,15 @@ if __name__ == "__main__":
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
-
-        testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
+        if 1 in args.sessions:
+            args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
+        dataset_config = {
+            'basedir': args.datadir + args.basedir,
+            'tokenizer': tokenizer,
+            'batch_format': "huggingface",
+            'batch_pad_id': tokenizer.pad_token_id
+        } 
+        testdata = KG_enriched_MSC_Session(vars(args), subset='test', max_samples=args.test_samples, **dataset_config)
 
     if args.load != '':
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))

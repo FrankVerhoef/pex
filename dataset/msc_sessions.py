@@ -7,6 +7,8 @@ from torch.utils.data import Dataset
 import json
 import random
 
+from dataset.convai2 import ConvAI2
+
 import utils.logging as logging
 
 
@@ -19,16 +21,36 @@ class MSC_Session(Dataset):
         group = parser.add_argument_group('MSC_Sessions')
         group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--include_persona", default=False, action='store_true')
+        group.add_argument("--sessions", default=[1, 2], nargs='+', help="MSC sessions to include in dataset")
         return parser
 
-    def __init__(self, path, tokenizer, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, basedir='./', sessions=[2], subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Session, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         assert (speaker_prefixes is None) or (len(speaker_prefixes) == 2), "Invalid number of persona prefixes ({})".format(len(speaker_prefixes))
+        self.sessions = sessions
+        self.subset=subset
         dialogues = []
-        with open(path, "r") as f:
-            for line in f:
-                dialogues.append(json.loads(line))
+        for s in self.sessions:
+            if str(s)[0] == '1':
+                version = str(s).split('-')
+                convai2_kwargs = {'basedir': basedir + 'ConvAI2/', 'subset': subset}
+                if len(version) > 1:
+                    convai2_kwargs['version'] = version[1:]
+                try:
+                    convai2_dialogues = ConvAI2(**convai2_kwargs)
+                    for i in range(len(convai2_dialogues)):
+                        dialogues.append(convai2_dialogues[i])
+                except FileNotFoundError:
+                    logging.warning(f"ConvAI2 file with identifiers '{convai2_kwargs}' not found -> skipped")
+            else:
+                filepath = f"{basedir}session_{s}/{subset}.txt"
+                try:
+                    with open(filepath, "r") as f:
+                        for line in f:
+                            dialogues.append(json.loads(line))
+                except FileNotFoundError:
+                    logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
         self.include_persona = include_persona
         self.tokenizer = tokenizer
@@ -92,7 +114,7 @@ class MSC_Session(Dataset):
 
     def batchify(self, data):
         """
-            Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
+            Transforms a list of dataset elements to batch of consisting of contexts and a batch with the corresponding next utterance.
         """
         assert self.tokenizer is not None, "Need to specify function to vectorize dataset"
 
@@ -124,21 +146,41 @@ class MSC_Session(Dataset):
 if __name__ == "__main__":
 
     from transformers import AutoTokenizer
-    from dataset.tokenizer import train_tokenizer
+    from dataset.tokenizer import train_tokenizer, PAD_TOKEN
     logging.set_log_level("SPAM")
     logging.info("Unit test {}".format(__file__))
 
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/session_2/train.txt'
+    datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
+    basedir = 'msc/msc_dialogue/'
+    subset = 'train'
+    sessions = [1, 2]
+    if 1 in sessions:
+        version = ['both', 'revised']
+        sessions = [(item if item != 1 else '-'.join(['1'] + version)) for item in sessions]
+    speaker_prefixes = ['<me>', '<you>']
+    include_persona = False
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
+    pad_token_id = tokenizer.pad_token_id
+    batch_format = "huggingface"
     # tokenizer = train_tokenizer(
-    #     corpus=MSC_Session(datapath, tokenizer=None, max_samples=1000).corpus(),
+    #     corpus=MSC_Session(basedir=datadir + basedir, sessions=sessions, tokenizer=None, max_samples=1000).corpus(),
     #     max_size=4000
     # )
+    # pad_token_id = tokenizer.token_to_id(PAD_TOKEN)
+    # batch_format = "padded_sequences"
 
-    msc_turns = MSC_Session(datapath, tokenizer, speaker_prefixes=['<self>', '<other>'], include_persona=True, batch_format="huggingface", batch_pad_id=-1)
-
+    msc_turns = MSC_Session(
+        basedir=datadir+basedir, 
+        sessions=sessions, 
+        subset=subset, 
+        tokenizer=tokenizer, 
+        speaker_prefixes=speaker_prefixes,
+        include_persona=include_persona,
+        batch_pad_id=pad_token_id,
+        batch_format=batch_format
+    )
     data = [msc_turns[i] for i in range(10)]
 
     for item in data:
@@ -147,5 +189,6 @@ if __name__ == "__main__":
         logging.verbose('-'*40)
 
     batch = msc_turns.batchify(data)
-    logging.info("Components of batch: {}".format(str(batch.keys())))
+    if batch_format == "huggingface":
+        logging.info("Components of batch: {}".format(str(batch.keys())))
     logging.spam(batch)

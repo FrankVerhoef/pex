@@ -23,6 +23,7 @@ from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
+from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from utils.general import savename
@@ -256,9 +257,18 @@ def train_with_args(config, args):
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            traindata = KG_enriched_MSC_Session(vars(args), args.datadir + args.traindata, tokenizer, max_samples=args.train_samples, batch_pad_id=tokenizer.pad_token_id)
-            validdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.validdata, tokenizer, max_samples=args.valid_samples, batch_pad_id=tokenizer.pad_token_id)
-            testdata = KG_enriched_MSC_Session(vars(args), args.datadir + args.testdata, tokenizer, max_samples=args.test_samples, batch_pad_id=tokenizer.pad_token_id)
+            if 1 in args.sessions:
+                args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'sessions': args.sessions,
+                'tokenizer': tokenizer,
+                'batch_format': "huggingface",
+                'batch_pad_id': tokenizer.pad_token_id
+            } 
+            traindata = KG_enriched_MSC_Session(vars(args), subset='train', max_samples=args.train_samples, **dataset_config)
+            validdata = KG_enriched_MSC_Session(vars(args), subset='valid', max_samples=args.valid_samples, **dataset_config)
+            testdata = KG_enriched_MSC_Session(vars(args), subset='test', max_samples=args.test_samples, **dataset_config)
 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
@@ -396,6 +406,10 @@ if __name__ == "__main__":
         "generate": MSC_Turns,
         "dialog": KG_enriched_MSC_Session,
     }[args.task].add_cmdline_args(parser)
+    
+    args = parser.parse_known_args()[0]
+    if 1 in args.sessions:
+        parser = ConvAI2.add_cmdline_args(parser)
     
     args = parser.parse_args()
 

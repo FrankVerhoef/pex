@@ -9,6 +9,7 @@ from utils import logging
 from utils.general import padded_tensor
 
 from dataset.msc_sessions import MSC_Session
+from dataset.convai2 import ConvAI2
 
 
 class KG_enriched_MSC_Session(MSC_Session):
@@ -72,10 +73,12 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
         return parser
 
-    def __init__(self, opt, path, model_tokenizer, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, opt, basedir='./', sessions=[2], subset='train', tokenizer=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super().__init__(
-            path, 
-            model_tokenizer, 
+            basedir=basedir,
+            sessions=sessions, 
+            subset=subset,
+            tokenizer=tokenizer, 
             speaker_prefixes=opt['speaker_prefixes'],
             include_persona=opt['include_persona'], 
             max_samples=max_samples, 
@@ -283,6 +286,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Test KG_enriched_MSC_Session")
     parser = KG_enriched_MSC_Session.add_cmdline_args(parser)
+    parser = ConvAI2.add_cmdline_args(parser)
 
     args = parser.parse_args()
     print(vars(args))
@@ -292,11 +296,19 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
     tokenizer.pad_token = tokenizer.eos_token
 
-    datapath = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/session_2/train.txt'
+    datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
+    basedir = 'msc/msc_dialogue/'
+    subset = 'train'
+    args.sessions = [1, 2]
+    if 1 in args.sessions:
+        version = args.convai2_version
+        args.sessions = [(item if item != 1 else '-'.join(['1'] + version)) for item in args.sessions]
+
     dataset = KG_enriched_MSC_Session(
         vars(args), 
-        datapath, 
-        tokenizer, 
+        basedir=datadir+basedir, 
+        subset=subset,
+        tokenizer=tokenizer, 
         max_samples=None, 
         batch_format="huggingface", 
         batch_pad_id=tokenizer.pad_token_id
