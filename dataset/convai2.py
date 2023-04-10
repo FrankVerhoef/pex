@@ -12,9 +12,9 @@ CONVAI2_CANDS = ['no_cands']
 
 CONVAI2_TRAIN_VALID_SPLIT = 0.9
 CONVAI2_INFO = {
-    'train': "For ConvAI2 dataset, used {:.0%} of train dataset for training (rest is available as validation dataset)".format(CONVAI2_TRAIN_VALID_SPLIT),
-    'valid': "For ConvAI2 dataset, used {:.0%} of train dataset as validation dataset".format(1 - CONVAI2_TRAIN_VALID_SPLIT),
-    'test': "For ConvAI2 dataset, used validation dataset as test dataset"
+    'train': "For ConvAI2 dataset, use {:.0%} of train dataset for training (rest is available as validation dataset)".format(CONVAI2_TRAIN_VALID_SPLIT),
+    'valid': "For ConvAI2 dataset, use {:.0%} of train dataset as validation dataset".format(1 - CONVAI2_TRAIN_VALID_SPLIT),
+    'test': "For ConvAI2 dataset, use validation dataset as test dataset"
 }
 
 class ConvAI2(Dataset):
@@ -40,15 +40,16 @@ class ConvAI2(Dataset):
 
         # Adjust subset indicator: use part of train set for validation, and use validation set for testing
         logging.info(CONVAI2_INFO[subset])
-        if subset == 'valid':
-            subset = 'train'
-        elif subset == 'test':
-            subset = 'valid'
+        load_subset = {
+            'train': 'train',
+            'valid': 'train',
+            'test': 'valid'
+        }[subset]
 
         # Read and parse the dialog source file
-        convai2_dialogues = self._parse_dialogs(basedir, version, subset)
+        convai2_dialogues = self._parse_dialogs(basedir, version, load_subset)
 
-        # Determine the reange of indices to use
+        # Determine the range of indices to use
         num_dialogues = len(convai2_dialogues)
         if subset in ['train', 'valid']:
             num_train = int(CONVAI2_TRAIN_VALID_SPLIT * len(convai2_dialogues))
