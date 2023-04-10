@@ -161,10 +161,8 @@ class MSC_Summaries(Dataset):
             bleu_4 = 0
         rouge_scores = rouge_score(pred_summaries, target_summaries, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
-        stats = {
-            "bleu": bleu_4,
-            "rouge": rouge_scores
-        }
+        stats = {"bleu": bleu_4}
+        stats.update({k: v.item() for k, v in rouge_scores.items()})
 
         return stats
 

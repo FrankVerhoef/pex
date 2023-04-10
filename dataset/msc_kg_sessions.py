@@ -1,5 +1,6 @@
 import torch
 from torcheval.metrics.functional import bleu_score
+from torchmetrics.functional.text.rouge import rouge_score
 
 from transformers import BatchEncoding, GenerationConfig
 
@@ -31,7 +32,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         group.add_argument(
             '--dataset-concepts', 
             type=str, 
-            default='total_concepts.txt', 
+            default='dataset_concepts.txt', 
             help='file with dataset concepts'
         )
         group.add_argument(
@@ -273,10 +274,10 @@ class KG_enriched_MSC_Session(MSC_Session):
             bleu_4 = bleu_score(target_responses, pred_responses).item()
         except ValueError:
             bleu_4 = 0
+        rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
-        stats = {
-            "bleu": bleu_4
-        }
+        stats = {"bleu": bleu_4}
+        stats.update({k: v.item() for k, v in rouge_scores.items()})
 
         return stats
 
