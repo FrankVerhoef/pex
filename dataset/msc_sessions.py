@@ -30,7 +30,7 @@ class MSC_Session(Dataset):
         assert (speaker_prefixes is None) or (len(speaker_prefixes) == 2), "Invalid number of persona prefixes ({})".format(len(speaker_prefixes))
         self.sessions = sessions
         self.subset=subset
-        dialogues = []
+        self.dialogues = []
         for s in self.sessions:
             if str(s)[0] == '1':
                 version = str(s).split('-')
@@ -40,7 +40,7 @@ class MSC_Session(Dataset):
                 try:
                     convai2_dialogues = ConvAI2(**convai2_kwargs)
                     for i in range(len(convai2_dialogues)):
-                        dialogues.append(convai2_dialogues[i])
+                        self.dialogues.append(convai2_dialogues[i])
                 except FileNotFoundError:
                     logging.warning(f"ConvAI2 file with identifiers '{convai2_kwargs}' not found -> skipped")
             else:
@@ -48,7 +48,7 @@ class MSC_Session(Dataset):
                 try:
                     with open(filepath, "r") as f:
                         for line in f:
-                            dialogues.append(json.loads(line))
+                            self.dialogues.append(json.loads(line))
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
@@ -56,12 +56,12 @@ class MSC_Session(Dataset):
         self.tokenizer = tokenizer
         self.batch_format = batch_format
         self.batch_pad_id = batch_pad_id
-        self.history, self.next_utterance = self.transform(dialogues, max_samples)
+        self.history, self.next_utterance = self.transform_dialogues(max_samples)
         
-    def transform(self, dialogues, max_samples):
+    def transform_dialogues(self, max_samples):
         all_history, all_next_utterance = [], []
         
-        for d in dialogues:
+        for d in self.dialogues:
             turns = d.get("dialog", [])
             personas = d.get("personas", None)
             num_turns = len(turns)
@@ -110,7 +110,13 @@ class MSC_Session(Dataset):
         return history, last_utterance
     
     def corpus(self):
-        return [' '.join([*(self.__getitem__(i)[:2])]) for i in range(len(self.history))]
+        corpus = []
+        for dialog in self.dialogues:
+            for personas in dialog.get("personas", []):
+                corpus.extend(personas)
+            for utterance in dialog.get("dialog", []):
+                corpus.append(utterance['text'])
+        return corpus
 
     def batchify(self, data):
         """
@@ -181,6 +187,9 @@ if __name__ == "__main__":
         batch_pad_id=pad_token_id,
         batch_format=batch_format
     )
+    for sentence in msc_turns.corpus()[10:30]:
+        logging.verbose(sentence)
+        
     data = [msc_turns[i] for i in range(10)]
 
     for item in data:
