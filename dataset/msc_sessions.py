@@ -30,16 +30,20 @@ class MSC_Session(Dataset):
         assert (speaker_prefixes is None) or (len(speaker_prefixes) == 2), "Invalid number of persona prefixes ({})".format(len(speaker_prefixes))
         self.sessions = sessions
         self.subset=subset
+        self.dialogues = []
         for s in self.sessions:
             if str(s)[0] == '1':
                 version = str(s).split('-')[1:]
                 convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
-                self.dialogues = [convai2_dataset[i] for i in range(len(convai2_dataset))]
+                logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
+                self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
             else:
                 filepath = f"{basedir}session_{s}/{subset}.txt"
                 try:
                     with open(filepath, "r") as f:
-                        self.dialogues = [json.loads(line) for line in f]
+                        msc_dialogues = [json.loads(line) for line in f]
+                    logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {s} for {subset} dataset")
+                    self.dialogues.extend(msc_dialogues)
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
