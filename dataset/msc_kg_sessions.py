@@ -93,7 +93,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         self.overlapping_concepts = opt['overlapping_concepts']
         self._cache_sorted_dict_ind = sorted(self.tokenizer.get_vocab().values())
         self.kg = kg
-        logging.info("Initialized KnowledgeGroundedAgent")
+        logging.info("Initialized KG_enriched_MSC_Session")
 
 
     def _build_vocab_map(self, concept_token_ids):
