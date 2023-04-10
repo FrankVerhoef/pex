@@ -27,6 +27,7 @@ class ConvAI2(Dataset):
 
     def __init__(self, basedir='./', version=['both', 'revised', 'no_cands'], subset='train'):
         super(ConvAI2, self).__init__()
+        logging.info(f"Init ConvAI2 with basedir={basedir}, version={version}, subset={subset}")
         assert len(version) in [2, 3], f"Convai file version should have 2 or 3 components, picked from {CONVAI2_PERSONAS}, {CONVAI2_VARIANTS} and {CONVAI2_CANDS}"
         assert version[0] in CONVAI2_PERSONAS, f"Invalid version component '{version[0]}'; should be one of {CONVAI2_PERSONAS}."
         assert version[1] in CONVAI2_VARIANTS, f"Invalid version component '{version[1]}'; should be one of {CONVAI2_VARIANTS}."
