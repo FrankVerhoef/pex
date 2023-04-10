@@ -74,7 +74,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
         return parser
 
-    def __init__(self, opt, basedir='./', sessions=[2], subset='train', tokenizer=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, opt, basedir='./', sessions=[2], subset='train', tokenizer=None, kg=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super().__init__(
             basedir=basedir,
             sessions=sessions, 
@@ -92,8 +92,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         self.max_triples = opt['max_triples']
         self.overlapping_concepts = opt['overlapping_concepts']
         self._cache_sorted_dict_ind = sorted(self.tokenizer.get_vocab().values())
-        self.kg = ConceptGraph(opt['kg_datadir'], opt['kg'])
-        self.kg.build_reduced_graph(opt['kg_datadir'] + opt['dataset_concepts'])
+        self.kg = kg
         logging.info("Initialized KnowledgeGroundedAgent")
 
 
@@ -232,7 +231,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         return inputs, labels, kg_info
 
 
-    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1):
+    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
 
         def print_responses(data, responses):
             for (x, y, _), p in zip(data, responses):
@@ -245,6 +244,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         model.eval()
         target_responses = []
         pred_responses = []
+        interval_counter = 0
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
@@ -265,10 +265,20 @@ class KG_enriched_MSC_Session(MSC_Session):
                 )
                 output = output.cpu()
             responses = self.tokenizer.batch_decode(output[:, L:])
-            print("Generated {} responses".format(len(responses)))
-            print_responses(data, responses)
+
+            if print_max > 0:
+                print_responses(data, responses)
+                print_max -= len(data)
+
             target_responses.extend([labels[0] for _, labels, _ in data])
             pred_responses.extend(responses)
+
+            interval_counter += len(pred_responses)
+            if interval_counter >= log_interval:
+                logging.verbose(f"Evaluated {len(pred_responses)}/{self.__len__()} samples")
+                interval_counter =- log_interval
+
+        logging.info(f"Completed evaluation of {len(pred_responses)} samples")
 
         try:
             bleu_4 = bleu_score(target_responses, pred_responses).item()
@@ -306,11 +316,15 @@ if __name__ == "__main__":
         version = args.convai2_version
         args.sessions = [(item if item != 1 else '-'.join(['1'] + version)) for item in args.sessions]
 
+    kg = ConceptGraph(args.kg_datadir, args.kg)
+    kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
+
     dataset = KG_enriched_MSC_Session(
         vars(args), 
         basedir=datadir+basedir, 
         subset=subset,
         tokenizer=tokenizer, 
+        kg=kg,
         max_samples=None, 
         batch_format="huggingface", 
         batch_pad_id=tokenizer.pad_token_id

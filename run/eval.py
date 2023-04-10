@@ -11,6 +11,7 @@ from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder
+from models.knowledge_grounded_generator.kg_utils import ConceptGraph
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import Tokenizer, PAD_TOKEN, END_TOKEN, UNK_TOKEN
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
@@ -193,6 +194,9 @@ if __name__ == "__main__":
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
+        
+        kg = ConceptGraph(args.kg_datadir, args.kg)
+        kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
         if 1 in args.sessions:
             args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
         dataset_config = {
@@ -201,7 +205,7 @@ if __name__ == "__main__":
             'batch_format': "huggingface",
             'batch_pad_id': tokenizer.pad_token_id
         } 
-        testdata = KG_enriched_MSC_Session(vars(args), subset='test', max_samples=args.test_samples, **dataset_config)
+        testdata = KG_enriched_MSC_Session(vars(args), subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
 
     if args.load != '':
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))

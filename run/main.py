@@ -22,6 +22,7 @@ from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
+from models.knowledge_grounded_generator.kg_utils import ConceptGraph
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
 from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
@@ -256,6 +257,8 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
+        kg = ConceptGraph(args.kg_datadir, args.kg)
+        kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             if 1 in args.sessions:
                 args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
@@ -266,9 +269,9 @@ def train_with_args(config, args):
                 'batch_format': "huggingface",
                 'batch_pad_id': tokenizer.pad_token_id
             } 
-            traindata = KG_enriched_MSC_Session(vars(args), subset='train', max_samples=args.train_samples, **dataset_config)
-            validdata = KG_enriched_MSC_Session(vars(args), subset='valid', max_samples=args.valid_samples, **dataset_config)
-            testdata = KG_enriched_MSC_Session(vars(args), subset='test', max_samples=args.test_samples, **dataset_config)
+            traindata = KG_enriched_MSC_Session(vars(args), subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
+            validdata = KG_enriched_MSC_Session(vars(args), subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
+            testdata = KG_enriched_MSC_Session(vars(args), subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
