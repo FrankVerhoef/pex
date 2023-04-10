@@ -30,25 +30,16 @@ class MSC_Session(Dataset):
         assert (speaker_prefixes is None) or (len(speaker_prefixes) == 2), "Invalid number of persona prefixes ({})".format(len(speaker_prefixes))
         self.sessions = sessions
         self.subset=subset
-        self.dialogues = []
         for s in self.sessions:
             if str(s)[0] == '1':
-                version = str(s).split('-')
-                convai2_kwargs = {'basedir': basedir + 'ConvAI2/', 'subset': subset}
-                if len(version) > 1:
-                    convai2_kwargs['version'] = version[1:]
-                try:
-                    convai2_dialogues = ConvAI2(**convai2_kwargs)
-                    for i in range(len(convai2_dialogues)):
-                        self.dialogues.append(convai2_dialogues[i])
-                except FileNotFoundError:
-                    logging.warning(f"ConvAI2 file with identifiers '{convai2_kwargs}' not found -> skipped")
+                version = str(s).split('-')[1:]
+                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
+                self.dialogues = [convai2_dataset[i] for i in range(len(convai2_dataset))]
             else:
                 filepath = f"{basedir}session_{s}/{subset}.txt"
                 try:
                     with open(filepath, "r") as f:
-                        for line in f:
-                            self.dialogues.append(json.loads(line))
+                        self.dialogues = [json.loads(line) for line in f]
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
@@ -57,7 +48,7 @@ class MSC_Session(Dataset):
         self.batch_format = batch_format
         self.batch_pad_id = batch_pad_id
         self.history, self.next_utterance = self.transform_dialogues(max_samples)
-        
+
     def transform_dialogues(self, max_samples):
         all_history, all_next_utterance = [], []
         
