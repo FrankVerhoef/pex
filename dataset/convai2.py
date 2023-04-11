@@ -69,6 +69,7 @@ class ConvAI2(Dataset):
         len_self_prefix, len_other_prefix = len("your persona: "), len("partner's persona: ")
         dialogues = []
         filepath = basedir + subset + '_' + '_'.join(version) + '.txt'
+        no_cands = len(version) == 3
         try:
             with open(filepath, "r") as f:
                 lines = list(f)
@@ -103,7 +104,9 @@ class ConvAI2(Dataset):
                     # Collect the dialogue utterances
                     prev_dialog_line_nr = 0
                     while (int(line_split[0]) > prev_dialog_line_nr) and (i < len(lines)):
-                        utterances = line_split[1].split('\t')[:2] # Cut off the candidate sentences (if they are present)
+                        utterances = line_split[1].split('\t')[:2]  # Cut off the candidate sentences (if they are present)
+                        if no_cands:
+                            utterances[1] = utterances[1][:-1]      # Cut off line '\n' if input format is 'no_cands'
                         turns.append({
                             'text': utterances[0],
                             'id': 'Speaker 1'
