@@ -539,7 +539,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def _shift_labels_left(self, labels):
         B = labels.shape[0]
-        filler = torch.full((B, 1), fill_value=self.gpt2model.config.eos_token_id)
+        filler = torch.full((B, 1), fill_value=self.gpt2model.config.eos_token_id, device=labels.device)
         shifted_labels = torch.cat([labels[:, 1:], filler], dim=1)
         return shifted_labels
 
