@@ -251,10 +251,11 @@ class ConceptGraph(nx.Graph):
         logging.debug("Connecting paths: {} with {} triples; kept {} triples with {} targets".format(
             len(shortest_paths), len(ground_truth_triples_set), len(triple_labels), sum(triple_labels)
         ))
-        logging.debug("Examples: {}".format([
-            " - ".join([self.id2concept[n] for n in p])
-            for p in shortest_paths
-        ][:5]))
+        if len(shortest_paths) > 0:
+            logging.debug("Examples: {}".format([
+                " - ".join([self.id2concept[n] for n in p])
+                for p in shortest_paths
+            ][:5]))
 
         filtered_concepts = {
             "concept_ids": concept_ids,

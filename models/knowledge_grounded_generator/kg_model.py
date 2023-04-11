@@ -142,7 +142,6 @@ class TripleEncoder(nn.Module):
         logging.debug("\tEncoding {} concepts and {} relations".format(kg_input.concept_ids.shape, kg_input.relation_ids.shape))
 
         # Embed concepts and relations
-        logging.debug("Embedding device={}, concept_ids device={}".format(self.concept_embd.weight.device, kg_input.concept_ids.device))
         concept_repr = self.concept_embd(kg_input.concept_ids)
         rel_repr = self.relation_embd(kg_input.relation_ids)
 
@@ -464,7 +463,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def _expand_inputs_for_generation(self, expand_size=1, is_encoder_decoder=False, input_ids=None, **model_kwargs):
 
-        logging.verbose("EXPAND INPUTS {}".format(expand_size))
+        logging.spam("EXPAND INPUTS {}".format(expand_size))
 
         # Apply regular expansion to inouts and model_kwargs
         input_ids, model_kwargs = super()._expand_inputs_for_generation(
@@ -486,7 +485,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def prepare_inputs_for_generation(self, decoder_input_ids, past_key_values=None, attention_mask=None, **kwargs):
 
-        logging.verbose("PREPARE INPUTS shape {}".format(decoder_input_ids.shape))
+        logging.spam("PREPARE INPUTS shape {}".format(decoder_input_ids.shape))
 
         # If past_key_values are present, only use last token as decoder input
         if past_key_values is not None:
@@ -508,7 +507,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def _update_model_kwargs_for_generation(self, outputs, model_kwargs, is_encoder_decoder=False, standardize_cache_format=False, ):
 
-        logging.verbose("UPDATE KWARGS {}".format(model_kwargs.keys()))
+        logging.spam("UPDATE KWARGS {}".format(model_kwargs.keys()))
 
         # Apply regular update function (e.g. to update past_key_values)
         model_kwargs = super()._update_model_kwargs_for_generation(outputs, model_kwargs, is_encoder_decoder, standardize_cache_format)
@@ -522,7 +521,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     def _reorder_cache(past, beam_idx):
         # Shape of past: Tuple of num_layers
         # Each layer has 2 (or more) tensors of shape B, num_layers, sequence_length, key_dim (=64)
-        logging.verbose("REORDER {}".format(beam_idx))
+        logging.spam("REORDER {}".format(beam_idx))
 
         reordered_past = ()
         for layer_past in past:

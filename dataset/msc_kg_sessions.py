@@ -124,17 +124,17 @@ class KG_enriched_MSC_Session(MSC_Session):
         return text, [label], kg_info
 
     def _get_kg_info(self, text, labels=None):
-        logging.verbose('Get KG info')
+        logging.spam('Get KG info')
 
         kg_info = dict()
         if labels is None:
             labels = []
-        logging.verbose("Text  : {}".format(text))
-        logging.verbose("Labels: {}".format(labels))
+        logging.spam("Text  : {}".format(text))
+        logging.spam("Labels: {}".format(labels))
 
         # Match input text and label with concepts in knowledge graph
         concepts = self.kg.match_mentioned_concepts(text, ' '.join(labels), self.overlapping_concepts)
-        logging.verbose("Concepts: {}:{} + {}:{}".format(
+        logging.spam("Concepts: {}:{} + {}:{}".format(
             len(concepts['source_concepts']), 
             concepts['source_concepts'], 
             len(concepts['target_concepts']), 
@@ -157,7 +157,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         filtered_data = self.kg.filter_directed_triple(related_concepts, max_concepts=self.max_concepts, max_triples=self.max_triples)
         del related_concepts
 
-        logging.verbose("Related concepts {}: {}".format(
+        logging.spam("Related concepts {}: {}".format(
             len(filtered_data['concept_ids']), 
             self.kg.formatted_concepts_string(filtered_data, 10)
         ))
@@ -187,7 +187,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         kg_info['tail_idx'] = torch.LongTensor(filtered_data['tail_idx'])
         kg_info['triple_labels'] = torch.LongTensor(filtered_data['triple_labels'])
 
-        logging.verbose("Relations {}: {}".format(
+        logging.spam("Relations {}: {}".format(
             len(kg_info['head_idx']),
             self.kg.formatted_triples_string(filtered_data, 5)
         ))
