@@ -7,6 +7,7 @@ from torch_scatter import scatter_max, scatter_mean, scatter_add
 from transformers import GPT2LMHeadModel, PreTrainedModel
 from transformers.utils import ModelOutput
 
+from models.knowledge_grounded_generator.kg_utils import ConceptGraph
 from utils import logging
 
 from dataclasses import dataclass
@@ -708,6 +709,11 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
     tokenizer.pad_token = tokenizer.eos_token
+    args.speaker_prefixes = ['<me>', '<you>']
+    args.add_tokens = args.speaker_prefixes
+
+    kg = ConceptGraph(args.kg_datadir, args.kg)
+    kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/'
     dataset = KG_enriched_MSC_Session(
@@ -716,6 +722,7 @@ if __name__ == "__main__":
         sessions=[2],
         subset='train', 
         tokenizer=tokenizer, 
+        kg=kg,
         max_samples=None, 
         batch_format="huggingface", 
         batch_pad_id=tokenizer.pad_token_id

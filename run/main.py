@@ -251,7 +251,10 @@ def train_with_args(config, args):
         
             tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
             tokenizer.pad_token = tokenizer.eos_token
+            if args.add_tokens is not None:
+                num_added_toks = tokenizer.add_tokens(args.add_tokens)
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+            model.gpt2model.resize_token_embeddings(len(tokenizer))
             criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
 
         else:
@@ -417,7 +420,7 @@ if __name__ == "__main__":
     logging.set_log_level(args.loglevel)
     if args.logdir is not None:
         logging.add_file_handler(logdir=args.logdir)
-    logging.info("Args: {}".format(args))
+    logging.info("Args: {}".format('\n'.join(["{:20s}: {}".format(k, v) for k, v in vars(args).items()])))
 
     if args.do_grid_search:
         ray.init(

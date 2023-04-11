@@ -20,6 +20,7 @@ class MSC_Session(Dataset):
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Sessions')
         group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
+        group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--include_persona", default=False, action='store_true')
         group.add_argument("--sessions", default=[1, 2], nargs='+', type=int, help="MSC sessions to include in dataset")
         return parser
