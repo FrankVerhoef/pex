@@ -209,7 +209,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
 
         # tokenizer uses LEFT padding, but need to use RIGHT padding for labels
-        tokenized_labels = [self.tokenizer.encode(labels[0], return_tensors='pt').squeeze() for labels in labels_batch]
+        tokenized_labels = [self.tokenizer.encode(labels[0], return_tensors='pt').squeeze(dim=0) for labels in labels_batch]
         labels = BatchEncoding({
             'input_ids': padded_tensor(tokenized_labels, pad_value=self.tokenizer.pad_token_id),
             'attention_mask': padded_tensor([torch.ones(len(sequence), dtype=torch.long) for sequence in tokenized_labels], pad_value=0)
