@@ -537,6 +537,13 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     ### Train step and validation step
     ###
 
+    def _shift_labels_left(self, labels):
+        B = labels.shape[0]
+        filler = torch.full((B, 1), fill_value=self.gpt2model.config.eos_token_id)
+        shifted_labels = torch.cat([labels[:, 1:], filler], dim=1)
+        return shifted_labels
+
+
     def train_step(self, batch, optimizer, criterion, device):
 
         inputs, labels, kg_input = batch
@@ -546,7 +553,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
         optimizer.zero_grad()
         output = self.forward(
-            input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
+            input_ids=torch.cat([inputs.input_ids, self._shift_labels_left(labels.input_ids)], dim=1),
             attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
             kg_input=kg_input
         )
@@ -578,7 +585,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     
         with torch.no_grad():
             output = self.forward(
-                input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
+                input_ids=torch.cat([inputs.input_ids, self._shift_labels_left(labels.input_ids)], dim=1),
                 attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
                 kg_input=kg_input
             )
