@@ -253,7 +253,7 @@ class KG_enriched_MSC_Session(MSC_Session):
 
             with torch.no_grad():
                 output = model.generate(
-                    inputs=torch.cat([inputs.input_ids, labels.input_ids[:, 0]], dim=1).to(device),
+                    inputs=torch.cat([inputs.input_ids, labels.input_ids[:, 0].view(-1, 1)], dim=1).to(device),
                     kg_input=kg_input.to(device),
                     generation_config=GenerationConfig(
                         pad_token_id=model.gpt2model.config.eos_token_id,

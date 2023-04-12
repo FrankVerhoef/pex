@@ -539,8 +539,8 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def _shift_labels_left(self, labels):
         B = labels.shape[0]
-        filler = torch.full((B, 1), fill_value=self.gpt2model.config.eos_token_id, device=labels.device)
-        shifted_labels = torch.cat([labels[:, 1:], filler], dim=1)
+        filler = torch.full((B, 1), fill_value=self.gpt2model.config.eos_token_id, dtype=torch.long, device=labels.device)
+        shifted_labels = torch.cat([labels[:, 1:].view(B, -1), filler], dim=1)
         return shifted_labels
 
 
@@ -553,13 +553,14 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
         optimizer.zero_grad()
         output = self.forward(
-            input_ids=torch.cat([inputs.input_ids, self._shift_labels_left(labels.input_ids)], dim=1),
+            input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
             attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
             kg_input=kg_input
         )
         len_labels = labels.input_ids.shape[1]
+        shifted_labels = self._shift_labels_left(labels.input_ids)
         loss, gen_loss, triple_loss, gate_loss = criterion(
-            output.logits[:, -len_labels:], labels.input_ids, 
+            output.logits[:, -len_labels:], shifted_labels, 
             output.triple_prob[:, -len_labels:], kg_input.triple_labels, 
             output.gate[:, -len_labels:], kg_input.gate_labels
         )
@@ -585,22 +586,24 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     
         with torch.no_grad():
             output = self.forward(
-                input_ids=torch.cat([inputs.input_ids, self._shift_labels_left(labels.input_ids)], dim=1),
+                input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
                 attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
                 kg_input=kg_input
             )
-            len_labels = labels.input_ids.shape[1]
+            len_labels = labels.input_ids.shape[1]        
+            shifted_labels = self._shift_labels_left(labels.input_ids)
             loss, gen_loss, triple_loss, gate_loss = criterion(
-                output.logits[:, -len_labels:], labels.input_ids, 
+                output.logits[:, -len_labels:], shifted_labels, 
                 output.triple_prob[:, -len_labels:], kg_input.triple_labels, 
                 output.gate[:, -len_labels:], kg_input.gate_labels
             )
 
         pred = output.logits[:, -len_labels:].cpu().argmax(dim=-1)
         labels = labels.to("cpu")
+        shifted_labels = shifted_labels.to("cpu")
 
         # LM accuracy
-        token_correct = labels['input_ids'].eq(pred) * labels['attention_mask']
+        token_correct = shifted_labels.eq(pred) * labels['attention_mask']
         token_acc = (token_correct.sum() / labels['attention_mask'].sum()).item() 
 
         stats = {
