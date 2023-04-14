@@ -311,3 +311,47 @@ def bfs(target, triple_dict, sources, max_steps=2):
     
     return connecting_paths
 
+
+import torch
+def last_token_info(model_output, decoder, print_max=8):
+
+    B = model_output.logits.shape[0]
+    if B < print_max:
+        print_max = B
+    m = 7
+    top5probs = torch.topk(model_output.logits[:print_max, -1, :], k=5, dim=-1, sorted=True)
+    top5lm = torch.topk(model_output.lm_probs[:print_max, -1, :], k=5, dim=-1, sorted=True)
+    top5kg = torch.topk(model_output.concept_probs_vocab[:print_max, -1, :], k=5, dim=-1, sorted=True)
+    gate = model_output.gate[:print_max, -1]
+    is_concept = model_output.is_concept[:print_max, -1]
+    print_str = '--- token probabilities ---\n'
+    print_str += " ".join([
+        "{:.2f} {:7s}".format(values[0].item(), decoder(indices[0].item())[:m]) 
+        for values, indices in zip(list(top5probs[0]), list(top5probs[1]))
+    ]) +'\n'
+    print_str += " ".join([
+        "     {:7s}".format('C' if c else ' ')
+        for c in is_concept
+    ]) + '\n'
+    print_str += " ".join([
+        "{:.2f}        ".format(v.item())
+        for v in gate
+    ]) + '\n'
+    print_str += "\n"
+    print_str += '\n'.join([
+        " ".join([
+            "{:.2f} {:7s}".format(top5lm[0][b][index].item(), decoder(top5lm[1][b][index].item())[:m]) 
+            for b in range(print_max)
+        ])
+        for index in range(5)
+    ]) + '\n'
+    print_str += "-" * 104 + '\n'
+    print_str += '\n'.join([
+        " ".join([
+            "{:.2f} {:7s}".format(top5kg[0][b][index].item(), decoder(top5kg[1][b][index].item())[:m]) 
+            for b in range(print_max)
+        ])
+        for index in range(5)
+    ]) + '\n'
+    print_str += "-" * 104 + '\n'
+    return print_str

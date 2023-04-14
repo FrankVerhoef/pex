@@ -7,7 +7,7 @@ from torch_scatter import scatter_max, scatter_mean, scatter_add
 from transformers import GPT2LMHeadModel, PreTrainedModel
 from transformers.utils import ModelOutput
 
-from models.knowledge_grounded_generator.kg_utils import ConceptGraph
+from models.knowledge_grounded_generator.kg_utils import ConceptGraph, last_token_info
 from utils import logging
 
 from dataclasses import dataclass
@@ -379,11 +379,12 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     
     def __init__(self, opt, tokenizer, config):
         super().__init__(config)
+        self.tokenizer = tokenizer      # TODO: Remove --> does not belong here; only used for testing
 
         # Model and parameters for language model
         self.gpt2model = GPT2LMHeadModel.from_pretrained("gpt2")
-        self.gpt2model.resize_token_embeddings(len(tokenizer))
         self.softmax = nn.Softmax(dim=-1)
+        self.self_token_id = opt['self_token_id']
         if opt['fixed_lm'] == True:
             self.fix_lm_weights()
 
@@ -445,7 +446,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
             lm_hidden_states, lm_probs, triple_repr, kg_input
         )
 
-        return KGModelOutput(
+        model_output = KGModelOutput(
             logits=probs,
             gate=gate,
             lm_probs=lm_probs,
@@ -457,6 +458,8 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
             last_hidden_state=lm_hidden_states,
             attentions=lm_output.attentions
         )
+        logging.debug(last_token_info(model_output, self.tokenizer._convert_id_to_token))
+        return model_output
 
     ###
     ### Functions to adjust generation behaviour
@@ -537,10 +540,10 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     ### Train step and validation step
     ###
 
-    def _shift_labels_left(self, labels):
+    def _shift_labels_right(self, labels):
         B = labels.shape[0]
-        filler = torch.full((B, 1), fill_value=self.gpt2model.config.eos_token_id, dtype=torch.long, device=labels.device)
-        shifted_labels = torch.cat([labels[:, 1:].view(B, -1), filler], dim=1)
+        bos_tokens = torch.full((B, 1), fill_value=self.self_token_id, dtype=torch.long, device=labels.device)
+        shifted_labels = torch.cat([bos_tokens, labels[:, :-1].view(B, -1)], dim=1)
         return shifted_labels
 
 
@@ -553,14 +556,13 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
         optimizer.zero_grad()
         output = self.forward(
-            input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
+            input_ids=torch.cat([inputs.input_ids, self._shift_labels_right(labels.input_ids)], dim=1),
             attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
             kg_input=kg_input
         )
         len_labels = labels.input_ids.shape[1]
-        shifted_labels = self._shift_labels_left(labels.input_ids)
         loss, gen_loss, triple_loss, gate_loss = criterion(
-            output.logits[:, -len_labels:], shifted_labels, 
+            output.logits[:, -len_labels:], labels.input_ids, 
             output.triple_prob[:, -len_labels:], kg_input.triple_labels, 
             output.gate[:, -len_labels:], kg_input.gate_labels
         )
@@ -586,25 +588,23 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     
         with torch.no_grad():
             output = self.forward(
-                input_ids=torch.cat([inputs.input_ids, labels.input_ids], dim=1),
+                input_ids=torch.cat([inputs.input_ids, self._shift_labels_right(labels.input_ids)], dim=1),
                 attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
                 kg_input=kg_input
             )
             len_labels = labels.input_ids.shape[1]        
-            shifted_labels = self._shift_labels_left(labels.input_ids)
             loss, gen_loss, triple_loss, gate_loss = criterion(
-                output.logits[:, -len_labels:], shifted_labels, 
+                output.logits[:, -len_labels:], labels.input_ids, 
                 output.triple_prob[:, -len_labels:], kg_input.triple_labels, 
                 output.gate[:, -len_labels:], kg_input.gate_labels
             )
 
         pred = output.logits[:, -len_labels:].cpu().argmax(dim=-1)
         labels = labels.to("cpu")
-        shifted_labels = shifted_labels.to("cpu")
 
         # LM accuracy
-        token_correct = shifted_labels.eq(pred) * labels['attention_mask']
-        token_acc = (token_correct.sum() / labels['attention_mask'].sum()).item() 
+        token_correct = labels.input_ids.eq(pred) * labels.attention_mask
+        token_acc = (token_correct.sum() / labels.attention_mask.sum()).item() 
 
         stats = {
             "loss": loss.mean().item(),
@@ -634,33 +634,37 @@ if __name__ == "__main__":
 
         # General, loading, saving, logging
         parser.add_argument("--seed", type=int, default=42, help="Random seed")
-        parser.add_argument("--loglevel", type=str, default="DEBUG", choices=logging.get_all_levels())
+        parser.add_argument("--loglevel", type=str, default="SPAM", choices=logging.get_all_levels())
         parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "mps", "cuda"])
         
         # Training
-        parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+        parser.add_argument("--batch_size", type=int, default=3, help="Batch size")
         parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
 
         return parser
 
     def batch_act(obs_batch, model, tokenizer, device, collate_fn):
         inputs, labels, kg_info = collate_fn(obs_batch)
-        L = inputs.input_ids.shape[1]
+        B, L = inputs.input_ids.shape[:2]
+        bos_tokens = torch.full((B, 1), fill_value=model.self_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)
-        input_ids = inputs.input_ids.to(device)
-        kg_input = kg_info.to(device)
-        output = model.generate(
-            inputs=input_ids,
-            kg_input=kg_input,
-            generation_config=GenerationConfig(
-                pad_token_id=model.gpt2model.config.eos_token_id,
-                use_cache=True,
-                num_beams=1,
-                do_sample=False,
-                max_new_tokens=20
+
+        with torch.no_grad():
+            output = model.generate(
+                # Add the self_token to the input. 
+                inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
+                kg_input=kg_info.to(device),
+                generation_config=GenerationConfig(
+                    pad_token_id=model.gpt2model.config.eos_token_id,
+                    use_cache=True,
+                    num_beams=1,
+                    do_sample=False,
+                    max_new_tokens=5,
+                    return_dict_in_generate=True
+                )
             )
-        )
-        output_gen = output[:, L:]
+        output_gen = output.sequences[:, L:]
+        logging.verbose(output_gen)
         responses = tokenizer.batch_decode(output_gen)
         return responses
 
@@ -721,6 +725,9 @@ if __name__ == "__main__":
     tokenizer.pad_token = tokenizer.eos_token
     args.speaker_prefixes = ['<me>', '<you>']
     args.add_tokens = args.speaker_prefixes
+    tokenizer.add_tokens(args.add_tokens)
+    args.self_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+
 
     kg = ConceptGraph(args.kg_datadir, args.kg)
     kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
@@ -738,6 +745,7 @@ if __name__ == "__main__":
         batch_pad_id=tokenizer.pad_token_id
     )
     model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+    model.gpt2model.resize_token_embeddings(len(tokenizer))
     criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 

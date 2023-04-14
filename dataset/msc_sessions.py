@@ -19,7 +19,7 @@ class MSC_Session(Dataset):
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Sessions')
-        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
+        group.add_argument("--speaker_prefixes", default=['<self>', '<other>'], nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--include_persona", default=False, action='store_true')
         group.add_argument("--sessions", default=[1, 2], nargs='+', type=int, help="MSC sessions to include in dataset")
@@ -28,7 +28,7 @@ class MSC_Session(Dataset):
     def __init__(self, basedir='./', sessions=[2], subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Session, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
-        assert (speaker_prefixes is None) or (len(speaker_prefixes) == 2), "Invalid number of persona prefixes ({})".format(len(speaker_prefixes))
+        assert len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
         self.sessions = sessions
         self.subset=subset
         self.dialogues = []
@@ -48,6 +48,8 @@ class MSC_Session(Dataset):
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
+        self.self_token = speaker_prefixes[0]
+        self.other_token = speaker_prefixes[1]
         self.include_persona = include_persona
         self.tokenizer = tokenizer
         self.batch_format = batch_format
@@ -98,12 +100,10 @@ class MSC_Session(Dataset):
         #TODO: decide whether to include space between persona token and utterance
         """
         if self.speaker_prefixes is not None:
-            history = ' '.join([self.speaker_prefixes[p] + ' ' + t for p, t in self.history[i]])
-            last_utterance = self.speaker_prefixes[0] + ' ' + self.next_utterance[i]
+            history = ' '.join([self.speaker_prefixes[p] + t for p, t in self.history[i]])
         else:
-            history = ' '.join([t for p, t in self.history[i]])
-            last_utterance = self.next_utterance[i]
-        return history, last_utterance
+            history = ' '.join([t for _, t in self.history[i]])
+        return history, self.next_utterance[i]
     
     def corpus(self):
         corpus = []

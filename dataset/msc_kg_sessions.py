@@ -169,7 +169,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         # Construct list with gate_labels
         target_concept_ids = [self.tokenizer.encode(' ' + c)[0] for c in concepts['target_concepts']]
         label_ids = self.tokenizer.encode(labels[0]) if len(labels) > 0 else []
-        gate_labels = [1 if x in target_concept_ids else 0 for x in label_ids] #TODO: check if it is necessary to add 0 for end-token
+        gate_labels = [1 if x in target_concept_ids else 0 for x in label_ids] + [0] #Added 0, because 'eos_token' will be added to labels
 
         # Info about the related concepts
         concept_token_ids = [self.tokenizer.encode(' ' + self.kg.id2concept[id])[0] for id in filtered_data['concept_ids']]
@@ -196,6 +196,7 @@ class KG_enriched_MSC_Session(MSC_Session):
 
 
     def batchify(self, data):
+        # TODO: make sure total length of input + labels fits in transformer!
 
         # seperate source and target sequences and kg_info
         text_batch, labels_batch, kg_info_batch = zip(*data)
@@ -209,7 +210,12 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
 
         # tokenizer uses LEFT padding, but need to use RIGHT padding for labels
-        tokenized_labels = [self.tokenizer.encode(labels[0], return_tensors='pt').squeeze(dim=0) for labels in labels_batch]
+        # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
+        tokenized_labels = [
+            self.tokenizer.encode(labels[0] + self.tokenizer.eos_token, return_tensors='pt').squeeze(dim=0) 
+            for labels in labels_batch
+        ]
+        # create encoding; note that attention_mask also covers the eos_token
         labels = BatchEncoding({
             'input_ids': padded_tensor(tokenized_labels, pad_value=self.tokenizer.pad_token_id),
             'attention_mask': padded_tensor([torch.ones(len(sequence), dtype=torch.long) for sequence in tokenized_labels], pad_value=0)
@@ -223,7 +229,7 @@ class KG_enriched_MSC_Session(MSC_Session):
             head_idx = padded_tensor([obs['head_idx'] for obs in kg_info_batch], pad_value=0),
             tail_idx = padded_tensor([obs['tail_idx'] for obs in kg_info_batch], pad_value=0),
             triple_labels = padded_tensor([obs['triple_labels'] for obs in kg_info_batch], pad_value=-1),
-            gate_labels = padded_tensor([obs['gate_labels'] for obs in kg_info_batch], pad_value=-1), #TODO: should gate labels be left padded??
+            gate_labels = padded_tensor([obs['gate_labels'] for obs in kg_info_batch], pad_value=-1),
             vocab_map = torch.stack([obs['vocab_map'] for obs in kg_info_batch]),
             map_mask = torch.stack([obs['map_mask'] for obs in kg_info_batch])
         )
@@ -242,6 +248,7 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         model = model.to(device)
         model.eval()
+        self_token_id = self.tokenizer._convert_token_to_id(self.self_token)
         target_responses = []
         pred_responses = []
         interval_counter = 0
@@ -249,11 +256,13 @@ class KG_enriched_MSC_Session(MSC_Session):
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
             inputs, labels, kg_input = self.batchify(data)
-            L = inputs.input_ids.shape[1]
+            B, L = inputs.input_ids.shape[:2]
+            bos_tokens = torch.full((B, 1), fill_value=self_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
             with torch.no_grad():
                 output = model.generate(
-                    inputs=torch.cat([inputs.input_ids, labels.input_ids[:, 0].view(-1, 1)], dim=1).to(device),
+                    # Add the self_token to the input. 
+                    inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
                     kg_input=kg_input.to(device),
                     generation_config=GenerationConfig(
                         pad_token_id=model.gpt2model.config.eos_token_id,
@@ -264,7 +273,7 @@ class KG_enriched_MSC_Session(MSC_Session):
                     )
                 )
                 output = output.cpu()
-            responses = self.tokenizer.batch_decode(output[:, L:])
+            responses = self.tokenizer.batch_decode(output[:, L+1:])
 
             if print_max > 0:
                 print_responses(data, responses)

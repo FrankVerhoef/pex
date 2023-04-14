@@ -190,8 +190,11 @@ if __name__ == "__main__":
         
             tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
             tokenizer.pad_token = tokenizer.eos_token
+            if args.add_tokens is not None:
+                num_added_toks = tokenizer.add_tokens(args.add_tokens)
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
-
+            model.gpt2model.resize_token_embeddings(len(tokenizer))
+            
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
         
@@ -209,7 +212,7 @@ if __name__ == "__main__":
 
     if args.load != '':
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
-        model.load_state_dict(torch.load(args.checkpoint_dir + args.load))
+        model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device('cpu')))
 
     eval_kwargs = {'device': args.device, 'log_interval': args.log_interval}
     if args.task in ["generate", "dialog"]:

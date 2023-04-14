@@ -252,7 +252,8 @@ def train_with_args(config, args):
             tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
             tokenizer.pad_token = tokenizer.eos_token
             if args.add_tokens is not None:
-                num_added_toks = tokenizer.add_tokens(args.add_tokens)
+                tokenizer.add_tokens(args.add_tokens)
+            args.self_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
             model.gpt2model.resize_token_embeddings(len(tokenizer))
             criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
