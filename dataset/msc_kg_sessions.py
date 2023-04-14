@@ -248,7 +248,7 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         model = model.to(device)
         model.eval()
-        self_token_id = self.tokenizer._convert_token_to_id(self.self_token)
+        self_token_id = self.tokenizer.convert_tokens_to_ids(self.self_token)
         target_responses = []
         pred_responses = []
         interval_counter = 0
