@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch_scatter import scatter_max, scatter_mean, scatter_add
-from transformers import GPT2LMHeadModel, PreTrainedModel
+from transformers import AutoModelForCausalLM, PreTrainedModel
 from transformers.utils import ModelOutput
 
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph, last_token_info
@@ -326,6 +326,12 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('KnowledgeGroundedDecoder')
         group.add_argument(
+            "--lm",
+            type=str,
+            default="microsoft/DialoGPT-medium",
+            help="Language model"
+        )
+        group.add_argument(
             "--num_hops",
             type=int,
             default=2,
@@ -382,9 +388,9 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         self.tokenizer = tokenizer      # TODO: Remove --> does not belong here; only used for testing
 
         # Model and parameters for language model
-        self.gpt2model = GPT2LMHeadModel.from_pretrained("gpt2")
+        self.gpt2model = AutoModelForCausalLM.from_pretrained(opt["lm"])
         self.softmax = nn.Softmax(dim=-1)
-        self.self_token_id = opt['self_token_id']
+        self.bos_token_id = opt['bos_token_id']
         if opt['fixed_lm'] == True:
             self.fix_lm_weights()
 
@@ -469,7 +475,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
         logging.spam("EXPAND INPUTS {}".format(expand_size))
 
-        # Apply regular expansion to inouts and model_kwargs
+        # Apply regular expansion to inputs and model_kwargs
         input_ids, model_kwargs = super()._expand_inputs_for_generation(
             expand_size=expand_size,
             is_encoder_decoder=is_encoder_decoder,
@@ -542,7 +548,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
 
     def _shift_labels_right(self, labels):
         B = labels.shape[0]
-        bos_tokens = torch.full((B, 1), fill_value=self.self_token_id, dtype=torch.long, device=labels.device)
+        bos_tokens = torch.full((B, 1), fill_value=self.bos_token_id, dtype=torch.long, device=labels.device)
         shifted_labels = torch.cat([bos_tokens, labels[:, :-1].view(B, -1)], dim=1)
         return shifted_labels
 
@@ -646,12 +652,12 @@ if __name__ == "__main__":
     def batch_act(obs_batch, model, tokenizer, device, collate_fn):
         inputs, labels, kg_info = collate_fn(obs_batch)
         B, L = inputs.input_ids.shape[:2]
-        bos_tokens = torch.full((B, 1), fill_value=model.self_token_id, dtype=torch.long, device=inputs.input_ids.device)
+        bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)
 
         with torch.no_grad():
             output = model.generate(
-                # Add the self_token to the input. 
+                # Add the bos_token to the input. 
                 inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
                 kg_input=kg_info.to(device),
                 generation_config=GenerationConfig(
@@ -663,7 +669,7 @@ if __name__ == "__main__":
                     return_dict_in_generate=True
                 )
             )
-        output_gen = output.sequences[:, L:]
+        output_gen = output.sequences[:, L+1:]
         logging.verbose(output_gen)
         responses = tokenizer.batch_decode(output_gen)
         return responses
@@ -721,12 +727,17 @@ if __name__ == "__main__":
     ### Test decoder
     ###
 
-    tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
-    tokenizer.pad_token = tokenizer.eos_token
+    args.lm = "microsoft/DialoGPT-medium"
+    tokenizer = AutoTokenizer.from_pretrained(args.lm)
+    tokenizer.pad_token_id = tokenizer.eos_token_id
     args.speaker_prefixes = ['<me>', '<you>']
-    args.add_tokens = args.speaker_prefixes
-    tokenizer.add_tokens(args.add_tokens)
-    args.self_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+    args.add_tokens = None # args.speaker_prefixes
+    if args.add_tokens is not None:
+        tokenizer.add_tokens(args.add_tokens)
+    # if args.speaker_prefixes is not None:
+    #     args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+    # else:
+    args.bos_token_id = tokenizer.eos_token_id
 
 
     kg = ConceptGraph(args.kg_datadir, args.kg)

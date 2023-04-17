@@ -249,11 +249,14 @@ def train_with_args(config, args):
 
         if args.model == "kg_gen":
         
-            tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
-            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer = AutoTokenizer.from_pretrained(args.lm)
+            tokenizer.pad_token_id = tokenizer.eos_token_id
             if args.add_tokens is not None:
                 tokenizer.add_tokens(args.add_tokens)
-            args.self_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+            # if args.speaker_prefixes is not None:
+            #     args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+            # else:
+            args.bos_token_id = tokenizer.eos_token_id
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
             model.gpt2model.resize_token_embeddings(len(tokenizer))
             criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
