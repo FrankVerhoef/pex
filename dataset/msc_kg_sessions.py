@@ -250,7 +250,6 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         model = model.to(device)
         model.eval()
-        self_token_id = self.tokenizer.convert_tokens_to_ids(self.self_token)
         target_responses = []
         pred_responses = []
         interval_counter = 0
@@ -259,7 +258,7 @@ class KG_enriched_MSC_Session(MSC_Session):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
             inputs, _, kg_input = self.batchify(data)
             B, L = inputs.input_ids.shape[:2]
-            bos_tokens = torch.full((B, 1), fill_value=self_token_id, dtype=torch.long, device=inputs.input_ids.device)
+            bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
             with torch.no_grad():
                 output = model.generate(
