@@ -28,14 +28,17 @@ class MSC_Session(Dataset):
     def __init__(self, basedir='./', sessions=[2], subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0):
         super(MSC_Session, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
-        assert len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
+        assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
         self.sessions = sessions
         self.subset=subset
         self.dialogues = []
         for s in self.sessions:
             if str(s)[0] == '1':
                 version = str(s).split('-')[1:]
-                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
+                if len(version) > 0:
+                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
+                else:
+                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
                 logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
                 self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
             else:
@@ -48,8 +51,6 @@ class MSC_Session(Dataset):
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
-        self.self_token = speaker_prefixes[0]
-        self.other_token = speaker_prefixes[1]
         self.include_persona = include_persona
         self.tokenizer = tokenizer
         self.batch_format = batch_format
