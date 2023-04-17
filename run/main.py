@@ -59,7 +59,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
                 loss_avg = sum(train_losses[-log_interval:]) / log_interval
                 if use_wandb:
                     wandb.log({"train_loss": loss_avg, "epoch": epoch}, step=step)
-                logging.verbose("Epoch {}, step {}: Train loss={:.4f}".format(epoch, step, loss_avg))
+                logging.info("Epoch {}, step {}: Train loss={:.4f}".format(epoch, step, loss_avg))    
     
             if (step % valid_interval == 0) or (step % num_batches == 0):
                 # Evaluate on validation set
