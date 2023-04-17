@@ -75,6 +75,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         return parser
 
     def __init__(self, opt, basedir='./', sessions=[2], subset='train', tokenizer=None, kg=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+        assert batch_format == "huggingface", f"{__class__.__name__} only supports batch_format 'huggingface'" 
         super().__init__(
             basedir=basedir,
             sessions=sessions, 
@@ -201,25 +202,26 @@ class KG_enriched_MSC_Session(MSC_Session):
         # seperate source and target sequences and kg_info
         text_batch, labels_batch, kg_info_batch = zip(*data)
 
+        # use left padding for the input
+        self.tokenizer.padding_size = 'left'
         inputs = self.tokenizer(
-            [text for text in text_batch], 
+            text_batch, 
             padding=True, 
             truncation=True,
             return_attention_mask=True,
             return_tensors='pt'
         )
 
-        # tokenizer uses LEFT padding, but need to use RIGHT padding for labels
+        # use right padding for labels
         # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
-        tokenized_labels = [
-            self.tokenizer.encode(labels[0] + self.tokenizer.eos_token, return_tensors='pt').squeeze(dim=0) 
-            for labels in labels_batch
-        ]
-        # create encoding; note that attention_mask also covers the eos_token
-        labels = BatchEncoding({
-            'input_ids': padded_tensor(tokenized_labels, pad_value=self.tokenizer.pad_token_id),
-            'attention_mask': padded_tensor([torch.ones(len(sequence), dtype=torch.long) for sequence in tokenized_labels], pad_value=0)
-        })
+        self.tokenizer.padding_side = 'right'
+        labels = self.tokenizer(
+            [labels[0] + self.tokenizer.eos_token for labels in labels_batch],
+            padding=True, 
+            truncation=True,
+            return_attention_mask=True,
+            return_tensors='pt'            
+        )
 
         kg_info = KG_Info(
             concept_ids = padded_tensor([obs['concept_token_ids'] for obs in kg_info_batch], pad_value=self.tokenizer.pad_token_id),
@@ -255,13 +257,13 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
-            inputs, labels, kg_input = self.batchify(data)
+            inputs, _, kg_input = self.batchify(data)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=self_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
             with torch.no_grad():
                 output = model.generate(
-                    # Add the self_token to the input. 
+                    # Add the bos_token to the input. 
                     inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
                     kg_input=kg_input.to(device),
                     generation_config=GenerationConfig(
