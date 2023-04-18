@@ -3,10 +3,13 @@
 ###
 
 import torch
+from torcheval.metrics.functional import bleu_score
+from torchmetrics.functional.text.rouge import rouge_score
 from torch.utils.data import Dataset
 import json
 import random
 
+from transformers import GenerationConfig
 from dataset.convai2 import ConvAI2
 
 import utils.logging as logging
@@ -19,13 +22,13 @@ class MSC_Session(Dataset):
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Sessions')
-        group.add_argument("--speaker_prefixes", default=['<self>', '<other>'], nargs=2, help="prefixes for 'self' and 'other'")
+        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--include_persona", default=False, action='store_true')
         group.add_argument("--sessions", default=[1, 2], nargs='+', type=int, help="MSC sessions to include in dataset")
         return parser
 
-    def __init__(self, basedir='./', sessions=[2], subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, basedir='./', sessions=[2], subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0, **kwargs):
         super(MSC_Session, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
@@ -126,7 +129,29 @@ class MSC_Session(Dataset):
 
         if self.batch_format == "huggingface":
 
-            encoded = self.tokenizer(text=history_batch, text_target=next_utterance_batch, padding=True, return_tensors="pt")
+            # encoded = self.tokenizer(text=history_batch, text_target=next_utterance_batch, padding=True, return_tensors="pt")
+
+            # use left padding for the input
+            self.tokenizer.padding_size = 'left'
+            inputs = self.tokenizer(
+                history_batch, 
+                padding=True, 
+                truncation=True,
+                return_attention_mask=True,
+                return_tensors='pt'
+            )
+
+            # use right padding for labels
+            # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
+            self.tokenizer.padding_side = 'right'
+            labels = self.tokenizer(
+                [label + self.tokenizer.eos_token for label in next_utterance_batch],
+                padding=True, 
+                truncation=True,
+                return_attention_mask=True,
+                return_tensors='pt'            
+            )
+            encoded = inputs, labels
 
         elif self.batch_format == "padded_sequences":
 
@@ -145,6 +170,67 @@ class MSC_Session(Dataset):
 
         return encoded
 
+
+    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
+
+        def print_responses(data, responses):
+            for (x, y), p in zip(data, responses):
+                print('context:    ', x)
+                print('target:     ', y)
+                print('prediction: ', p)
+                print('-' * 40)
+
+        model = model.to(device)
+        model.eval()
+        target_responses = []
+        pred_responses = []
+        interval_counter = 0
+
+        for start_index in range(0, self.__len__(), batch_size):
+            data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
+            inputs, _ = self.batchify(data)
+            B, L = inputs.input_ids.shape[:2]
+            bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
+
+            with torch.no_grad():
+                output = model.model.generate(
+                    # Add the bos_token to the input. 
+                    inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
+                    generation_config=GenerationConfig(
+                        pad_token_id=model.model.config.eos_token_id,
+                        use_cache=True,
+                        num_beams=3,
+                        do_sample=True,
+                        max_new_tokens=decoder_max
+                    )
+                )
+                output = output.cpu()
+            responses = self.tokenizer.batch_decode(output[:, L+1:])
+
+            if print_max > 0:
+                print_responses(data, responses)
+                print_max -= len(data)
+
+            target_responses.extend([label for _, label in data])
+            pred_responses.extend(responses)
+
+            interval_counter += len(pred_responses)
+            if interval_counter >= log_interval:
+                logging.verbose(f"Evaluated {len(pred_responses)}/{self.__len__()} samples")
+                interval_counter =- log_interval
+
+        logging.info(f"Completed evaluation of {len(pred_responses)} samples")
+
+        try:
+            bleu_4 = bleu_score(target_responses, pred_responses).item()
+        except ValueError:
+            bleu_4 = 0
+        rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
+
+        stats = {"bleu": bleu_4}
+        stats.update({k: v.item() for k, v in rouge_scores.items()})
+
+        return stats
 
 if __name__ == "__main__":
 
