@@ -649,7 +649,7 @@ if __name__ == "__main__":
 
         return parser
 
-    def batch_act(obs_batch, model, tokenizer, device, collate_fn):
+    def predict(obs_batch, model, tokenizer, device, collate_fn):
         inputs, labels, kg_info = collate_fn(obs_batch)
         B, L = inputs.input_ids.shape[:2]
         bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
@@ -763,7 +763,7 @@ if __name__ == "__main__":
     data = [dataset[i] for i in range(args.batch_size)]
     batch = dataset.batchify(data)
 
-    responses = batch_act(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
+    responses = predict(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
     responses_stringlist = [
         "Context:  {}\n"
         "Label:    {}\n"
