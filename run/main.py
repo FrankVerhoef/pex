@@ -16,14 +16,16 @@ import ray
 from ray import air, tune
 from ray.tune.schedulers import ASHAScheduler, HyperBandScheduler
 
-from transformers import AutoTokenizer, PretrainedConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
+from models.dialogpt import DialoGPT
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
+from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
@@ -253,33 +255,49 @@ def train_with_args(config, args):
             tokenizer.pad_token_id = tokenizer.eos_token_id
             if args.add_tokens is not None:
                 tokenizer.add_tokens(args.add_tokens)
-            # if args.speaker_prefixes is not None:
-            #     args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
-            # else:
             args.bos_token_id = tokenizer.eos_token_id
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
             model.gpt2model.resize_token_embeddings(len(tokenizer))
             criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
 
+            kg = ConceptGraph(args.kg_datadir, args.kg)
+            kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
+
+        elif args.model == "dialogpt":
+
+            tokenizer = AutoTokenizer.from_pretrained(args.lm)
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+            if args.add_tokens is not None:
+                tokenizer.add_tokens(args.add_tokens)
+            args.bos_token_id = tokenizer.eos_token_id
+            model = DialoGPT(args.lm, args.bos_token_id)
+            model.model.resize_token_embeddings(len(tokenizer))
+            criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        kg = ConceptGraph(args.kg_datadir, args.kg)
-        kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
-        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            if 1 in args.sessions:
-                args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
-            dataset_config = {
-                'basedir': args.datadir + args.basedir,
-                'sessions': args.sessions,
-                'tokenizer': tokenizer,
-                'batch_format': "huggingface",
-                'batch_pad_id': tokenizer.pad_token_id
-            } 
-            traindata = KG_enriched_MSC_Session(vars(args), subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
-            validdata = KG_enriched_MSC_Session(vars(args), subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
-            testdata = KG_enriched_MSC_Session(vars(args), subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
-
+        if 1 in args.sessions:
+            args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
+        dataset_config = vars(args)
+        dataset_config.update({
+            'basedir': args.datadir + args.basedir,
+            'sessions': args.sessions,
+            'tokenizer': tokenizer,
+            'batch_format': "huggingface",
+            'batch_pad_id': tokenizer.pad_token_id
+        })
+        if args.model == "kgg":
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
+                traindata = KG_enriched_MSC_Session(vars(args), subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
+                validdata = KG_enriched_MSC_Session(vars(args), subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
+                testdata = KG_enriched_MSC_Session(vars(args), subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
+        elif args.model == "dialogpt":
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
+                traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
+                validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+                
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
         wandb.config.update(args)  # Converts args to a dictionary and logs it in wandb
@@ -320,8 +338,8 @@ def train_with_args(config, args):
         if args.use_wandb:
             wandb.run.summary["test_accuracy"] = test_stats["valid_acc"]
 
-        logging.info("Reloading model from {}".format(savepath))
-        model.load_state_dict(torch.load(savepath))
+        # logging.info("Reloading model from {}".format(savepath))
+        # model.load_state_dict(torch.load(savepath))
         if args.task == "classify":
             eval_kwargs = {'device': args.device}
         elif args.task == "generate":
@@ -336,7 +354,7 @@ def train_with_args(config, args):
             eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
 
         logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
-        eval_stats = testdata.evaluate(model, **eval_kwargs)
+        eval_stats = testdata.evaluate(best_model, **eval_kwargs)
         report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
         logging.report(report)
 
@@ -360,7 +378,7 @@ def get_parser():
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen"], help="Model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="Model")
 
     # Task and Dataset
     parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
@@ -402,6 +420,7 @@ if __name__ == "__main__":
         "bart": BartExtractor,
         "prefixbart": PrefixBart,
         "kg_gen": KnowledgeGroundedDecoder,
+        "dialogpt": DialoGPT,
     }[args.model].add_cmdline_args(parser)
 
     if args.model == "seq2seq":
