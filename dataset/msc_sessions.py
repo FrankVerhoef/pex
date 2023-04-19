@@ -199,8 +199,8 @@ class MSC_Session(Dataset):
                     generation_config=GenerationConfig(
                         pad_token_id=model.model.config.eos_token_id,
                         use_cache=True,
-                        num_beams=3,
-                        do_sample=True,
+                        num_beams=1,
+                        do_sample=False,
                         max_new_tokens=decoder_max
                     )
                 )
