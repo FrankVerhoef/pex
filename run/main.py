@@ -262,6 +262,7 @@ def train_with_args(config, args):
 
             kg = ConceptGraph(args.kg_datadir, args.kg)
             kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
+            del args.kg  # argument kg becomes the graph (instead of the filename)
 
         elif args.model == "dialogpt":
 
@@ -287,11 +288,11 @@ def train_with_args(config, args):
             'batch_format': "huggingface",
             'batch_pad_id': tokenizer.pad_token_id
         })
-        if args.model == "kgg":
+        if args.model == "kg_gen":
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-                traindata = KG_enriched_MSC_Session(vars(args), subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
-                validdata = KG_enriched_MSC_Session(vars(args), subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
-                testdata = KG_enriched_MSC_Session(vars(args), subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
+                traindata = KG_enriched_MSC_Session(subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
+                validdata = KG_enriched_MSC_Session(subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
+                testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
         elif args.model == "dialogpt":
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)

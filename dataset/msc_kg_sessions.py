@@ -74,24 +74,34 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
         return parser
 
-    def __init__(self, opt, basedir='./', sessions=[2], subset='train', tokenizer=None, kg=None, max_samples=None, batch_format="huggingface", batch_pad_id=0):
+    def __init__(self, 
+        basedir='./', 
+        sessions=[2],
+        subset='train', 
+        tokenizer=None, 
+        kg=None, 
+        max_samples=None, 
+        batch_format="huggingface", 
+        batch_pad_id=0, 
+        **kwargs
+    ):
         assert batch_format == "huggingface", f"{__class__.__name__} only supports batch_format 'huggingface'" 
         super().__init__(
             basedir=basedir,
             sessions=sessions, 
             subset=subset,
             tokenizer=tokenizer, 
-            speaker_prefixes=opt['speaker_prefixes'],
-            include_persona=opt['include_persona'], 
+            speaker_prefixes=kwargs['speaker_prefixes'],
+            include_persona=kwargs['include_persona'], 
             max_samples=max_samples, 
             batch_format=batch_format, 
             batch_pad_id=batch_pad_id
         )
-        self.num_hops = opt['num_hops']
-        self.max_branch = opt['max_branch']
-        self.max_concepts = opt['max_concepts']
-        self.max_triples = opt['max_triples']
-        self.overlapping_concepts = opt['overlapping_concepts']
+        self.num_hops = kwargs['num_hops']
+        self.max_branch = kwargs['max_branch']
+        self.max_concepts = kwargs['max_concepts']
+        self.max_triples = kwargs['max_triples']
+        self.overlapping_concepts = kwargs['overlapping_concepts']
         self._cache_sorted_dict_ind = sorted(self.tokenizer.get_vocab().values())
         self.kg = kg
         logging.info("Initialized KG_enriched_MSC_Session")
@@ -268,8 +278,8 @@ class KG_enriched_MSC_Session(MSC_Session):
                     generation_config=GenerationConfig(
                         pad_token_id=model.gpt2model.config.eos_token_id,
                         use_cache=True,
-                        num_beams=3,
-                        do_sample=True,
+                        num_beams=1,
+                        do_sample=False,
                         max_new_tokens=decoder_max
                     )
                 )
