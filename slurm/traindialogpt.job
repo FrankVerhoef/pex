@@ -3,7 +3,7 @@
 #SBATCH --partition gpu
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH --job-name Train_KGgen
+#SBATCH --job-name Train_DialoGPT
 #SBATCH --time 2:00:00
 #SBATCH --mem 32G
 #SBATCH --output slurm/outputs/train_%A.out
@@ -30,15 +30,13 @@ srun python -u run/main.py \
         --basedir msc/msc_dialogue/  \
         --sessions 1 \
         --speaker_prefixes \<self\> \<other\> \
+        --add_tokens \<self\> \<other\> \
         --include_persona \
-        --kg-datadir "$TMPDIR"/data/kg_data/ \
-        --kg kg.graph \
-        --dataset-concepts dataset_concepts.txt \
         --train_samples 6400 \
         --valid_samples 200 \
         --test_samples 20 \
-        --model kg_gen \
-        --lm microsoft/DialoGPT-medium \
+        --model dialogpt \
+        --lm microsoft/DialoGPT-small \
         --decoder_max 30 \
         --batch_size 16  \
         --learning_rate 0.00005 \
@@ -51,7 +49,7 @@ srun python -u run/main.py \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save test_dgpt  \
+        --save test_dgpt_sp  \
         --use_wandb 
 
 cp "$TMPDIR"/logs/* ./logs

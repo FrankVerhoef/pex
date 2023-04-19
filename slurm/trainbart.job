@@ -26,8 +26,7 @@ srun python -u run/main.py \
 	--task generate  \
         --basedir msc/msc_personasummary/  \
         --speaker_prefixes \<self\> \<other\> \
-        --nofact_token \<nofact\> \
-        --add_tokens \<self\> \<other\> \<nofact\> \
+        --add_tokens \<self\> \<other\> \
         --sessions 1 2 3 \
         --model bart \
         --decoder_max 20 \
