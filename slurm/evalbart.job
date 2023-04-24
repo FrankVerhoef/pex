@@ -28,7 +28,7 @@ srun python -u run/eval.py \
         --speaker_prefixes \<self\> \<other\> \
         --nofact_token \<nofact\> \
         --add_tokens \<self\> \<other\> \<nofact\> \
-        --sessions 1 2 3 \
+        --sessions 4 \
         --model bart \
         --decoder_max 30 \
         --device cuda  \
@@ -36,6 +36,6 @@ srun python -u run/eval.py \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir ./checkpoints/ \
-        --load test_bart  \
+        --load trained_bart  \
 
 cp "$TMPDIR"/logs/* ./logs
