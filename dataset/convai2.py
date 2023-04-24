@@ -65,7 +65,11 @@ class ConvAI2(Dataset):
 
 
     def _parse_dialogs(self, basedir, version, subset):
-
+        """
+        Note about format of the input file!
+        It contains sentences with 'your persona', then sentences with 'partner's persona', then dialogue turns
+        Each turn has two utterances. THE FIRST UTTERANCE IS FROM PARTNER (=> Speaker 1 corresponds to Partners's persona)!
+        """
         len_self_prefix, len_other_prefix = len("your persona: "), len("partner's persona: ")
         dialogues = []
         filepath = basedir + subset + '_' + '_'.join(version) + '.txt'
@@ -77,26 +81,26 @@ class ConvAI2(Dataset):
                 while i < len(lines):
 
                     # Parse lines for one dialogue
-                    personas_self, personas_other, turns = [], [], []
+                    personas_1, personas_2, turns = [], [], []
                     line_split = lines[i].split(sep=' ', maxsplit=1)
 
                     # Check if the file contains persona sentences for 'your persona'
                     while (line_split[1][:len_self_prefix] == "your persona: ") and (i < len(lines)):
-                        personas_self.append(line_split[1][len_self_prefix:-1])  # do not include the last '\n'
+                        personas_2.append(line_split[1][len_self_prefix:-1])  # do not include the last '\n'
                         i += 1
                         if i >= len(lines): break
                         line_split = lines[i].split(sep=' ', maxsplit=1)
 
                     # Check if the file contains persona sentences for 'partner's persona'
                     while (line_split[1][:len_other_prefix] == "partner's persona: ") and (i < len(lines)):
-                        personas_other.append(line_split[1][len_other_prefix:-1]) # do not include the last '\n'
+                        personas_1.append(line_split[1][len_other_prefix:-1]) # do not include the last '\n'
                         i += 1
                         if i >= len(lines): break
                         line_split = lines[i].split(sep=' ', maxsplit=1)
                     
                     # Check again if the file contains persona sentences for 'your persona', because sometimes partner's persona comes before your persona
                     while (line_split[1][:len_self_prefix] == "your persona: ") and (i < len(lines)):
-                        personas_self.append(line_split[1][len_self_prefix:-1])  # do not include the last '\n'
+                        personas_2.append(line_split[1][len_self_prefix:-1])  # do not include the last '\n'
                         i += 1
                         if i >= len(lines): break
                         line_split = lines[i].split(sep=' ', maxsplit=1)
@@ -121,7 +125,7 @@ class ConvAI2(Dataset):
                         line_split = lines[i].split(sep=' ', maxsplit=1)                
 
                     dialogues.append({
-                        'personas': [personas_self, personas_other], 
+                        'init_personas': [personas_2, personas_1], 
                         'dialog': turns
                     })
 
