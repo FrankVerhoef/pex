@@ -3,8 +3,9 @@
 ###
 
 import torch
-from torcheval.metrics.functional import bleu_score
+from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
+import evaluate
 from torch.utils.data import Dataset
 import json
 import random
@@ -73,14 +74,15 @@ class MSC_Session(Dataset):
                 
                 history = []
                 if self.include_persona:
-                    if init_personas is not None:
-                        # Include the persona sentences corresponding to the next speaker (Speaker 1=index 0, Speaker 2=index 1)
-                        p_next = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
-                        history.extend([(0, t) for t in init_personas[p_next]])
                     if personas is not None:
                         # Include infered persona sentences corresponding to the last speaker
                         p_hist = 0 if turns[len_history - 1]["id"] == 'Speaker 1' else 1
                         history.extend([(1, t) for t in personas[p_hist]])
+
+                    if init_personas is not None:
+                        # Include the persona sentences corresponding to the next speaker (Speaker 1=index 0, Speaker 2=index 1)
+                        p_next = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
+                        history.extend([(0, t) for t in init_personas[p_next]])
 
                 for i in range(len_history):
                     p = (len_history - i) % 2
@@ -219,6 +221,8 @@ class MSC_Session(Dataset):
         target_responses = []
         pred_responses = []
         interval_counter = 0
+        meteor = evaluate.load("meteor")
+        google_bleu = evaluate.load("google_bleu")
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
@@ -256,13 +260,18 @@ class MSC_Session(Dataset):
 
         logging.info(f"Completed evaluation of {len(pred_responses)} samples")
 
-        try:
-            bleu_4 = bleu_score(target_responses, pred_responses).item()
-        except ValueError:
-            bleu_4 = 0
+        bleu_google = google_bleu.compute(predictions=pred_responses, references=[[t] for t in target_responses])
+        meteor_score = meteor.compute(predictions=pred_responses, references=[[t] for t in target_responses])
+        bleu_2 = bleu_score(target_responses, pred_responses, n_gram=2, smooth=True).item()
+        bleu_4 = bleu_score(target_responses, pred_responses, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
-        stats = {"bleu": bleu_4}
+        stats = {
+            "bleu_2": bleu_2, 
+            "bleu_4": bleu_4, 
+            "gleu": bleu_google, 
+            "meteor": meteor_score
+        }
         stats.update({k: v.item() for k, v in rouge_scores.items()})
 
         return stats
