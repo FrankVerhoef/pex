@@ -15,7 +15,7 @@ from dataset.convai2 import ConvAI2
 import utils.logging as logging
 
 
-BATCH_FORMATS = ["huggingface", "padded_sequences"]
+BATCH_FORMATS = ["huggingface_xycat", "huggingface_xysplit", "padded_sequences"]
 
 class MSC_Session(Dataset):
     
@@ -25,34 +25,33 @@ class MSC_Session(Dataset):
         group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--include_persona", default=False, action='store_true')
-        group.add_argument("--sessions", default=[1, 2], nargs='+', type=int, help="MSC sessions to include in dataset")
+        group.add_argument("--session", default=2, type=int, help="MSC session to include in dataset")
         return parser
 
-    def __init__(self, basedir='./', sessions=[2], subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface", batch_pad_id=0, **kwargs):
+    def __init__(self, basedir='./', session=2, subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface_xycat", batch_pad_id=0, **kwargs):
         super(MSC_Session, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
-        self.sessions = sessions
+        self.session = session
         self.subset=subset
         self.dialogues = []
-        for s in self.sessions:
-            if str(s)[0] == '1':
-                version = str(s).split('-')[1:]
-                if len(version) > 0:
-                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
-                else:
-                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
-                logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
-                self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
+        if str(session)[0] == '1':
+            version = str(session).split('-')[1:]
+            if len(version) > 0:
+                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
             else:
-                filepath = f"{basedir}session_{s}/{subset}.txt"
-                try:
-                    with open(filepath, "r") as f:
-                        msc_dialogues = [json.loads(line) for line in f]
-                    logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {s} for {subset} dataset")
-                    self.dialogues.extend(msc_dialogues)
-                except FileNotFoundError:
-                    logging.warning(f"File '{filepath}' not found -> skipped")
+                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
+            logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
+            self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
+        else:
+            filepath = f"{basedir}session_{session}/{subset}.txt"
+            try:
+                with open(filepath, "r") as f:
+                    msc_dialogues = [json.loads(line) for line in f]
+                logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {session} for {subset} dataset")
+                self.dialogues.extend(msc_dialogues)
+            except FileNotFoundError:
+                logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
         self.include_persona = include_persona
         self.tokenizer = tokenizer
@@ -65,18 +64,23 @@ class MSC_Session(Dataset):
         
         for d in self.dialogues:
             turns = d.get("dialog", [])
-            personas = d.get("personas", None)
+            personas = d.get("personas", None)  # The persona sentences ('facts') that were infered from the dialogue
+            init_personas = d.get("init_personas", None)  # The initial persona sentences from ConvAI2 dataset
             num_turns = len(turns)
             if num_turns < 2:
                 continue
             for len_history in range(1, num_turns):
                 
-                if self.include_persona and personas is not None:
-                    # Include the persona sentences corresponding to the last speaker in the dialog (who has ID=0, representing the bot)
-                    p = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
-                    history = [(0, t) for t in personas[p]]
-                else:
-                    history = []
+                history = []
+                if self.include_persona:
+                    if init_personas is not None:
+                        # Include the persona sentences corresponding to the next speaker (Speaker 1=index 0, Speaker 2=index 1)
+                        p_next = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
+                        history.extend([(0, t) for t in init_personas[p_next]])
+                    if personas is not None:
+                        # Include infered persona sentences corresponding to the last speaker
+                        p_hist = 0 if turns[len_history - 1]["id"] == 'Speaker 1' else 1
+                        history.extend([(1, t) for t in personas[p_hist]])
 
                 for i in range(len_history):
                     p = (len_history - i) % 2
@@ -105,9 +109,11 @@ class MSC_Session(Dataset):
         """
         if self.speaker_prefixes is not None:
             history = ' '.join([self.speaker_prefixes[p] + t for p, t in self.history[i]])
+            next_utterance = self.speaker_prefixes[0] + self.next_utterance[i]
         else:
             history = ' '.join([t for _, t in self.history[i]])
-        return history, self.next_utterance[i]
+            next_utterance = self.next_utterance[i]
+        return history, next_utterance
     
     def corpus(self):
         corpus = []
@@ -127,12 +133,40 @@ class MSC_Session(Dataset):
         # seperate source and target sequences
         history_batch, next_utterance_batch = zip(*data)
 
-        if self.batch_format == "huggingface":
+        if self.batch_format == "huggingface_xycat":
 
-            # encoded = self.tokenizer(text=history_batch, text_target=next_utterance_batch, padding=True, return_tensors="pt")
+            # use right padding
+            # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
+            self.tokenizer.padding_side = 'right'
+            self.tokenizer.truncation_side = 'left'
+            encoded = self.tokenizer(
+                [history + next_utterance + self.tokenizer.eos_token for history, next_utterance in data],
+                padding=True,
+                max_length=self.tokenizer.model_max_length, 
+                truncation=True,
+                return_attention_mask=True,
+                return_tensors='pt'            
+            )
+            logging.spam(f"Encoded shape={encoded.input_ids.shape}")
+
+        elif self.batch_format == "huggingface_x":
 
             # use left padding for the input
-            self.tokenizer.padding_size = 'left'
+            self.tokenizer.padding_side = 'left'
+            self.tokenizer.truncation_side = 'left'
+            encoded = self.tokenizer(
+                history_batch, 
+                padding=True, 
+                max_length=self.tokenizer.model_max_length - 50,  # Leave some room for generation! 
+                truncation=True,
+                return_attention_mask=True,
+                return_tensors='pt'
+            )            
+
+        elif self.batch_format == "huggingface_xysplit":
+
+            # use left padding for the input
+            self.tokenizer.padding_side = 'left'
             inputs = self.tokenizer(
                 history_batch, 
                 padding=True, 
@@ -188,7 +222,7 @@ class MSC_Session(Dataset):
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
-            inputs, _ = self.batchify(data)
+            inputs = self.batchify(data)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
@@ -196,6 +230,7 @@ class MSC_Session(Dataset):
                 output = model.model.generate(
                     # Add the bos_token to the input. 
                     inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
+                    # inputs.input_ids,
                     generation_config=GenerationConfig(
                         pad_token_id=model.model.config.eos_token_id,
                         use_cache=True,
@@ -205,7 +240,7 @@ class MSC_Session(Dataset):
                     )
                 )
                 output = output.cpu()
-            responses = self.tokenizer.batch_decode(output[:, L+1:])
+            responses = self.tokenizer.batch_decode(output[:, L:])
 
             if print_max > 0:
                 print_responses(data, responses)
@@ -233,28 +268,59 @@ class MSC_Session(Dataset):
         return stats
 
 if __name__ == "__main__":
-
+    import argparse
+    import random
     from transformers import AutoTokenizer
     from dataset.tokenizer import train_tokenizer, PAD_TOKEN
+
+    def get_parser():
+
+        parser = argparse.ArgumentParser(description="Train a KnowledgeGroundedDecoder", conflict_handler='resolve')
+
+        # General, loading, saving, logging
+        parser.add_argument("--seed", type=int, default=42, help="Random seed")
+        parser.add_argument("--loglevel", type=str, default="SPAM", choices=logging.get_all_levels())
+        parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "mps", "cuda"])
+        
+        # Training
+        parser.add_argument("--batch_size", type=int, default=3, help="Batch size")
+        parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
+
+        return parser
+
+    parser = get_parser()
+    args = parser.parse_known_args()[0]
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
     logging.set_log_level("SPAM")
     logging.info("Unit test {}".format(__file__))
+
+    args = parser.parse_args()
 
     datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
     basedir = 'msc/msc_dialogue/'
     subset = 'train'
-    sessions = [1, 2]
-    if 1 in sessions:
+    session = 2
+    if session == 1:
         version = ['both', 'revised']
-        sessions = [(item if item != 1 else '-'.join(['1'] + version)) for item in sessions]
+        session = '-'.join(['1'] + version)
     speaker_prefixes = ['<me>', '<you>']
-    include_persona = False
+    add_tokens = speaker_prefixes
+    include_persona = True
 
     # Test extraction of dialogue turns and persona sentences
-    tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
-    pad_token_id = tokenizer.pad_token_id
-    batch_format = "huggingface"
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    if add_tokens is not None:
+        tokenizer.add_tokens(add_tokens)
+    bos_token_id = tokenizer.eos_token_id
+    if speaker_prefixes is not None:
+        bos_token_id = tokenizer.convert_tokens_to_ids(speaker_prefixes[0]) # Will return eos_token_id, unless <self> token had been added to tokenizer
+
+    batch_format = "huggingface_xycat"
     # tokenizer = train_tokenizer(
-    #     corpus=MSC_Session(basedir=datadir + basedir, sessions=sessions, tokenizer=None, max_samples=1000).corpus(),
+    #     corpus=MSC_Session(basedir=datadir + basedir, session=session, tokenizer=None, max_samples=1000).corpus(),
     #     max_size=4000
     # )
     # pad_token_id = tokenizer.token_to_id(PAD_TOKEN)
@@ -262,16 +328,17 @@ if __name__ == "__main__":
 
     msc_turns = MSC_Session(
         basedir=datadir+basedir, 
-        sessions=sessions, 
+        session=session, 
         subset=subset, 
         tokenizer=tokenizer, 
         speaker_prefixes=speaker_prefixes,
         include_persona=include_persona,
-        batch_pad_id=pad_token_id,
+        batch_pad_id=tokenizer.pad_token_id,
         batch_format=batch_format
     )
     for sentence in msc_turns.corpus()[10:30]:
         logging.verbose(sentence)
+    logging.verbose('-'*40)
         
     data = [msc_turns[i] for i in range(10)]
 

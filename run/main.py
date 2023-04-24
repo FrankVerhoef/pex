@@ -149,7 +149,7 @@ def train_with_args(config, args):
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
             dataset_config = {
                 'basedir': args.datadir + args.basedir,
-                'sessions': args.sessions,
+                'session': args.session,
                 'tokenizer': tokenizer,
                 'len_context': args.len_context,
                 'speaker_prefixes': args.speaker_prefixes,
@@ -169,7 +169,7 @@ def train_with_args(config, args):
 
             if args.load == '':
                 tokenizer = train_tokenizer(
-                    corpus=MSC_Turns(basedir=args.basedir, sessions=args.sessions, subset='train', tokenizer=None, max_samples=args.train_samples),
+                    corpus=MSC_Turns(basedir=args.basedir, session=args.session, subset='train', tokenizer=None, max_samples=args.train_samples),
                     max_size=args.vocab_size
                 )
                 if args.add_tokens is not None:
@@ -235,7 +235,7 @@ def train_with_args(config, args):
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
             dataset_config = {
                 'basedir': args.datadir + args.basedir,
-                'sessions': args.sessions,
+                'session': args.session,
                 'tokenizer': tokenizer,
                 'len_context': args.len_context,
                 'speaker_prefixes': args.speaker_prefixes,
@@ -270,7 +270,10 @@ def train_with_args(config, args):
             tokenizer.pad_token_id = tokenizer.eos_token_id
             if args.add_tokens is not None:
                 tokenizer.add_tokens(args.add_tokens)
-            args.bos_token_id = tokenizer.eos_token_id
+            if args.speaker_prefixes is not None:
+                args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+            else:
+                args.bos_token_id = tokenizer.eos_token_id
             model = DialoGPT(args.lm, args.bos_token_id)
             model.model.resize_token_embeddings(len(tokenizer))
             criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
@@ -278,22 +281,23 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        if 1 in args.sessions:
-            args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
+        if args.session == 1:
+            args.session = '-'.join(['1'] + args.convai2_version)
         dataset_config = vars(args)
         dataset_config.update({
             'basedir': args.datadir + args.basedir,
-            'sessions': args.sessions,
+            'session': args.session,
             'tokenizer': tokenizer,
-            'batch_format': "huggingface",
             'batch_pad_id': tokenizer.pad_token_id
         })
         if args.model == "kg_gen":
+            dataset_config["batch_format"] = "huggingface_xysplit"
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = KG_enriched_MSC_Session(subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
                 validdata = KG_enriched_MSC_Session(subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
                 testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
         elif args.model == "dialogpt":
+            dataset_config["batch_format"] = "huggingface_xycat"
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
                 validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
@@ -353,6 +357,8 @@ def train_with_args(config, args):
                 args.device = 'cpu'
                 logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
             eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
+            if args.model == "dialogpt":
+                testdata.batch_format = "huggingface_x"
 
         logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
         eval_stats = testdata.evaluate(best_model, **eval_kwargs)
@@ -435,7 +441,7 @@ if __name__ == "__main__":
     }[args.task].add_cmdline_args(parser)
     
     args = parser.parse_known_args()[0]
-    if 1 in args.sessions:
+    if args.session == 1:
         parser = ConvAI2.add_cmdline_args(parser)
     
     args = parser.parse_args()

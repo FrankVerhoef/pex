@@ -76,7 +76,7 @@ class KG_enriched_MSC_Session(MSC_Session):
 
     def __init__(self, 
         basedir='./', 
-        sessions=[2],
+        session=2,
         subset='train', 
         tokenizer=None, 
         kg=None, 
@@ -85,10 +85,10 @@ class KG_enriched_MSC_Session(MSC_Session):
         batch_pad_id=0, 
         **kwargs
     ):
-        assert batch_format == "huggingface", f"{__class__.__name__} only supports batch_format 'huggingface'" 
+        assert batch_format == "huggingface_xysplit", f"{__class__.__name__} only supports batch_format 'huggingface_xysplit'" 
         super().__init__(
             basedir=basedir,
-            sessions=sessions, 
+            session=session, 
             subset=subset,
             tokenizer=tokenizer, 
             speaker_prefixes=kwargs['speaker_prefixes'],
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     import argparse
     from transformers import AutoTokenizer
 
-    parser = argparse.ArgumentParser(description="Test KG_enriched_MSC_Session")
+    parser = argparse.ArgumentParser(description="Test KG_enriched_MSC_Session", conflict_handler="resolve")
     parser = KG_enriched_MSC_Session.add_cmdline_args(parser)
     parser = ConvAI2.add_cmdline_args(parser)
 
@@ -331,29 +331,31 @@ if __name__ == "__main__":
     datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
     basedir = 'msc/msc_dialogue/'
     subset = 'train'
-    args.sessions = [1, 2]
-    if 1 in args.sessions:
+    args.session = 2
+    if args.session == 1:
         version = args.convai2_version
-        args.sessions = [(item if item != 1 else '-'.join(['1'] + version)) for item in args.sessions]
+        args.session = '-'.join(['1'] + version)
 
     kg = ConceptGraph(args.kg_datadir, args.kg)
     kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
 
+    dataset_config = vars(args)
+    dataset_config.update({
+        'basedir': datadir + basedir,
+        'tokenizer': tokenizer,
+        'kg': kg,
+        'max_samples': None,
+        'batch_format': "huggingface_xysplit",
+        'batch_pad_id': tokenizer.pad_token_id
+    })
     dataset = KG_enriched_MSC_Session(
-        vars(args), 
-        basedir=datadir+basedir, 
-        subset=subset,
-        tokenizer=tokenizer, 
-        kg=kg,
-        max_samples=None, 
-        batch_format="huggingface", 
-        batch_pad_id=tokenizer.pad_token_id
+        **dataset_config
     )
 
     # Test extraction of dialogue turns and persona sentences
     # msc_turns = MSC_Session(
     #     basedir=datadir+basedir, 
-    #     sessions=args.sessions, 
+    #     session=args.session, 
     #     subset=subset, 
     #     tokenizer=tokenizer, 
     #     speaker_prefixes=['<self>', '<other>'], 

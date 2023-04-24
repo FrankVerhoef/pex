@@ -30,17 +30,14 @@ class DialoGPT(PreTrainedModel):
 
     def train_step(self, batch, optimizer, criterion, device):
 
-        inputs, labels = batch
-        inputs.to(device)
-        labels.to(device)
+        inputs = batch.to(device)
 
         optimizer.zero_grad()
         output = self.forward(
-            input_ids=torch.cat([inputs.input_ids, self._shift_labels_right(labels.input_ids)], dim=1),
-            attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
+            input_ids=inputs.input_ids,
+            attention_mask=inputs.attention_mask,
         )
-        len_labels = labels.input_ids.shape[1]
-        loss = criterion(output.logits[:, -len_labels:].transpose(1,2), labels.input_ids)
+        loss = criterion(output.logits[:, :-1].transpose(1,2), inputs.input_ids[:, 1:])
         logging.debug("Train: loss {:.4f}".format(loss.item()))
         loss.backward()
         optimizer.step()
@@ -50,24 +47,21 @@ class DialoGPT(PreTrainedModel):
 
     def valid_step(self, batch, criterion, device):
 
-        inputs, labels = batch
-        inputs.to(device)
-        labels.to(device)
+        inputs = batch.to(device)
     
         with torch.no_grad():
             output = self.forward(
-                input_ids=torch.cat([inputs.input_ids, self._shift_labels_right(labels.input_ids)], dim=1),
-                attention_mask=torch.cat([inputs.attention_mask, labels.attention_mask], dim=1),
+                input_ids=inputs.input_ids,
+                attention_mask=inputs.attention_mask,
             )
-            len_labels = labels.input_ids.shape[1]        
-            loss = criterion(output.logits[:, -len_labels:].transpose(1,2), labels.input_ids)
+            loss = criterion(output.logits[:, :-1].transpose(1,2), inputs.input_ids[:, 1:])
 
-        pred = output.logits[:, -len_labels:].cpu().argmax(dim=-1)
-        labels = labels.to("cpu")
+        pred = output.logits[:, :-1].cpu().argmax(dim=-1)
+        inputs = inputs.to("cpu")
 
         # LM accuracy
-        token_correct = labels.input_ids.eq(pred) * labels.attention_mask
-        token_acc = (token_correct.sum() / labels.attention_mask.sum()).item() 
+        token_correct = inputs.input_ids[:, 1:].eq(pred) * inputs.attention_mask[:, 1:]
+        token_acc = (token_correct.sum() / inputs.attention_mask[:, 1:].sum()).item() 
 
         stats = {
             "loss": loss.mean().item(),
@@ -103,7 +97,7 @@ if __name__ == "__main__":
     print(vars(args))
 
     def predict(obs_batch, model, tokenizer, device, collate_fn):
-        inputs, labels = collate_fn(obs_batch)
+        inputs = collate_fn(obs_batch)
         B, L = inputs.input_ids.shape[:2]
         bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)
@@ -133,13 +127,13 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(args.lm)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     args.speaker_prefixes = ['<me>', '<you>']
-    args.add_tokens = args.speaker_prefixes
+    args.add_tokens = None #args.speaker_prefixes
     if args.add_tokens is not None:
         tokenizer.add_tokens(args.add_tokens)
-    # if args.speaker_prefixes is not None:
-    #     args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
-    # else:
-    args.bos_token_id = tokenizer.eos_token_id
+    if args.speaker_prefixes is not None:
+        args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+    else:
+        args.bos_token_id = tokenizer.eos_token_id
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/'
     dataset = MSC_Session(
@@ -150,7 +144,7 @@ if __name__ == "__main__":
         speaker_prefixes=args.speaker_prefixes,
         include_persona=args.include_persona,
         max_samples=None, 
-        batch_format="huggingface", 
+        batch_format="huggingface_xycat", 
         batch_pad_id=tokenizer.pad_token_id
     )
     model = DialoGPT(args.lm, args.bos_token_id)
@@ -162,6 +156,7 @@ if __name__ == "__main__":
     data = [dataset[i] for i in range(args.batch_size)]
     batch = dataset.batchify(data)
 
+    dataset.batch_format = "huggingface_x"
     responses = predict(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
     responses_stringlist = [
         "Context:  {}\n"
