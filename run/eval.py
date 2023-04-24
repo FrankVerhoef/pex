@@ -3,6 +3,7 @@ python run/eval.py
 to run with defaults
 """
 import torch
+import torch.nn as nn
 import random
 
 from transformers import AutoTokenizer, PretrainedConfig
@@ -10,11 +11,13 @@ from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
+from models.dialogpt import DialoGPT
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import Tokenizer, PAD_TOKEN, END_TOKEN, UNK_TOKEN
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
+from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 
 from utils.general import loadname_prefix, savename
@@ -37,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
 
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen"], help="Encoder model")
+    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="Encoder model")
 
     # Dataset
     parser.add_argument("--datadir", type=str, default="/Users/FrankVerhoef/Programming/PEX/data/", help="Datadir")
@@ -57,7 +60,7 @@ if __name__ == "__main__":
     logging.set_log_level(args.loglevel)
     if args.logdir is not None:
         logging.add_file_handler(logdir=args.logdir)
-    logging.info("Args: {}".format(args))
+    logging.info("Args: {}".format('\n'.join(["{:20s}: {}".format(k, v) for k, v in vars(args).items()])))
 
     # Add cmdline arguments for model
     parser = {
@@ -66,6 +69,7 @@ if __name__ == "__main__":
         "bart": BartExtractor,
         "prefixbart": PrefixBart,
         "kg_gen": KnowledgeGroundedDecoder,
+        "dialogpt": DialoGPT,
     }[args.model].add_cmdline_args(parser)
 
     # Add cmdline arguments for task/dataset
@@ -76,7 +80,7 @@ if __name__ == "__main__":
     }[args.task].add_cmdline_args(parser)
     
     args = parser.parse_known_args()[0]
-    if 1 in args.sessions:
+    if args.session == 1:
         parser = ConvAI2.add_cmdline_args(parser)
     
     if args.model == "seq2seq":
@@ -100,7 +104,7 @@ if __name__ == "__main__":
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
         dataset_config = {
             'basedir': args.datadir + args.basedir,
-            'sessions': args.sessions,
+            'session': args.session,
             'tokenizer': tokenizer,
             'len_context': args.len_context,
             'speaker_prefixes': args.speaker_prefixes,
@@ -174,7 +178,7 @@ if __name__ == "__main__":
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
         dataset_config = {
             'basedir': args.datadir + args.basedir,
-            'sessions': args.sessions,
+            'session': args.session,
             'tokenizer': tokenizer,
             'len_context': args.len_context,
             'speaker_prefixes': args.speaker_prefixes,
@@ -188,40 +192,70 @@ if __name__ == "__main__":
 
         if args.model == "kg_gen":
         
-            tokenizer = AutoTokenizer.from_pretrained("gpt2", padding_side='left')
-            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer = AutoTokenizer.from_pretrained(args.lm)
+            tokenizer.pad_token_id = tokenizer.eos_token_id
             if args.add_tokens is not None:
-                num_added_toks = tokenizer.add_tokens(args.add_tokens)
+                tokenizer.add_tokens(args.add_tokens)
+            args.bos_token_id = tokenizer.eos_token_id
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
             model.gpt2model.resize_token_embeddings(len(tokenizer))
-            
+            criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
+
+            kg = ConceptGraph(args.kg_datadir, args.kg)
+            kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
+            del args.kg  # argument kg becomes the graph (instead of the filename)
+
+        elif args.model == "dialogpt":
+
+            tokenizer = AutoTokenizer.from_pretrained(args.lm)
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+            if args.add_tokens is not None:
+                tokenizer.add_tokens(args.add_tokens)
+            if args.speaker_prefixes is not None:
+                args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
+            else:
+                args.bos_token_id = tokenizer.eos_token_id
+            model = DialoGPT(args.lm, args.bos_token_id)
+            model.model.resize_token_embeddings(len(tokenizer))
+            criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
-        
-        kg = ConceptGraph(args.kg_datadir, args.kg)
-        kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
-        if 1 in args.sessions:
-            args.sessions = [(item if item != 1 else '-'.join(['1'] + args.convai2_version)) for item in args.sessions]
-        dataset_config = {
-            'basedir': args.datadir + args.basedir,
-            'tokenizer': tokenizer,
-            'batch_format': "huggingface",
-            'batch_pad_id': tokenizer.pad_token_id
-        } 
-        testdata = KG_enriched_MSC_Session(vars(args), subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
 
+        if args.session == 1:
+            args.session = '-'.join(['1'] + args.convai2_version)
+        dataset_config = vars(args)
+        dataset_config.update({
+            'basedir': args.datadir + args.basedir,
+            'session': args.session,
+            'tokenizer': tokenizer,
+            'batch_pad_id': tokenizer.pad_token_id
+        })
+        if args.model == "kg_gen":
+            dataset_config["batch_format"] = "huggingface_xysplit"
+            testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
+        elif args.model == "dialogpt":
+            dataset_config["batch_format"] = "huggingface_xycat"
+            testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+ 
     if args.load != '':
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
         model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device('cpu')))
 
-    eval_kwargs = {'device': args.device, 'log_interval': args.log_interval}
-    if args.task in ["generate", "dialog"]:
+    if args.task == "classify":
+        eval_kwargs = {'device': args.device}
+    elif args.task == "generate":
         if args.device == 'mps':
-            eval_kwargs['device'] = 'cpu'
+            args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs.update({'decoder_max': args.decoder_max})
-    if args.task == "dialog":
-        eval_kwargs.update({'batch_size': args.batch_size})
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
+    elif args.task == "dialog":
+        if args.device == 'mps':
+            args.device = 'cpu'
+            logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
+        if args.model == "dialogpt":
+            testdata.batch_format = "huggingface_x"
 
     logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
     eval_stats = testdata.evaluate(model, **eval_kwargs)
