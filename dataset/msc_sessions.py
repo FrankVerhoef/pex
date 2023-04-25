@@ -111,7 +111,7 @@ class MSC_Session(Dataset):
         """
         if self.speaker_prefixes is not None:
             history = ' '.join([self.speaker_prefixes[p] + t for p, t in self.history[i]])
-            next_utterance = self.speaker_prefixes[0] + self.next_utterance[i]
+            next_utterance = self.next_utterance[i] # Do not include speaker prefix for target
         else:
             history = ' '.join([t for _, t in self.history[i]])
             next_utterance = self.next_utterance[i]
@@ -138,11 +138,12 @@ class MSC_Session(Dataset):
         if self.batch_format == "huggingface_xycat":
 
             # use right padding
-            # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
+            # add <bos> token between context and target
+            # add <eos> token at end of all targets (necessary to make sure 'shift_right' of labels is possible )
             self.tokenizer.padding_side = 'right'
             self.tokenizer.truncation_side = 'left'
             encoded = self.tokenizer(
-                [history + next_utterance + self.tokenizer.eos_token for history, next_utterance in data],
+                [history + self.tokenizer.bos_token + next_utterance + self.tokenizer.eos_token for history, next_utterance in data],
                 padding=True,
                 max_length=self.tokenizer.model_max_length, 
                 truncation=True,
@@ -178,10 +179,11 @@ class MSC_Session(Dataset):
             )
 
             # use right padding for labels
+            # add <bos> token between context and target
             # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
             self.tokenizer.padding_side = 'right'
             labels = self.tokenizer(
-                [label + self.tokenizer.eos_token for label in next_utterance_batch],
+                [self.tokenizer.bos_token + label + self.tokenizer.eos_token for label in next_utterance_batch],
                 padding=True, 
                 truncation=True,
                 return_attention_mask=True,
@@ -244,7 +246,7 @@ class MSC_Session(Dataset):
                     )
                 )
                 output = output.cpu()
-            responses = self.tokenizer.batch_decode(output[:, L:])
+            responses = self.tokenizer.batch_decode(output[:, L+1:]) # Do not include <bos> token in response
 
             if print_max > 0:
                 print_responses(data, responses)
@@ -323,9 +325,9 @@ if __name__ == "__main__":
     tokenizer.pad_token_id = tokenizer.eos_token_id
     if add_tokens is not None:
         tokenizer.add_tokens(add_tokens)
-    bos_token_id = tokenizer.eos_token_id
+    tokenizer.bos_token_id = tokenizer.eos_token_id
     if speaker_prefixes is not None:
-        bos_token_id = tokenizer.convert_tokens_to_ids(speaker_prefixes[0]) # Will return eos_token_id, unless <self> token had been added to tokenizer
+        tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(speaker_prefixes[0]) # Will return eos_token_id, unless <self> token had been added to tokenizer
 
     batch_format = "huggingface_xycat"
     # tokenizer = train_tokenizer(
