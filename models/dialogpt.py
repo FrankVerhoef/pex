@@ -71,6 +71,7 @@ class DialoGPT(PreTrainedModel):
         logging.debug("Valid: loss {:.4f}".format(loss.mean().item()))
         return stats
 
+
 if __name__ == "__main__":
 
     import argparse
@@ -130,10 +131,9 @@ if __name__ == "__main__":
     args.add_tokens = None #args.speaker_prefixes
     if args.add_tokens is not None:
         tokenizer.add_tokens(args.add_tokens)
+    tokenizer.bos_token_id = tokenizer.eos_token_id
     if args.speaker_prefixes is not None:
-        args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
-    else:
-        args.bos_token_id = tokenizer.eos_token_id
+        tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/'
     dataset = MSC_Session(
@@ -147,7 +147,7 @@ if __name__ == "__main__":
         batch_format="huggingface_xycat", 
         batch_pad_id=tokenizer.pad_token_id
     )
-    model = DialoGPT(args.lm, args.bos_token_id)
+    model = DialoGPT(args.lm, tokenizer.bos_token_id)
     model.model.resize_token_embeddings(len(tokenizer))
 
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)    
