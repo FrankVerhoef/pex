@@ -7,6 +7,7 @@ from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
 import evaluate
 from torch.utils.data import Dataset
+from dataset.msc_summary_turns import MSC_Turns
 import json
 import random
 
@@ -26,10 +27,26 @@ class MSC_Session(Dataset):
         group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--include_persona", default=False, action='store_true')
+        group.add_argument("--include_history", default=False, action='store_true')
         group.add_argument("--session", default=2, type=int, help="MSC session to include in dataset")
+        group.add_argument("--augmented", default=False, action='store_true', help='add all shorter versions of the dialogue to training set')
         return parser
 
-    def __init__(self, basedir='./', session=2, subset='train', tokenizer=None, speaker_prefixes=None, include_persona=False, max_samples=None, batch_format="huggingface_xycat", batch_pad_id=0, **kwargs):
+    def __init__(self, 
+            basedir='./', 
+            session=2, 
+            subset='train', 
+            tokenizer=None, 
+            speaker_prefixes=None, 
+            include_persona=False, 
+            include_history=False,
+            augmented=False,
+            persona_selector=None,
+            max_samples=None, 
+            batch_format="huggingface_xycat", 
+            batch_pad_id=0, 
+            **kwargs
+        ):
         super(MSC_Session, self).__init__()
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
@@ -55,10 +72,13 @@ class MSC_Session(Dataset):
                 logging.warning(f"File '{filepath}' not found -> skipped")
         self.speaker_prefixes = speaker_prefixes
         self.include_persona = include_persona
+        self.include_history = include_history
+        self.augmented = augmented
+        self.persona_selector = persona_selector
         self.tokenizer = tokenizer
         self.batch_format = batch_format
         self.batch_pad_id = batch_pad_id
-        self.history, self.next_utterance = self.transform_dialogues(max_samples)
+        self.history, self.next_utterance = self.transform_dialogues(max_samples)   
 
     def transform_dialogues(self, max_samples):
         all_history, all_next_utterance = [], []
@@ -67,22 +87,37 @@ class MSC_Session(Dataset):
             turns = d.get("dialog", [])
             personas = d.get("personas", None)  # The persona sentences ('facts') that were infered from the dialogue
             init_personas = d.get("init_personas", None)  # The initial persona sentences from ConvAI2 dataset
-            num_turns = len(turns)
-            if num_turns < 2:
-                continue
-            for len_history in range(1, num_turns):
-                
+            previous_dialogs = d.get("previous_dialogs", None)
+            start_range = 0 if self.augmented else max(len(turns) - 1, 0)
+            for len_history in range(start_range, len(turns)):
                 history = []
+                previous_utterances = []
+                if self.include_persona or self.include_history:
+                    if previous_dialogs is not None:
+                        for prev_d in previous_dialogs:
+                            for i in range(len(prev_d['dialog'])):
+                                p = (len_history - i) % 2
+                                t = prev_d['dialog'][i].get("text", "")
+                                previous_utterances.append((p, t))
+
                 if self.include_persona:
-                    if personas is not None:
-                        # Include infered persona sentences corresponding to the last speaker
-                        p_hist = 0 if turns[len_history - 1]["id"] == 'Speaker 1' else 1
-                        history.extend([(1, t) for t in personas[p_hist]])
+                    if self.persona_selector is None:
+                        if personas is not None:
+                            # Include summary of persona sentences corresponding to the last speaker -> 'gold summary'
+                            p_hist = 0 if turns[len_history - 1]["id"] == 'Speaker 1' else 1
+                            history.extend([(1, t) for t in personas[p_hist]])
+                    else:
+                        firstspeaker_id = len_history % 2 #TODO: THINK ABOUT THIS!
+                        batch = MSC_Turns.batch_from_utterances(previous_utterances, firstspeaker_id)
+                        history.extend([(1, t) for t in self.persona_selector(batch)])
 
                     if init_personas is not None:
                         # Include the persona sentences corresponding to the next speaker (Speaker 1=index 0, Speaker 2=index 1)
                         p_next = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
                         history.extend([(0, t) for t in init_personas[p_next]])
+
+                if self.include_history:
+                    history.extend(previous_utterances)
 
                 for i in range(len_history):
                     p = (len_history - i) % 2
@@ -91,7 +126,6 @@ class MSC_Session(Dataset):
                 all_history.append(history)
 
                 next_utterance = turns[len_history]["text"]
-
                 all_next_utterance.append(next_utterance)
         
         if max_samples is not None:
@@ -318,7 +352,9 @@ if __name__ == "__main__":
         session = '-'.join(['1'] + version)
     speaker_prefixes = ['<me>', '<you>']
     add_tokens = speaker_prefixes
-    include_persona = True
+    include_persona = False
+    include_history = False
+    augmented = False
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -344,6 +380,8 @@ if __name__ == "__main__":
         tokenizer=tokenizer, 
         speaker_prefixes=speaker_prefixes,
         include_persona=include_persona,
+        include_history=include_history,
+        augmented=augmented,
         batch_pad_id=tokenizer.pad_token_id,
         batch_format=batch_format
     )
