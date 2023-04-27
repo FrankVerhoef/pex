@@ -9,6 +9,8 @@ from models.decoder_models import DECODERS, DECODER_TYPES
 
 class PersonaExtractor(nn.Module):
 
+    batch_format = "padded_sequences"
+
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('PersonaExtractor args')

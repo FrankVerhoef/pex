@@ -7,6 +7,8 @@ from transformers import PreTrainedModel, AutoModelForCausalLM, PretrainedConfig
 
 class DialoGPT(PreTrainedModel):
 
+    batch_format = "huggingface_xycat"
+
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('DialoGPT')

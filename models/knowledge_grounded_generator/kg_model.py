@@ -322,6 +322,8 @@ class KG_Probs_Model(nn.Module):
 
 class KnowledgeGroundedDecoder(PreTrainedModel):
 
+    batch_format = "huggingface_xysplit"
+
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('KnowledgeGroundedDecoder')

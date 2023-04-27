@@ -36,6 +36,8 @@ class ConditionalFactLoss(nn.Module):
 
 class BartExtractor(nn.Module):
 
+    batch_format = "huggingface"
+
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('BartExtractor')
@@ -312,7 +314,8 @@ if __name__ == "__main__":
     model.bart.resize_token_embeddings(len(tokenizer))
     criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=lm_loss_factor)
 
-    msc_turns = MSC_Turns(basedir=basedir, sessions=sessions, subset=subset, tokenizer=tokenizer, len_context=len_context, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    MSC_Turns.set(tokenizer=tokenizer, len_context=len_context, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    msc_turns = MSC_Turns(basedir=basedir, sessions=sessions, subset=subset)
     data = [msc_turns[i] for i in range(10)]
     batch = msc_turns.batchify(data)
 
