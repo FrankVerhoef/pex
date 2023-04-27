@@ -21,7 +21,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
-from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, BART_BASE
+from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss
 from models.dialogpt import DialoGPT
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
@@ -119,6 +119,30 @@ def eval(model, dataloader, criterion, device):
 
     return stats
 
+def evaluate(model, testdata, args):
+
+    if args.task == "classify":
+        eval_kwargs = {'device': args.device}
+    elif args.task == "generate":
+        if args.device == 'mps':
+            args.device = 'cpu'
+            logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
+    elif args.task == "dialog":
+        if args.device == 'mps':
+            args.device = 'cpu'
+            logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
+        if args.model == "dialogpt":
+            testdata.batch_format = "huggingface_x"
+
+    logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
+    eval_stats = testdata.evaluate(model, **eval_kwargs)
+    report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
+    logging.report(report)
+
+    return eval_stats 
+
 
 def train_with_args(config, args):
 
@@ -128,6 +152,10 @@ def train_with_args(config, args):
             setattr(args, k, v)
 
     logging.info("Set up {} to {}".format(args.model, args.task))
+
+    # set seed
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     if args.task == 'classify': 
         
@@ -208,7 +236,7 @@ def train_with_args(config, args):
 
         elif args.model[-4:] == "bart":
 
-            tokenizer = AutoTokenizer.from_pretrained(BART_BASE)
+            tokenizer = AutoTokenizer.from_pretrained(args.bart_base)
             if args.add_tokens is not None:
                 num_added_toks = tokenizer.add_tokens(args.add_tokens)
             pad_token_id = tokenizer.pad_token_id
@@ -216,10 +244,10 @@ def train_with_args(config, args):
             assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
 
             if args.model == "bart":
-                model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
+                model = BartExtractor(bart_base=args.bart_base, nofact_token_id=nofact_token_id)
             else:
                 model = PrefixBart(
-                    bart_base=BART_BASE, 
+                    bart_base=args.bart_base, 
                     nofact_token_id=nofact_token_id, 
                     freeze=args.freeze, 
                     enc_prefix_size=args.enc_prefix_size,
@@ -279,13 +307,23 @@ def train_with_args(config, args):
 
         if args.session == 1:
             args.session = '-'.join(['1'] + args.convai2_version)
-        dataset_config = vars(args)
-        dataset_config.update({
+        dataset_config = {
             'basedir': args.datadir + args.basedir,
             'session': args.session,
             'tokenizer': tokenizer,
-        })
+            'speaker_prefixes': args.speaker_prefixes,
+            'include_persona': args.include_persona,
+        }
+
         if args.model == "kg_gen":
+
+            dataset_config.update({
+                'num_hops': args.num_hops,
+                'max_branch': args.max_branch,
+                'max_concepts': args.max_concepts,
+                'max_triples': args.max_triples,
+                'overlapping_concepts': args.overlapping_concepts
+            })
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = KG_enriched_MSC_Session(subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
@@ -305,18 +343,23 @@ def train_with_args(config, args):
                 bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
                 if bart_config['add_tokens'] is not None:
                     bart_tokenizer.add_tokens(bart_config['add_tokens'])
-                bart_model = BartExtractor(bart_config['bart_base'], bart_config['nofact_token_id'])
+                bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
+                bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
                 bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
-                bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
+                bart_device = args.device
+                if bart_device == 'mps':
+                    bart_device = 'cpu'
+                    logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
+                bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
 
                 # Configure MSC_Turns to predict persona sentences from a list of utterances
                 MSC_Turns.set(
                     tokenizer=bart_tokenizer, 
                     len_context=2, 
                     speaker_prefixes=bart_config['speaker_prefixes'], 
-                    nofact_token=bart_config['nofact_token_id']
+                    nofact_token=bart_nofact_token_id
                 )
-                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=args.device)
+                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
@@ -354,39 +397,75 @@ def train_with_args(config, args):
             savepath = args.checkpoint_dir + savename(args)
             logging.info("Saving model to {}".format(savepath))
             torch.save(best_model.state_dict(), savepath)
+            with open(savepath + '.config', 'w') as f:
+                f.write(json.dumps(vars(args)))
 
         logging.info("Start testing")
-        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)    
+        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
         test_stats = eval(best_model, test_loader, criterion, device=args.device)
+
         logging.success("Test stats: {}".format(test_stats))
         train_stats["test_loss"] = test_stats["valid_loss"]
         train_stats["test_acc"] = test_stats["valid_acc"]
         if args.use_wandb:
-            wandb.run.summary["test_accuracy"] = test_stats["valid_acc"]
-
-        # logging.info("Reloading model from {}".format(savepath))
-        # model.load_state_dict(torch.load(savepath))
-        if args.task == "classify":
-            eval_kwargs = {'device': args.device}
-        elif args.task == "generate":
-            if args.device == 'mps':
-                args.device = 'cpu'
-                logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-            eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
-        elif args.task == "dialog":
-            if args.device == 'mps':
-                args.device = 'cpu'
-                logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-            eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
-            if args.model == "dialogpt":
-                testdata.batch_format = "huggingface_x"
-
-        logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
-        eval_stats = testdata.evaluate(best_model, **eval_kwargs)
-        report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
-        logging.report(report)
+            wandb.run.summary["test_accuracy"] = test_stats["valid_acc"]  
+    
+        eval_stats = evaluate(best_model, testdata, args)
+        train_stats.update(eval_stats)
 
     return train_stats
+
+
+def do_grid_search(args):
+    ray.init(
+        configure_logging=True,
+        logging_level="warning",
+        )
+    search_space = {
+        "seed": tune.grid_search([42, 123, 2206]),
+        # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
+        "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
+        "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "<nofact>"),
+        "add_tokens": tune.sample_from(
+            lambda spec: 
+                spec.config.speaker_prefixes 
+                if spec.config.speaker_prefixes is None 
+                else spec.config.speaker_prefixes + [spec.config.nofact_token]
+            ),
+        # "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
+        # "batch_size": tune.grid_search([16, 32, 64]),
+        # "prefix_size": tune.grid_search([0, 5]),
+        # # If there is a prefix, then freeze all Bert layers
+        # # If the is no prefix, then vary the number of frozen layers
+        # "freeze": tune.sample_from(
+        #         lambda spec: {
+        #             0: None, 
+        #             1: 8, 
+        #             2: 12
+        #         }[random.randint(0,2)]
+        #         if spec.config.prefix_size == 0 else 12
+        #     ),
+    }
+    trainable_with_resources = tune.with_resources(partial(train_with_args, args=args), {"gpu": 1})
+    tuner = tune.Tuner(
+        trainable=trainable_with_resources,
+        param_space=search_space,
+        tune_config=tune.TuneConfig(
+            scheduler=HyperBandScheduler(),
+            metric="valid_acc", 
+            mode="max",
+            num_samples=2,
+            max_concurrent_trials=8
+        ),
+        run_config = air.RunConfig(
+            verbose=3,
+        )
+    )
+    results = tuner.fit()
+    best_result = results.get_best_result() 
+    logging.success("BEST RESULTS: {}".format(best_result.config))
+    logging.success("BEST METRICS: {:.2%}".format(best_result.metrics["valid_acc"]))
+    return results
 
 
 def get_parser():
@@ -423,23 +502,7 @@ def get_parser():
     parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
     parser.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
 
-    return parser
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = get_parser()
     args = parser.parse_known_args()[0]
-
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
-    # Check availability of requested device
-    if args.device == "mps":
-        assert torch.backends.mps.is_available(), "Device 'mps' not available"
-        assert torch.backends.mps.is_built(), "PyTorch installation was not built with MPS activated"
-    elif args.device == "cuda":
-        assert torch.cuda.is_available(), "Cuda not available"
 
     # Add cmdline arguments for model
     parser = {
@@ -467,8 +530,22 @@ if __name__ == "__main__":
         args = parser.parse_known_args()[0]
         if args.session == 1:
             parser = ConvAI2.add_cmdline_args(parser)
-        
+
+    return parser
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = get_parser()
     args = parser.parse_args()
+
+    # Check availability of requested device
+    if args.device == "mps":
+        assert torch.backends.mps.is_available(), "Device 'mps' not available"
+        assert torch.backends.mps.is_built(), "PyTorch installation was not built with MPS activated"
+    elif args.device == "cuda":
+        assert torch.cuda.is_available(), "Cuda not available"
 
     # Prepare logging
     logging.set_log_level(args.loglevel)
@@ -477,56 +554,7 @@ if __name__ == "__main__":
     logging.info("Args: {}".format('\n'.join(["{:20s}: {}".format(k, v) for k, v in vars(args).items()])))
 
     if args.do_grid_search:
-        ray.init(
-            configure_logging=True,
-            logging_level="warning",
-            )
-        search_space = {
-            "seed": tune.grid_search([42, 123, 2206]),
-            # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
-            "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
-            "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "<nofact>"),
-            "add_tokens": tune.sample_from(
-                lambda spec: 
-                    spec.config.speaker_prefixes 
-                    if spec.config.speaker_prefixes is None 
-                    else spec.config.speaker_prefixes + [spec.config.nofact_token]
-                ),
-            # "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
-            # "batch_size": tune.grid_search([16, 32, 64]),
-            # "prefix_size": tune.grid_search([0, 5]),
-            # # If there is a prefix, then freeze all Bert layers
-            # # If the is no prefix, then vary the number of frozen layers
-            # "freeze": tune.sample_from(
-            #         lambda spec: {
-            #             0: None, 
-            #             1: 8, 
-            #             2: 12
-            #         }[random.randint(0,2)]
-            #         if spec.config.prefix_size == 0 else 12
-            #     ),
-        }
-        trainable_with_resources = tune.with_resources(partial(train_with_args, args=args), {"gpu": 1})
-        tuner = tune.Tuner(
-            trainable=trainable_with_resources,
-            param_space=search_space,
-            tune_config=tune.TuneConfig(
-                scheduler=HyperBandScheduler(),
-                metric="valid_acc", 
-                mode="max",
-                num_samples=2,
-                max_concurrent_trials=8
-            ),
-            run_config = air.RunConfig(
-                verbose=3,
-            )
-        )
-        results = tuner.fit()
-
-        best_result = results.get_best_result() 
-        logging.success("BEST RESULTS: {}".format(best_result.config))
-        logging.success("BEST METRICS: {:.2%}".format(best_result.metrics["valid_acc"]))
-
+        resuls = do_grid_search(args)
     else:
         stats = train_with_args(config=None, args=args)
 
