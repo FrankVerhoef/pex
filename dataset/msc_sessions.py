@@ -30,6 +30,8 @@ class MSC_Session(Dataset):
         group.add_argument("--include_history", default=False, action='store_true')
         group.add_argument("--session", default=2, type=int, help="MSC session to include in dataset")
         group.add_argument("--augmented", default=False, action='store_true', help='add all shorter versions of the dialogue to training set')
+        group.add_argument("--persona_selector", type=str, default=None, help="Model to select relevant persona sentences")
+
         return parser
 
     def __init__(self, 
@@ -43,12 +45,9 @@ class MSC_Session(Dataset):
             augmented=False,
             persona_selector=None,
             max_samples=None, 
-            batch_format="huggingface_xycat", 
-            batch_pad_id=0, 
             **kwargs
         ):
         super(MSC_Session, self).__init__()
-        assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
         self.session = session
         self.subset=subset
@@ -76,63 +75,65 @@ class MSC_Session(Dataset):
         self.augmented = augmented
         self.persona_selector = persona_selector
         self.tokenizer = tokenizer
-        self.batch_format = batch_format
-        self.batch_pad_id = batch_pad_id
         self.history, self.next_utterance = self.transform_dialogues(max_samples)   
 
     def transform_dialogues(self, max_samples):
         all_history, all_next_utterance = [], []
-        
-        for d in self.dialogues:
+
+        selected_dialogues = self.dialogues 
+        if max_samples is not None:
+            if max_samples < len(selected_dialogues):
+                indices = random.sample(range(len(selected_dialogues)), max_samples)
+                selected_dialogues = [selected_dialogues[i] for i in indices]
+
+        for d in selected_dialogues:
             turns = d.get("dialog", [])
             personas = d.get("personas", None)  # The persona sentences ('facts') that were infered from the dialogue
             init_personas = d.get("init_personas", None)  # The initial persona sentences from ConvAI2 dataset
             previous_dialogs = d.get("previous_dialogs", None)
-            start_range = 0 if self.augmented else max(len(turns) - 1, 0)
-            for len_history in range(start_range, len(turns)):
-                history = []
+
+            self_info = [[], []] # two sets, one for each speaker
+            other_info = [[], []]
+            previous_utterances = []
+            if self.include_persona or self.include_history:
+                if previous_dialogs is not None:
+                    for prev_d in previous_dialogs:
+                        for i in range(len(prev_d['dialog'])):
+                            t = prev_d['dialog'][i].get("text", "")
+                            previous_utterances.append((i % 2, t))
+
+            if self.include_persona:
+
+                if init_personas is not None:
+                    # Include the persona sentences corresponding to the NEXT speaker (Speaker 1=index 0, Speaker 2=index 1)
+                    self_info[0] = [(0, t) for t in init_personas[0]]
+                    self_info[1] = [(1, t) for t in init_personas[1]]
+
+                if self.persona_selector is None:
+                    if personas is not None:
+                        # Include 'gold summary' if persona_selector not defined, corresponding to the LAST speaker
+                        other_info[0] = [(0, t) for t in personas[0]]
+                        other_info[1] = [(1, t) for t in personas[1]]
+                else:
+                    for id_of_first_utterance in [0,1]:
+                        num_turns = (len(previous_utterances) - id_of_first_utterance) // 2
+                        if num_turns > 0:
+                            utterances = previous_utterances[id_of_first_utterance : id_of_first_utterance + 2 * num_turns]
+                            other_info[1 - id_of_first_utterance] = [(1 - id_of_first_utterance, t) for t in self.persona_selector(utterances)]
+
+            if not self.include_history: 
                 previous_utterances = []
-                if self.include_persona or self.include_history:
-                    if previous_dialogs is not None:
-                        for prev_d in previous_dialogs:
-                            for i in range(len(prev_d['dialog'])):
-                                p = (len_history - i) % 2
-                                t = prev_d['dialog'][i].get("text", "")
-                                previous_utterances.append((p, t))
 
-                if self.include_persona:
-                    if self.persona_selector is None:
-                        if personas is not None:
-                            # Include summary of persona sentences corresponding to the last speaker -> 'gold summary'
-                            p_hist = 0 if turns[len_history - 1]["id"] == 'Speaker 1' else 1
-                            history.extend([(1, t) for t in personas[p_hist]])
-                    else:
-                        firstspeaker_id = len_history % 2 #TODO: THINK ABOUT THIS!
-                        batch = MSC_Turns.batch_from_utterances(previous_utterances, firstspeaker_id)
-                        history.extend([(1, t) for t in self.persona_selector(batch)])
+            current_utterances = [(i % 2, turns[i]["text"]) for i in range(len(turns))]
 
-                    if init_personas is not None:
-                        # Include the persona sentences corresponding to the next speaker (Speaker 1=index 0, Speaker 2=index 1)
-                        p_next = 0 if turns[len_history]["id"] == 'Speaker 1' else 1
-                        history.extend([(0, t) for t in init_personas[p_next]])
-
-                if self.include_history:
-                    history.extend(previous_utterances)
-
-                for i in range(len_history):
-                    p = (len_history - i) % 2
-                    t = turns[i].get("text","")
-                    history.append((p, t))
+            start_range = 0 if self.augmented else max(len(turns) - 1, 0)
+            for len_window in range(start_range, len(turns)):
+                nextspeaker_id = 0 if len_window < 1 else (1 if turns[len_window - 1]["id"] == 'Speaker 1' else 0)
+                history = self_info[nextspeaker_id] + other_info[1 - nextspeaker_id] + previous_utterances + current_utterances[:len_window]
                 all_history.append(history)
 
-                next_utterance = turns[len_history]["text"]
+                next_utterance = turns[len_window]["text"]
                 all_next_utterance.append(next_utterance)
-        
-        if max_samples is not None:
-            if max_samples < len(all_history):
-                indices = random.sample(range(len(all_history)), max_samples)
-                all_history = [all_history[i] for i in indices]
-                all_next_utterance = [all_next_utterance[i] for i in indices]
 
         return all_history, all_next_utterance
         
@@ -160,16 +161,17 @@ class MSC_Session(Dataset):
                 corpus.append(utterance['text'])
         return corpus
 
-    def batchify(self, data):
+    def batchify(self, data, batch_format="huggingface_xycat", batch_pad_id=0):
         """
             Transforms a list of dataset elements to batch of consisting of contexts and a batch with the corresponding next utterance.
         """
         assert self.tokenizer is not None, "Need to specify function to vectorize dataset"
+        assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
 
         # seperate source and target sequences
         history_batch, next_utterance_batch = zip(*data)
 
-        if self.batch_format == "huggingface_xycat":
+        if batch_format == "huggingface_xycat":
 
             # use right padding
             # add <bos> token between context and target
@@ -186,7 +188,7 @@ class MSC_Session(Dataset):
             )
             logging.spam(f"Encoded shape={encoded.input_ids.shape}")
 
-        elif self.batch_format == "huggingface_x":
+        elif batch_format == "huggingface_x":
 
             # use left padding for the input
             self.tokenizer.padding_side = 'left'
@@ -200,7 +202,7 @@ class MSC_Session(Dataset):
                 return_tensors='pt'
             )            
 
-        elif self.batch_format == "huggingface_xysplit":
+        elif batch_format == "huggingface_xysplit":
 
             # use left padding for the input
             self.tokenizer.padding_side = 'left'
@@ -225,7 +227,7 @@ class MSC_Session(Dataset):
             )
             encoded = inputs, labels
 
-        elif self.batch_format == "padded_sequences":
+        elif batch_format == "padded_sequences":
 
             # tokenize and convert to tensor
             xs = [torch.tensor(self.tokenizer.encode(t).ids, dtype=torch.long) for t in history_batch]
@@ -236,8 +238,8 @@ class MSC_Session(Dataset):
             ys_len = [len(y) for y in ys]
 
             # pad sequences
-            padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=self.batch_pad_id)
-            padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=self.batch_pad_id)
+            padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=batch_pad_id)
+            padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=batch_pad_id)
             encoded = padded_xs, padded_ys, xs_len, ys_len
 
         return encoded
@@ -315,8 +317,10 @@ class MSC_Session(Dataset):
 if __name__ == "__main__":
     import argparse
     import random
+    from functools import partial
     from transformers import AutoTokenizer
     from dataset.tokenizer import train_tokenizer, PAD_TOKEN
+    from models.bart_extractor import BartExtractor
 
     def get_parser():
 
@@ -345,6 +349,7 @@ if __name__ == "__main__":
 
     datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
     basedir = 'msc/msc_dialogue/'
+    checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     subset = 'train'
     session = 2
     if session == 1:
@@ -352,9 +357,10 @@ if __name__ == "__main__":
         session = '-'.join(['1'] + version)
     speaker_prefixes = ['<me>', '<you>']
     add_tokens = speaker_prefixes
-    include_persona = False
-    include_history = False
-    augmented = False
+    include_persona = True
+    include_history = True
+    augmented = True
+    persona_selector = 'trained_bart'
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -373,6 +379,30 @@ if __name__ == "__main__":
     # pad_token_id = tokenizer.token_to_id(PAD_TOKEN)
     # batch_format = "padded_sequences"
 
+    if persona_selector is not None:
+
+        # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
+        loadpath = checkpoint_dir + persona_selector
+        logging.info("Loading persona_selector from {}".format(loadpath))
+        with open(loadpath + '.config', 'r') as f:
+            bart_config = json.loads(f.read())
+        bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
+        if bart_config['add_tokens'] is not None:
+            bart_tokenizer.add_tokens(bart_config['add_tokens'])
+        bart_model = BartExtractor(bart_config['bart_base'], bart_config['nofact_token_id'])
+        bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+        bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
+
+        # Configure MSC_Turns to predict persona sentences from a list of utterances
+        MSC_Turns.set(
+            tokenizer=bart_tokenizer, 
+            len_context=2, 
+            speaker_prefixes=bart_config['speaker_prefixes'], 
+            nofact_token=bart_config['nofact_token_id']
+        )
+        persona_selector = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=args.device)
+
+
     msc_turns = MSC_Session(
         basedir=datadir+basedir, 
         session=session, 
@@ -382,8 +412,7 @@ if __name__ == "__main__":
         include_persona=include_persona,
         include_history=include_history,
         augmented=augmented,
-        batch_pad_id=tokenizer.pad_token_id,
-        batch_format=batch_format
+        persona_selector=persona_selector
     )
     for sentence in msc_turns.corpus()[10:30]:
         logging.verbose(sentence)
