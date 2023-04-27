@@ -303,10 +303,3 @@ if __name__ == "__main__":
     batch = msc_turns.batchify(data, batch_format="huggingface")
     # logging.info("Components of batch: {}".format(str(batch.keys())))
     logging.spam(batch)
-
-    dummy = ["one", "two", "three", "", "five", "six", "seven"]
-    utterances = [(i % 2, dummy[i]) for i in range(len(dummy))]
-    batch2 = MSC_Turns.batch_from_utterances(
-        utterances,
-        firstspeaker_id=1
-    )

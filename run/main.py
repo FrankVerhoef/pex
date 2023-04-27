@@ -175,21 +175,16 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
+        MSC_Turn_Facts.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
         dataset_config = {
             'basedir': args.datadir + args.basedir,
-            'session': args.session,
-            'tokenizer': tokenizer,
-            'len_context': args.len_context,
-            'speaker_prefixes': args.speaker_prefixes,
-            'nofact_token': args.nofact_token,
-            'batch_format': 'huggingface',
-            'batch_pad_id': tokenizer.pad_token_id
+            'session': args.session
         } 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
             traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
             validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
             testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
-        collate_fn = traindata.batchify
+        collate_fn = MSC_Turn_Facts.batchify
 
     elif args.task == 'generate': 
 
@@ -307,15 +302,16 @@ def train_with_args(config, args):
 
         if args.session == 1:
             args.session = '-'.join(['1'] + args.convai2_version)
+
         dataset_config = {
             'basedir': args.datadir + args.basedir,
             'session': args.session,
-            'tokenizer': tokenizer,
-            'speaker_prefixes': args.speaker_prefixes,
-            'include_persona': args.include_persona,
+            'include_persona': args.include_persona
         }
 
         if args.model == "kg_gen":
+
+            KG_enriched_MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
 
             dataset_config.update({
                 'num_hops': args.num_hops,
@@ -329,9 +325,11 @@ def train_with_args(config, args):
                 traindata = KG_enriched_MSC_Session(subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
                 validdata = KG_enriched_MSC_Session(subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
                 testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
-            collate_fn = partial(traindata.batchify, batch_format=KnowledgeGroundedDecoder.batch_format, batch_pad_id=tokenizer.pad_token_id)
+            collate_fn = partial(KG_enriched_MSC_Session.batchify, batch_format=KnowledgeGroundedDecoder.batch_format, batch_pad_id=tokenizer.pad_token_id)
 
         elif args.model == "dialogpt":
+
+            MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
 
             if args.persona_selector is not None:
 
@@ -365,7 +363,7 @@ def train_with_args(config, args):
                 traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
                 validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
                 testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
-            collate_fn = partial(traindata.batchify, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id)
+            collate_fn = partial(MSC_Session.batchify, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id)
                 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")

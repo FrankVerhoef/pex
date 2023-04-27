@@ -5,12 +5,13 @@ to run with defaults
 import torch
 import torch.nn as nn
 import random
+from functools import partial
 
 from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
-from models.bart_extractor import BartExtractor, PrefixBart, BART_BASE
+from models.bart_extractor import BartExtractor, PrefixBart
 from models.dialogpt import DialoGPT
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
@@ -20,6 +21,7 @@ from dataset.msc_kg_sessions import KG_enriched_MSC_Session
 from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 
+from run.main import evaluate
 from utils.general import loadname_prefix, savename
 import utils.logging as logging
 
@@ -73,15 +75,18 @@ if __name__ == "__main__":
     }[args.model].add_cmdline_args(parser)
 
     # Add cmdline arguments for task/dataset
-    parser = {
-        "classify": MSC_Turn_Facts,
-        "generate": MSC_Turns,
-        "dialog": KG_enriched_MSC_Session,
-    }[args.task].add_cmdline_args(parser)
-    
-    args = parser.parse_known_args()[0]
-    if args.session == 1:
-        parser = ConvAI2.add_cmdline_args(parser)
+    if args.task == "classify":
+        parser = MSC_Turn_Facts.add_cmdline_args(parser)
+    elif args.task == "generate":
+        parser = MSC_Turns.add_cmdline_args(parser)
+    elif args.task == "dialog": 
+        if args.model == "kg_gen":
+            parser = KG_enriched_MSC_Session.add_cmdline_args(parser)
+        elif args.model == "dialogpt":
+            parser = MSC_Session.add_cmdline_args(parser)
+        args = parser.parse_known_args()[0]
+        if args.session == 1:
+            parser = ConvAI2.add_cmdline_args(parser)
     
     if args.model == "seq2seq":
         parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
@@ -102,15 +107,11 @@ if __name__ == "__main__":
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
+
+        MSC_Turn_Facts.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
         dataset_config = {
             'basedir': args.datadir + args.basedir,
-            'session': args.session,
-            'tokenizer': tokenizer,
-            'len_context': args.len_context,
-            'speaker_prefixes': args.speaker_prefixes,
-            'nofact_token': args.nofact_token,
-            'batch_format': 'huggingface',
-            'batch_pad_id': tokenizer.pad_token_id
+            'session': args.session
         } 
         testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
 
@@ -127,7 +128,6 @@ if __name__ == "__main__":
             nofact_token_id = tokenizer.token_to_id(args.nofact_token) if args.nofact_token != '' else eos_token_id
             assert nofact_token_id != unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
             vocab_size = tokenizer.get_vocab_size()
-            batch_format = "padded_sequences"
 
             # Define model
             encoder_opts = {
@@ -152,20 +152,19 @@ if __name__ == "__main__":
         elif args.model[-4:] == "bart":
 
             # Get tokenizer and dataset parameters: note this must be built with same parameters as during training
-            tokenizer = AutoTokenizer.from_pretrained(BART_BASE)
+            tokenizer = AutoTokenizer.from_pretrained(args.bart_base)
             if args.add_tokens is not None:
                 num_added_toks = tokenizer.add_tokens(args.add_tokens)
             pad_token_id = tokenizer.pad_token_id
             nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
             assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
-            batch_format = "huggingface"
-            
+
             # Define model
             if args.model == "bart":
-                model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
+                model = BartExtractor(bart_base=args.bart_base, nofact_token_id=nofact_token_id)
             else:
                 model = PrefixBart(
-                    bart_base=BART_BASE, 
+                    bart_base=args.bart_base, 
                     nofact_token_id=nofact_token_id, 
                     freeze=args.freeze, 
                     enc_prefix_size=args.enc_prefix_size,
@@ -176,17 +175,14 @@ if __name__ == "__main__":
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
+
+        MSC_Turns.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
         dataset_config = {
             'basedir': args.datadir + args.basedir,
-            'session': args.session,
-            'tokenizer': tokenizer,
-            'len_context': args.len_context,
-            'speaker_prefixes': args.speaker_prefixes,
-            'nofact_token': args.nofact_token,
-            'batch_format': batch_format,
-            'batch_pad_id': pad_token_id
+            'sessions': args.sessions
         } 
         testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
+        collate_fn = partial(MSC_Turns.batchify, batch_format=model.batch_format, batch_pad_id=pad_token_id)
 
     elif args.task == "dialog":
 
@@ -199,7 +195,6 @@ if __name__ == "__main__":
             tokenizer.bos_token_id = tokenizer.eos_token_id
             model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
             model.gpt2model.resize_token_embeddings(len(tokenizer))
-            criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
 
             kg = ConceptGraph(args.kg_datadir, args.kg)
             kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
@@ -216,48 +211,69 @@ if __name__ == "__main__":
                 tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
             model = DialoGPT(args.lm, tokenizer.bos_token_id)
             model.model.resize_token_embeddings(len(tokenizer))
-            criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
         if args.session == 1:
             args.session = '-'.join(['1'] + args.convai2_version)
-        dataset_config = vars(args)
-        dataset_config.update({
+
+        dataset_config = {
             'basedir': args.datadir + args.basedir,
             'session': args.session,
-            'tokenizer': tokenizer,
-            'batch_pad_id': tokenizer.pad_token_id
-        })
+            'include_persona': args.include_persona
+        }
+
         if args.model == "kg_gen":
-            dataset_config["batch_format"] = "huggingface_xysplit"
+            KG_enriched_MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
+            dataset_config.update({
+                'num_hops': args.num_hops,
+                'max_branch': args.max_branch,
+                'max_concepts': args.max_concepts,
+                'max_triples': args.max_triples,
+                'overlapping_concepts': args.overlapping_concepts
+            })
             testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
+
         elif args.model == "dialogpt":
-            dataset_config["batch_format"] = "huggingface_xycat"
+            
+            MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
+            
+            if args.persona_selector is not None:
+
+                # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
+                loadpath = args.checkpoint_dir + args.persona_selector
+                logging.info("Loading persona_selector from {}".format(loadpath))
+                with open(loadpath + '.config', 'r') as f:
+                    bart_config = json.loads(f.read())
+                bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
+                if bart_config['add_tokens'] is not None:
+                    bart_tokenizer.add_tokens(bart_config['add_tokens'])
+                bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
+                bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
+                bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+                bart_device = args.device
+                if bart_device == 'mps':
+                    bart_device = 'cpu'
+                    logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
+                bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
+
+                # Configure MSC_Turns to predict persona sentences from a list of utterances
+                MSC_Turns.set(
+                    tokenizer=bart_tokenizer, 
+                    len_context=2, 
+                    speaker_prefixes=bart_config['speaker_prefixes'], 
+                    nofact_token=bart_nofact_token_id
+                )
+                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
+
             testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
  
     if args.load != '':
         logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
         model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device('cpu')))
 
-    if args.task == "classify":
-        eval_kwargs = {'device': args.device}
-    elif args.task == "generate":
-        if args.device == 'mps':
-            args.device = 'cpu'
-            logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
-    elif args.task == "dialog":
-        if args.device == 'mps':
-            args.device = 'cpu'
-            logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
-        if args.model == "dialogpt":
-            testdata.batch_format = "huggingface_x"
+    logging.info("Start evaluation")
+    eval_stats = evaluate(model, testdata, args)
 
-    logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
-    eval_stats = testdata.evaluate(model, **eval_kwargs)
-    report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
-    logging.report(report)
 

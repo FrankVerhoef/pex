@@ -21,6 +21,15 @@ BATCH_FORMATS = ["huggingface_xycat", "huggingface_xysplit", "padded_sequences"]
 
 class MSC_Session(Dataset):
     
+    tokenizer = None
+    speaker_prefixes = None
+    
+    @classmethod
+    def set(cls, tokenizer, speaker_prefixes):
+        assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
+        cls.tokenizer = tokenizer
+        cls.speaker_prefixes = speaker_prefixes
+
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Sessions')
@@ -38,17 +47,13 @@ class MSC_Session(Dataset):
             basedir='./', 
             session=2, 
             subset='train', 
-            tokenizer=None, 
-            speaker_prefixes=None, 
             include_persona=False, 
             include_history=False,
             augmented=False,
             persona_selector=None,
-            max_samples=None, 
-            **kwargs
+            max_samples=None
         ):
         super(MSC_Session, self).__init__()
-        assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "Invalid number of speaker prefixes ({})".format(len(speaker_prefixes))
         self.session = session
         self.subset=subset
         self.dialogues = []
@@ -69,12 +74,10 @@ class MSC_Session(Dataset):
                 self.dialogues.extend(msc_dialogues)
             except FileNotFoundError:
                 logging.warning(f"File '{filepath}' not found -> skipped")
-        self.speaker_prefixes = speaker_prefixes
         self.include_persona = include_persona
         self.include_history = include_history
         self.augmented = augmented
         self.persona_selector = persona_selector
-        self.tokenizer = tokenizer
         self.history, self.next_utterance = self.transform_dialogues(max_samples)   
 
     def transform_dialogues(self, max_samples):
@@ -161,11 +164,12 @@ class MSC_Session(Dataset):
                 corpus.append(utterance['text'])
         return corpus
 
-    def batchify(self, data, batch_format="huggingface_xycat", batch_pad_id=0):
+    @classmethod
+    def batchify(cls, data, batch_format="huggingface_xycat", batch_pad_id=0):
         """
             Transforms a list of dataset elements to batch of consisting of contexts and a batch with the corresponding next utterance.
         """
-        assert self.tokenizer is not None, "Need to specify function to vectorize dataset"
+        assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
         assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
 
         # seperate source and target sequences
@@ -176,12 +180,12 @@ class MSC_Session(Dataset):
             # use right padding
             # add <bos> token between context and target
             # add <eos> token at end of all targets (necessary to make sure 'shift_right' of labels is possible )
-            self.tokenizer.padding_side = 'right'
-            self.tokenizer.truncation_side = 'left'
-            encoded = self.tokenizer(
-                [history + self.tokenizer.bos_token + next_utterance + self.tokenizer.eos_token for history, next_utterance in data],
+            cls.tokenizer.padding_side = 'right'
+            cls.tokenizer.truncation_side = 'left'
+            encoded = cls.tokenizer(
+                [history + cls.tokenizer.bos_token + next_utterance + cls.tokenizer.eos_token for history, next_utterance in data],
                 padding=True,
-                max_length=self.tokenizer.model_max_length, 
+                max_length=cls.tokenizer.model_max_length, 
                 truncation=True,
                 return_attention_mask=True,
                 return_tensors='pt'            
@@ -191,12 +195,12 @@ class MSC_Session(Dataset):
         elif batch_format == "huggingface_x":
 
             # use left padding for the input
-            self.tokenizer.padding_side = 'left'
-            self.tokenizer.truncation_side = 'left'
-            encoded = self.tokenizer(
+            cls.tokenizer.padding_side = 'left'
+            cls.tokenizer.truncation_side = 'left'
+            encoded = cls.tokenizer(
                 history_batch, 
                 padding=True, 
-                max_length=self.tokenizer.model_max_length - 50,  # Leave some room for generation! 
+                max_length=cls.tokenizer.model_max_length - 50,  # Leave some room for generation! 
                 truncation=True,
                 return_attention_mask=True,
                 return_tensors='pt'
@@ -205,8 +209,8 @@ class MSC_Session(Dataset):
         elif batch_format == "huggingface_xysplit":
 
             # use left padding for the input
-            self.tokenizer.padding_side = 'left'
-            inputs = self.tokenizer(
+            cls.tokenizer.padding_side = 'left'
+            inputs = cls.tokenizer(
                 history_batch, 
                 padding=True, 
                 truncation=True,
@@ -217,9 +221,9 @@ class MSC_Session(Dataset):
             # use right padding for labels
             # add <bos> token between context and target
             # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
-            self.tokenizer.padding_side = 'right'
-            labels = self.tokenizer(
-                [self.tokenizer.bos_token + label + self.tokenizer.eos_token for label in next_utterance_batch],
+            cls.tokenizer.padding_side = 'right'
+            labels = cls.tokenizer(
+                [cls.tokenizer.bos_token + label + cls.tokenizer.eos_token for label in next_utterance_batch],
                 padding=True, 
                 truncation=True,
                 return_attention_mask=True,
@@ -230,8 +234,8 @@ class MSC_Session(Dataset):
         elif batch_format == "padded_sequences":
 
             # tokenize and convert to tensor
-            xs = [torch.tensor(self.tokenizer.encode(t).ids, dtype=torch.long) for t in history_batch]
-            ys = [torch.tensor(self.tokenizer.encode(p).ids, dtype=torch.long) for p in next_utterance_batch]
+            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in history_batch]
+            ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in next_utterance_batch]
             
             # determine lengths of source and target
             xs_len = [len(x) for x in xs]
@@ -360,7 +364,7 @@ if __name__ == "__main__":
     include_persona = True
     include_history = True
     augmented = True
-    persona_selector = 'trained_bart'
+    persona_selector = 'test_bart'
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -389,26 +393,29 @@ if __name__ == "__main__":
         bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
         if bart_config['add_tokens'] is not None:
             bart_tokenizer.add_tokens(bart_config['add_tokens'])
-        bart_model = BartExtractor(bart_config['bart_base'], bart_config['nofact_token_id'])
+        bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
+        bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
         bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
-        bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
+        bart_device = args.device
+        if bart_device == 'mps':
+            bart_device = 'cpu'
+            logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
+        bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
 
         # Configure MSC_Turns to predict persona sentences from a list of utterances
         MSC_Turns.set(
             tokenizer=bart_tokenizer, 
             len_context=2, 
             speaker_prefixes=bart_config['speaker_prefixes'], 
-            nofact_token=bart_config['nofact_token_id']
+            nofact_token=bart_nofact_token_id
         )
-        persona_selector = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=args.device)
+        persona_selector = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
 
-
+    MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes)
     msc_turns = MSC_Session(
         basedir=datadir+basedir, 
         session=session, 
         subset=subset, 
-        tokenizer=tokenizer, 
-        speaker_prefixes=speaker_prefixes,
         include_persona=include_persona,
         include_history=include_history,
         augmented=augmented,

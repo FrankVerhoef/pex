@@ -1,4 +1,3 @@
-from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import torch
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
@@ -10,20 +9,14 @@ class MSC_Turn_Facts(MSC_Turns):
     Builds on the MSC_Turns dataset
     """
 
-    def __init__(self, basedir='./', sessions=[1], subset='train', tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token='', max_samples=None, batch_format="huggingface", batch_pad_id=0):
+
+    def __init__(self, basedir='./', sessions=[1], subset='train', max_samples=None):
         super().__init__(
             basedir=basedir, 
             sessions=sessions, 
             subset=subset, 
-            tokenizer=tokenizer,
-            len_context=len_context, 
-            speaker_prefixes=speaker_prefixes, 
-            nofact_token=nofact_token, 
             max_samples=max_samples, 
-            batch_format=batch_format, 
-            batch_pad_id=batch_pad_id
         )
-        assert self.batch_format == 'huggingface', "batch_format '{}' is incompatible with class {}".format(self.batch_format, self.__class__.__name__)
 
     def __getitem__(self, index):
         """
@@ -41,7 +34,9 @@ class MSC_Turn_Facts(MSC_Turns):
         has_fact = self.personas[index] != self.nofact_token
         return turn_0, turn_1, has_fact
 
-    def batchify(self, data):
+
+    @classmethod
+    def batchify(cls, data):
         """
         Collate all items into batch for classification model.
         This function assumes the tokenizer is a Huggingface tokenizer, that takes two batches of input sentences and
@@ -49,7 +44,7 @@ class MSC_Turn_Facts(MSC_Turns):
         Returns a tuple a tuple with (input_ids, attention_mask, token_type_ids) and labels
         """
         turns_0, turns_1, has_fact = zip(*data)
-        encoded = self.tokenizer(turns_0, turns_1, padding=True, return_tensors='pt')
+        encoded = cls.tokenizer(turns_0, turns_1, padding=True, return_tensors='pt')
         X = (encoded['input_ids'], encoded['attention_mask'], encoded['token_type_ids'])
         y = torch.tensor(has_fact, dtype=torch.long) #.reshape(-1, 1)
 
@@ -109,21 +104,18 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
     speaker_prefixes=["[me]", "[you]"]
     add_tokens = None
+    len_context = 4
 
     # Prepare for test
     if add_tokens is not None:
         num_added_toks = tokenizer.add_tokens(add_tokens)
     
     # Test extraction of dialogue turns and persona facts
+    MSC_Turn_Facts.set(tokenizer, len_context, speaker_prefixes, None)
     msc_turns = MSC_Turn_Facts(
         basedir=datadir+basedir, 
         sessions=sessions, 
-        subset=subset, 
-        tokenizer=tokenizer, 
-        len_context=4, 
-        speaker_prefixes=speaker_prefixes,
-        batch_pad_id=tokenizer.pad_token_id,
-        batch_format="huggingface"
+        subset=subset
     )
 
     batch = [msc_turns[i] for i in range(10)]

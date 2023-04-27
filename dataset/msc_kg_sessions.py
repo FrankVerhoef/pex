@@ -15,6 +15,8 @@ from dataset.convai2 import ConvAI2
 
 class KG_enriched_MSC_Session(MSC_Session):
 
+    _cache_sorted_dict_ind = None
+
     @classmethod
     def add_cmdline_args(cls, parser):
         """
@@ -78,31 +80,22 @@ class KG_enriched_MSC_Session(MSC_Session):
         basedir='./', 
         session=2,
         subset='train', 
-        tokenizer=None, 
         kg=None, 
         max_samples=None, 
-        batch_format="huggingface", 
-        batch_pad_id=0, 
         **kwargs
     ):
-        assert batch_format == "huggingface_xysplit", f"{__class__.__name__} only supports batch_format 'huggingface_xysplit'" 
         super().__init__(
             basedir=basedir,
             session=session, 
             subset=subset,
-            tokenizer=tokenizer, 
-            speaker_prefixes=kwargs['speaker_prefixes'],
             include_persona=kwargs['include_persona'], 
             max_samples=max_samples, 
-            batch_format=batch_format, 
-            batch_pad_id=batch_pad_id
         )
         self.num_hops = kwargs['num_hops']
         self.max_branch = kwargs['max_branch']
         self.max_concepts = kwargs['max_concepts']
         self.max_triples = kwargs['max_triples']
         self.overlapping_concepts = kwargs['overlapping_concepts']
-        self._cache_sorted_dict_ind = sorted(self.tokenizer.get_vocab().values())
         self.kg = kg
         logging.info("Initialized KG_enriched_MSC_Session")
 
@@ -115,6 +108,8 @@ class KG_enriched_MSC_Session(MSC_Session):
         present in the observation. The vocab mask and map mask are used in the KGG-model to map the 
         calculated concept-scores back to token-scores in the GPT2 vocabulary.
         """
+        if self._cache_sorted_dict_ind is None:
+            self._cache_sorted_dict_ind = sorted(self.tokenizer.get_vocab().values())
         vocab_map = torch.zeros(len(self._cache_sorted_dict_ind), dtype=torch.long)
         map_mask = torch.zeros_like(vocab_map)
         for i, token_id in enumerate(self._cache_sorted_dict_ind):
@@ -342,12 +337,10 @@ if __name__ == "__main__":
     dataset_config = vars(args)
     dataset_config.update({
         'basedir': datadir + basedir,
-        'tokenizer': tokenizer,
         'kg': kg,
-        'max_samples': None,
-        'batch_format': "huggingface_xysplit",
-        'batch_pad_id': tokenizer.pad_token_id
+        'max_samples': None
     })
+    KG_enriched_MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
     dataset = KG_enriched_MSC_Session(
         **dataset_config
     )
