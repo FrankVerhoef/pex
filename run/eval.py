@@ -62,7 +62,6 @@ if __name__ == "__main__":
     logging.set_log_level(args.loglevel)
     if args.logdir is not None:
         logging.add_file_handler(logdir=args.logdir)
-    logging.info("Args: {}".format('\n'.join(["{:20s}: {}".format(k, v) for k, v in vars(args).items()])))
 
     # Add cmdline arguments for model
     parser = {
@@ -92,6 +91,7 @@ if __name__ == "__main__":
         parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
 
     args = parser.parse_args()
+    logging.info("Args: {}".format('\n'.join(["{:20s}: {}".format(k, v) for k, v in vars(args).items()])))
 
     if args.task == 'classify':
 
