@@ -300,8 +300,8 @@ class MSC_Session(Dataset):
 
         bleu_google = google_bleu.compute(predictions=pred_responses, references=[[t] for t in target_responses])
         meteor_score = meteor.compute(predictions=pred_responses, references=[[t] for t in target_responses])
-        bleu_2 = bleu_score(target_responses, pred_responses, n_gram=2, smooth=True).item()
-        bleu_4 = bleu_score(target_responses, pred_responses, n_gram=4, smooth=True).item()
+        bleu_2 = bleu_score(pred_responses, target_responses, n_gram=2, smooth=True).item()
+        bleu_4 = bleu_score(pred_responses, target_responses, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
         stats = {
