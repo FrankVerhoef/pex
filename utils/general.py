@@ -6,7 +6,9 @@ import torch
 
 def savename(args):
     name = args.save
-    if args.model == "kg_gen":
+    if args.model == "dialogpt":
+        name += "_dgpt"
+    elif args.model == "kg_gen":
         name += "_kgg"
     elif args.model == "bert":
         name += "_bert"
