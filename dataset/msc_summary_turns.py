@@ -55,17 +55,6 @@ class MSC_Turns(Dataset):
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.turns, self.personas = self.transform(dialogues, max_samples)
 
-    @classmethod
-    def batch_from_utterances(cls, utterances, firstspeaker_id):
-        dataset = cls()
-        num_turns = (len(utterances) - firstspeaker_id) // 2
-        if num_turns > 0:
-            utterances = utterances[firstspeaker_id : firstspeaker_id + 2 * num_turns]
-            dataset.turns = [[(0, utterances[i][1])] for i in range(0, len(utterances), 2)]
-            dataset.personas = [utterances[i + 1][1] if len(utterances[i + 1][1]) > 0 else cls.nofact_token for i in range(0, len(utterances), 2)]
-        turns = [dataset[i] for i in range(len(dataset))]
-        return turns
-
     def transform(self, dialogues, max_samples):
         turns, personas = [], []
         
@@ -114,34 +103,37 @@ class MSC_Turns(Dataset):
         return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
 
     @classmethod
-    def batchify(cls, data, batch_format="huggingface", batch_pad_id=0):
+    def batchify(cls, data, has_labels=True, batch_format="huggingface", batch_pad_id=0):
         """
         Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
         assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
         assert batch_format in BATCH_FORMATS, f"batch_format '{batch_format}' is invalid; should be one of {BATCH_FORMATS}"
 
-        # seperate source and target sequences
-        utterances, personas = zip(*data)
-
         if batch_format == "huggingface":
 
-            encoded = cls.tokenizer(text=utterances, text_target=personas, padding=True, return_tensors="pt")
+            if has_labels:
+                data, labels = zip(*data)  
+                encoded = cls.tokenizer(text=data, text_target=labels, padding=True, return_tensors="pt")
+            else:
+                encoded = cls.tokenizer(text=data, padding=True, return_tensors="pt")
 
         elif batch_format == "padded_sequences":
 
-            # tokenize and convert to tensor
-            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in utterances]
-            ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in personas]
+            if has_labels:
+                data, labels = zip(*data)
+                ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in labels]
+                ys_len = [len(y) for y in ys]
+                padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=batch_pad_id)
             
-            # determine lengths of source and target
+            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in data]
             xs_len = [len(x) for x in xs]
-            ys_len = [len(y) for y in ys]
-
-            # pad sequences
             padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=batch_pad_id)
-            padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=batch_pad_id)
-            encoded = padded_xs, padded_ys, xs_len, ys_len
+            
+            if has_labels:
+                encoded = padded_xs, padded_ys, xs_len, ys_len
+            else:
+                encoded = padded_xs, xs_len
 
         return encoded
 
@@ -169,7 +161,7 @@ class MSC_Turns(Dataset):
             batch = self.batchify([self.__getitem__(i)])  # Batch with one sample
 
             with torch.no_grad():
-                if self.batch_format == "huggingface":
+                if model.batch_format == "huggingface":
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
                         min_length=2,
@@ -179,7 +171,7 @@ class MSC_Turns(Dataset):
                     )[0]
                     pred_fact = pred_tokens[2] != model.nofact_token_id
 
-                elif self.batch_format == "padded_sequences":
+                elif model.batch_format == "padded_sequences":
                     pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)[0]              
                     pred_fact = pred_tokens[0] != model.nofact_token_id
 
@@ -224,6 +216,20 @@ class MSC_Turns(Dataset):
 
         return stats
 
+
+    @classmethod
+    def predict_from_utterances(cls, utterances=[], model=None, device="cpu", decoder_max=20):
+        assert model is not None, "No model specefied to use for predictions"
+        assert len(utterances) % 2 == 0, f"Received {len(utterances)} utterances, this should be an even number"
+        dataset = cls()
+        if len(utterances) > 0:
+            dataset.turns = [[(0, utterances[i][1]), (1, utterances[i + 1][1])] for i in range(0, len(utterances), 2)]
+            dataset.personas = [None for i in range(0, len(utterances), 2)]
+        turns = [dataset[i][0] for i in range(len(dataset))]
+        pred_personas = cls.predict(turns, model, device, decoder_max)
+        return pred_personas
+
+
     @classmethod
     def predict(cls, data, model, device="cpu", decoder_max=20):
 
@@ -233,10 +239,10 @@ class MSC_Turns(Dataset):
 
         for item in data:
 
-            batch = cls.batchify([item])  # Batch with one sample
+            batch = cls.batchify([item], has_labels=False)  # Batch with one sample
 
             with torch.no_grad():
-                if cls.batch_format == "huggingface":
+                if model.batch_format == "huggingface":
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
                         min_length=2,
@@ -246,8 +252,8 @@ class MSC_Turns(Dataset):
                     )[0]
                     pred_fact = pred_tokens[2] != model.nofact_token_id
 
-                elif cls.batch_format == "padded_sequences":
-                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)[0]              
+                elif model.batch_format == "padded_sequences":
+                    pred_tokens = model.generate(batch[0].to(device), batch[1], max=decoder_max)[0]              
                     pred_fact = pred_tokens[0] != model.nofact_token_id
 
             if pred_fact:
@@ -305,4 +311,3 @@ if __name__ == "__main__":
         utterances,
         firstspeaker_id=1
     )
-    logging.spam(batch2)
