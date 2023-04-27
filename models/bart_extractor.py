@@ -8,8 +8,6 @@ from transformers import BartForConditionalGeneration, BartModel, BartConfig, Ge
 from torchmetrics.functional.text.perplexity import perplexity
 
 
-BART_BASE = 'facebook/bart-large-cnn'
-
 class ConditionalFactLoss(nn.Module):
 
     def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5):
@@ -44,6 +42,7 @@ class BartExtractor(nn.Module):
         group.add_argument("--lm_loss_factor", type=float, default=0.5, help="Relative weight of lm_loss in combined loss")
         group.add_argument("--teacher_forcing", default=False, action='store_true', help="Use teacher forcing")
         group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
+        group.add_argument("--bart_base", type=str, default='facebook/bart-large-cnn', help="Name of pretrained BART model")
         return parser
 
     def __init__(self, bart_base=None, nofact_token_id=None):
