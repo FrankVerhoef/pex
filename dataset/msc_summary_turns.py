@@ -4,7 +4,8 @@
 
 import torch
 from torch.utils.data import Dataset
-from torcheval.metrics.functional import bleu_score, binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
+from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
+from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
 import json
 import random
@@ -197,11 +198,8 @@ class MSC_Turns(Dataset):
 
         target_facts = torch.tensor(target_facts)
         pred_facts =  torch.tensor(pred_facts)
-        
-        try:
-            bleu_4 = bleu_score(pred_personas, target_personas).item()
-        except ValueError:
-            bleu_4 = 0
+        bleu_2 = bleu_score(pred_personas, target_personas, n_gram=2, smooth=True).item()
+        bleu_4 = bleu_score(pred_personas, target_personas, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_personas, target_personas, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
         stats = {
@@ -210,9 +208,10 @@ class MSC_Turns(Dataset):
             "precision": binary_precision(pred_facts, target_facts).item(),
             "recall": binary_recall(pred_facts, target_facts).item(),
             "cm": binary_confusion_matrix(pred_facts, target_facts).tolist(),
-            "bleu": bleu_4,
-            "rouge": rouge_scores
+            "bleu_2": bleu_2, 
+            "bleu_4": bleu_4, 
         }
+        stats.update({k: v.item() for k, v in rouge_scores.items()})
 
         return stats
 
