@@ -11,6 +11,7 @@ import copy
 import os
 from functools import partial
 from filelock import FileLock
+import json
 
 import ray
 from ray import air, tune
@@ -146,20 +147,21 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
+        dataset_config = {
+            'basedir': args.datadir + args.basedir,
+            'session': args.session,
+            'tokenizer': tokenizer,
+            'len_context': args.len_context,
+            'speaker_prefixes': args.speaker_prefixes,
+            'nofact_token': args.nofact_token,
+            'batch_format': 'huggingface',
+            'batch_pad_id': tokenizer.pad_token_id
+        } 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
-            dataset_config = {
-                'basedir': args.datadir + args.basedir,
-                'session': args.session,
-                'tokenizer': tokenizer,
-                'len_context': args.len_context,
-                'speaker_prefixes': args.speaker_prefixes,
-                'nofact_token': args.nofact_token,
-                'batch_format': 'huggingface',
-                'batch_pad_id': tokenizer.pad_token_id
-            } 
             traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
             validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
             testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
+        collate_fn = traindata.batchify
 
     elif args.task == 'generate': 
 
@@ -169,7 +171,7 @@ def train_with_args(config, args):
 
             if args.load == '':
                 tokenizer = train_tokenizer(
-                    corpus=MSC_Turns(basedir=args.basedir, session=args.session, subset='train', tokenizer=None, max_samples=args.train_samples),
+                    corpus=MSC_Turns(basedir=args.basedir, session=args.session, subset='train', max_samples=args.train_samples),
                     max_size=args.vocab_size
                 )
                 if args.add_tokens is not None:
@@ -184,7 +186,6 @@ def train_with_args(config, args):
             nofact_token_id = tokenizer.token_to_id(args.nofact_token) if args.nofact_token != '' else eos_token_id
             assert nofact_token_id != unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
             vocab_size = tokenizer.get_vocab_size()
-            batch_format = "padded_sequences"
             encoder_opts = {
                 "input_size": vocab_size,
                 "embedding_size": args.embedding_size,
@@ -213,7 +214,6 @@ def train_with_args(config, args):
             pad_token_id = tokenizer.pad_token_id
             nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
             assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
-            batch_format = "huggingface"
 
             if args.model == "bart":
                 model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
@@ -232,20 +232,17 @@ def train_with_args(config, args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
+        MSC_Turns.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
+        dataset_config = {
+            'basedir': args.datadir + args.basedir,
+            'sessions': args.sessions
+        } 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            dataset_config = {
-                'basedir': args.datadir + args.basedir,
-                'session': args.session,
-                'tokenizer': tokenizer,
-                'len_context': args.len_context,
-                'speaker_prefixes': args.speaker_prefixes,
-                'nofact_token': args.nofact_token,
-                'batch_format': batch_format,
-                'batch_pad_id': pad_token_id
-            } 
             traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
             validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
             testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
+        collate_fn = partial(MSC_Turns.batchify, batch_format=model.batch_format, batch_pad_id=pad_token_id)
+
 
     elif args.task == "dialog": # Generate next utterance based on previous dialog turns
 
@@ -287,20 +284,45 @@ def train_with_args(config, args):
             'basedir': args.datadir + args.basedir,
             'session': args.session,
             'tokenizer': tokenizer,
-            'batch_pad_id': tokenizer.pad_token_id
         })
         if args.model == "kg_gen":
-            dataset_config["batch_format"] = "huggingface_xysplit"
+
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = KG_enriched_MSC_Session(subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
                 validdata = KG_enriched_MSC_Session(subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
                 testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
+            collate_fn = partial(traindata.batchify, batch_format=KnowledgeGroundedDecoder.batch_format, batch_pad_id=tokenizer.pad_token_id)
+
         elif args.model == "dialogpt":
-            dataset_config["batch_format"] = "huggingface_xycat"
+
+            if args.persona_selector is not None:
+
+                # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
+                loadpath = args.checkpoint_dir + args.persona_selector
+                logging.info("Loading persona_selector from {}".format(loadpath))
+                with open(loadpath + '.config', 'r') as f:
+                    bart_config = json.loads(f.read())
+                bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
+                if bart_config['add_tokens'] is not None:
+                    bart_tokenizer.add_tokens(bart_config['add_tokens'])
+                bart_model = BartExtractor(bart_config['bart_base'], bart_config['nofact_token_id'])
+                bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+                bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
+
+                # Configure MSC_Turns to predict persona sentences from a list of utterances
+                MSC_Turns.set(
+                    tokenizer=bart_tokenizer, 
+                    len_context=2, 
+                    speaker_prefixes=bart_config['speaker_prefixes'], 
+                    nofact_token=bart_config['nofact_token_id']
+                )
+                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=args.device)
+
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
                 validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
                 testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+            collate_fn = partial(traindata.batchify, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id)
                 
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
@@ -311,8 +333,8 @@ def train_with_args(config, args):
         logging.info("Loading model from {}".format(loadpath))
         model.load_state_dict(torch.load(loadpath))
         
-    train_loader = torch.utils.data.DataLoader(dataset=traindata, batch_size=args.batch_size, shuffle=True, collate_fn=traindata.batchify)
-    valid_loader = torch.utils.data.DataLoader(dataset=validdata, batch_size=args.batch_size, shuffle=False, collate_fn=validdata.batchify)
+    train_loader = torch.utils.data.DataLoader(dataset=traindata, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    valid_loader = torch.utils.data.DataLoader(dataset=validdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     if args.valid_interval is None:
         args.valid_interval = len(train_loader)
@@ -334,7 +356,7 @@ def train_with_args(config, args):
             torch.save(best_model.state_dict(), savepath)
 
         logging.info("Start testing")
-        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=testdata.batchify)    
+        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)    
         test_stats = eval(best_model, test_loader, criterion, device=args.device)
         logging.success("Test stats: {}".format(test_stats))
         train_stats["test_loss"] = test_stats["valid_loss"]
@@ -433,16 +455,19 @@ if __name__ == "__main__":
         parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
 
     # Add cmdline arguments for task/dataset
-    parser = {
-        "classify": MSC_Turn_Facts,
-        "generate": MSC_Turns,
-        "dialog": KG_enriched_MSC_Session,
-    }[args.task].add_cmdline_args(parser)
-    
-    args = parser.parse_known_args()[0]
-    if args.session == 1:
-        parser = ConvAI2.add_cmdline_args(parser)
-    
+    if args.task == "classify":
+        parser = MSC_Turn_Facts.add_cmdline_args(parser)
+    elif args.task == "generate":
+        parser = MSC_Turns.add_cmdline_args(parser)
+    elif args.task == "dialog": 
+        if args.model == "kg_gen":
+            parser = KG_enriched_MSC_Session.add_cmdline_args(parser)
+        elif args.model == "dialogpt":
+            parser = MSC_Session.add_cmdline_args(parser)
+        args = parser.parse_known_args()[0]
+        if args.session == 1:
+            parser = ConvAI2.add_cmdline_args(parser)
+        
     args = parser.parse_args()
 
     # Prepare logging
