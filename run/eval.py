@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import random
 from functools import partial
+import json
 
 from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
