@@ -12,7 +12,6 @@ import random
 
 import utils.logging as logging
 
-BATCH_FORMATS = ["huggingface", "padded_sequences"]
 
 class MSC_Turns(Dataset):
 
@@ -104,12 +103,12 @@ class MSC_Turns(Dataset):
         return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
 
     @classmethod
-    def batchify(cls, data, has_labels=True, batch_format="huggingface", batch_pad_id=0):
+    def batchify(cls, data, has_labels=True, batch_format=None, batch_pad_id=0):
         """
         Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
         assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
-        assert batch_format in BATCH_FORMATS, f"batch_format '{batch_format}' is invalid; should be one of {BATCH_FORMATS}"
+        assert batch_format is not None, f"batch_format should be specified"
 
         if batch_format == "huggingface":
 
@@ -159,7 +158,7 @@ class MSC_Turns(Dataset):
         for i in range(self.__len__()):
 
             target_persona = self.__getitem__(i)[1]
-            batch = self.batchify([self.__getitem__(i)])  # Batch with one sample
+            batch = self.batchify([self.__getitem__(i)], has_labels=False, batch_format=model.batch_format)  # Batch with one sample
 
             with torch.no_grad():
                 if model.batch_format == "huggingface":
@@ -238,7 +237,7 @@ class MSC_Turns(Dataset):
 
         for item in data:
 
-            batch = cls.batchify([item], has_labels=False)  # Batch with one sample
+            batch = cls.batchify([item], has_labels=False, batch_format=model.batch_format)  # Batch with one sample
 
             with torch.no_grad():
                 if model.batch_format == "huggingface":
