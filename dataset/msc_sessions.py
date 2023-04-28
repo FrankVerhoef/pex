@@ -154,9 +154,10 @@ class MSC_Session(Dataset):
         # other = "Speaker 2" if len(self.history[i]) < 1 else self.history[i][-1][0]
         # if other == "Speaker 2":
         if len(self.history[i]) < 1 or self.history[i][-1][0] == "Speaker 2":
-            mapping = {"Speaker 1": "you", "Speaker 2": "me"}
-        else:
             mapping = {"Speaker 1": "me", "Speaker 2": "you"}
+        else:
+            mapping = {"Speaker 1": "you", "Speaker 2": "me"}
+
 
         if self.speaker_prefixes is not None:
             history = ' '.join([self.speaker_prefixes[mapping[p]] + t for p, t in self.history[i]])
