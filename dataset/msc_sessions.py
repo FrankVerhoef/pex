@@ -17,8 +17,6 @@ from dataset.convai2 import ConvAI2
 import utils.logging as logging
 
 
-BATCH_FORMATS = ["huggingface_xycat", "huggingface_xysplit", "padded_sequences"]
-
 class MSC_Session(Dataset):
     
     tokenizer = None
@@ -165,48 +163,50 @@ class MSC_Session(Dataset):
         return corpus
 
     @classmethod
-    def batchify(cls, data, batch_format="huggingface_xycat", batch_pad_id=0):
+    def batchify(cls, data, has_labels=True, batch_format=None, batch_pad_id=0):
         """
             Transforms a list of dataset elements to batch of consisting of contexts and a batch with the corresponding next utterance.
         """
         assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
-        assert batch_format in BATCH_FORMATS, "batch_format should be one of {}".format(BATCH_FORMATS)
-
-        # seperate source and target sequences
-        history_batch, next_utterance_batch = zip(*data)
+        assert batch_format is not None, "batch_format should be specified"
 
         if batch_format == "huggingface_xycat":
 
-            # use right padding
-            # add <bos> token between context and target
-            # add <eos> token at end of all targets (necessary to make sure 'shift_right' of labels is possible )
-            cls.tokenizer.padding_side = 'right'
-            cls.tokenizer.truncation_side = 'left'
-            encoded = cls.tokenizer(
-                [history + cls.tokenizer.bos_token + next_utterance + cls.tokenizer.eos_token for history, next_utterance in data],
-                padding=True,
-                max_length=cls.tokenizer.model_max_length, 
-                truncation=True,
-                return_attention_mask=True,
-                return_tensors='pt'            
-            )
-            logging.spam(f"Encoded shape={encoded.input_ids.shape}")
+            if has_labels:
 
-        elif batch_format == "huggingface_x":
+                # use right padding
+                # add <bos> token between context and target
+                # add <eos> token at end of all targets (necessary to make sure 'shift_right' of labels is possible )
+                cls.tokenizer.padding_side = 'right'
+                cls.tokenizer.truncation_side = 'left'
+                encoded = cls.tokenizer(
+                    [history + cls.tokenizer.bos_token + next_utterance + cls.tokenizer.eos_token for history, next_utterance in data],
+                    padding=True,
+                    max_length=cls.tokenizer.model_max_length, 
+                    truncation=True,
+                    return_attention_mask=True,
+                    return_tensors='pt'            
+                )
+                logging.spam(f"Encoded shape={encoded.input_ids.shape}")
 
-            # use left padding for the input
-            cls.tokenizer.padding_side = 'left'
-            cls.tokenizer.truncation_side = 'left'
-            encoded = cls.tokenizer(
-                history_batch, 
-                padding=True, 
-                max_length=cls.tokenizer.model_max_length - 50,  # Leave some room for generation! 
-                truncation=True,
-                return_attention_mask=True,
-                return_tensors='pt'
-            )            
+            else:
+
+                # use left padding for the input
+                cls.tokenizer.padding_side = 'left'
+                cls.tokenizer.truncation_side = 'left'
+                encoded = cls.tokenizer(
+                    data, 
+                    padding=True, 
+                    max_length=cls.tokenizer.model_max_length - 50,  # Leave some room for generation! 
+                    truncation=True,
+                    return_attention_mask=True,
+                    return_tensors='pt'
+                )         
 
         elif batch_format == "huggingface_xysplit":
+
+            # seperate source and target sequences
+            history_batch, next_utterance_batch = zip(*data)
 
             # use left padding for the input
             cls.tokenizer.padding_side = 'left'
@@ -233,17 +233,21 @@ class MSC_Session(Dataset):
 
         elif batch_format == "padded_sequences":
 
-            # tokenize and convert to tensor
-            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in history_batch]
-            ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in next_utterance_batch]
-            
-            # determine lengths of source and target
-            xs_len = [len(x) for x in xs]
-            ys_len = [len(y) for y in ys]
+            if has_labels:
+                data, labels = zip(*data)
+                ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in labels]
+                ys_len = [len(y) for y in ys]
+                padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=batch_pad_id)
 
-            # pad sequences
+            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in data]
+            xs_len = [len(x) for x in xs]
             padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=batch_pad_id)
-            padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=batch_pad_id)
+            
+            if has_labels:
+                encoded = padded_xs, padded_ys, xs_len, ys_len
+            else:
+                encoded = padded_xs, xs_len
+
             encoded = padded_xs, padded_ys, xs_len, ys_len
 
         return encoded
@@ -268,7 +272,7 @@ class MSC_Session(Dataset):
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
-            inputs = self.batchify(data)
+            inputs = self.batchify(data, has_labels=False, batch_format=model.batch_format)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
@@ -432,7 +436,7 @@ if __name__ == "__main__":
         logging.verbose(item[1])
         logging.verbose('-'*40)
 
-    batch = msc_turns.batchify(data)
-    if batch_format == "huggingface":
+    batch = msc_turns.batchify(data, batch_format="huggingface_xycat")
+    if batch_format == "huggingface_xycat":
         logging.info("Components of batch: {}".format(str(batch.keys())))
     logging.spam(batch)
