@@ -176,7 +176,7 @@ class MSC_Session(Dataset):
         return corpus
 
     @classmethod
-    def batchify(cls, data, with_labels, batch_format=None, batch_pad_id=0):
+    def batchify(cls, data, with_labels, batch_format=None, batch_pad_id=0, buffer=0):
         """
             Transforms a list of dataset elements to batch of consisting of contexts and a batch with the corresponding next utterance.
         """
@@ -213,7 +213,7 @@ class MSC_Session(Dataset):
                 encoded = cls.tokenizer(
                     history_batch, 
                     padding=True, 
-                    max_length=cls.tokenizer.model_max_length - 50,  # Leave some room for generation! 
+                    max_length=cls.tokenizer.model_max_length - buffer,  # Leave some room for generation! 
                     truncation=True,
                     return_attention_mask=True,
                     return_tensors='pt'
@@ -226,6 +226,7 @@ class MSC_Session(Dataset):
             encoded = cls.tokenizer(
                 history_batch, 
                 padding=True, 
+                max_length=cls.tokenizer.model_max_length - buffer,
                 truncation=True,
                 return_attention_mask=True,
                 return_tensors='pt'
@@ -240,10 +241,16 @@ class MSC_Session(Dataset):
                 labels = cls.tokenizer(
                     [cls.tokenizer.bos_token + label + cls.tokenizer.eos_token for label in next_utterance_batch],
                     padding=True, 
+                    max_length=cls.tokenizer.model_max_length
                     truncation=True,
                     return_attention_mask=True,
                     return_tensors='pt'            
                 )
+                total_size = encoded.input_ids.shape[1] + labels.input_ids.shape[1]
+                if total_size > cls.tokenizer.model_max_length:
+                    truncated_size = cls.tokenizer.model_max_length - labels.input_ids.shape[1]
+                    encoded.input_ids = encoded.input_ids[:, -truncated_size:]
+                    encoded.attention_mask = encoded.attention_mask[:, -truncated_size:]
                 encoded = encoded, labels
 
         elif batch_format == "padded_sequences":
@@ -284,7 +291,7 @@ class MSC_Session(Dataset):
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
-            inputs = self.batchify(data, with_labels=False, batch_format=model.batch_format)
+            inputs = self.batchify(data, with_labels=False, batch_format=model.batch_format, buffer=decoder_max)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 

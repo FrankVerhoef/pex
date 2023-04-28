@@ -100,7 +100,7 @@ if __name__ == "__main__":
     print(vars(args))
 
     def predict(obs_batch, model, tokenizer, device, collate_fn):
-        inputs = collate_fn(obs_batch, with_labels=False, batch_format=model.batch_format)
+        inputs = collate_fn(obs_batch, with_labels=False, batch_format=model.batch_format, buffer=25)
         B, L = inputs.input_ids.shape[:2]
         bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)

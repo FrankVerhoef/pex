@@ -215,6 +215,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         inputs = cls.tokenizer(
             text_batch, 
             padding=True, 
+            max_length=cls.tokenizer.model_max_length, 
             truncation=True,
             return_attention_mask=True,
             return_tensors='pt'
@@ -226,10 +227,16 @@ class KG_enriched_MSC_Session(MSC_Session):
         labels = cls.tokenizer(
             [labels[0] + cls.tokenizer.eos_token for labels in labels_batch],
             padding=True, 
+            max_length=cls.tokenizer.model_max_length, 
             truncation=True,
             return_attention_mask=True,
             return_tensors='pt'            
         )
+        total_size = inputs.input_ids.shape[1] + labels.input_ids.shape[1]
+        if total_size > cls.tokenizer.model_max_length:
+            truncated_size = cls.tokenizer.model_max_length - labels.input_ids.shape[1]
+            inputs.input_ids = inputs.input_ids[:, -truncated_size:]
+            inputs.attention_mask = inputs.attention_mask[:, -truncated_size:]
 
         kg_info = KG_Info(
             concept_ids = padded_tensor([obs['concept_token_ids'] for obs in kg_info_batch], pad_value=cls.tokenizer.pad_token_id),
