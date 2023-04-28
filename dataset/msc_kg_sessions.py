@@ -205,7 +205,7 @@ class KG_enriched_MSC_Session(MSC_Session):
     def batchify(cls, data, batch_format):
         # TODO: make sure total length of input + labels fits in transformer!
 
-        assert batch_format == f"huggingface_kg", "batch_format '{batch_format}' not supported by {cls.__name__}"
+        assert batch_format == "huggingface_kg", f"batch_format '{batch_format}' not supported by {cls.__name__}"
 
         # seperate source and target sequences and kg_info
         text_batch, labels_batch, kg_info_batch = zip(*data)
@@ -345,12 +345,16 @@ if __name__ == "__main__":
     kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
 
     dataset_config = vars(args)
-    dataset_config.update({
+    dataset_config = {
         'basedir': datadir + basedir,
-        'kg': kg,
+        'session': args.session,
         'max_samples': None
-    })
-    KG_enriched_MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
+    }
+
+    KG_enriched_MSC_Session.set(
+        tokenizer, args.speaker_prefixes, 
+        kg, args.num_hops, args.max_branch, args.max_concepts, args.max_triples, args.overlapping_concepts
+    )
     dataset = KG_enriched_MSC_Session(
         **dataset_config
     )
@@ -377,5 +381,5 @@ if __name__ == "__main__":
     ]
     logging.verbose("ITEMS\n{}".format('\n'.join(itemstrings)))
 
-    batch = dataset.batchify(data)
+    batch = dataset.batchify(data, batch_format="huggingface_kg")
     logging.spam("BATCH\n{}".format(batch))
