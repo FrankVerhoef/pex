@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import json
 import random
+from collections import Counter
 
 from transformers import GenerationConfig
 from dataset.convai2 import ConvAI2
@@ -134,12 +135,12 @@ class MSC_Session(Dataset):
 
             start_range = 0 if self.augmented else max(len(turns) - 1, 0)
             for len_window in range(start_range, len(turns)):
-                lastspeaker = "Speaker 2" if len_window < 1 else turns[len_window - 1]["id"]
+                lastspeaker = "Speaker 2" if len_window < 1 else current_utterances[len_window - 1][0]
                 nextspeaker = "Speaker 1" if lastspeaker == "Speaker 2" else "Speaker 2"
                 history = self_info[nextspeaker] + other_info[lastspeaker] + previous_utterances + current_utterances[:len_window]
                 all_history.append(history)
 
-                next_utterance = turns[len_window]["text"]
+                next_utterance = current_utterances[len_window][1]
                 all_next_utterance.append(next_utterance)
 
         return all_history, all_next_utterance
@@ -175,6 +176,38 @@ class MSC_Session(Dataset):
             for utterance in dialog.get("dialog", []):
                 corpus.append(utterance['text'])
         return corpus
+
+    def measurements(self):
+
+        num_samples = self.__len__()
+        inputwords = len(' '.join([self.__getitem__(i)[0] for i in range(self.__len__())]).split())
+        labelwords = len(' '.join([self.__getitem__(i)[1] for i in range(self.__len__())]).split())
+        avg_inputwords = inputwords / num_samples
+        avg_labelwords = labelwords / num_samples
+        inputwords_per_sample = Counter([len(self.__getitem__(i)[0].split()) for i in range(self.__len__())])
+        inputwords_per_sample = sorted(inputwords_per_sample.items(), key=lambda x:x[0])
+        labelwords_per_sample = Counter([len(self.__getitem__(i)[1].split()) for i in range(self.__len__())])
+        labelwords_per_sample = sorted(labelwords_per_sample.items(), key=lambda x:x[0])
+        totalwords_per_sample = Counter([
+            len((self.__getitem__(i)[0] + ' ' + self.__getitem__(i)[1]).split()) 
+            for i in range(self.__len__())
+        ])
+        totalwords_per_sample = sorted(totalwords_per_sample.items(), key=lambda x:x[0])
+        avg_totalwords = sum([length * freq for length, freq in totalwords_per_sample]) / num_samples
+
+        all_measurements = {
+            "num_samples": num_samples,
+            "inputwords": inputwords,
+            "labelwords": labelwords,
+            "avg_inputwords": avg_inputwords,
+            "avg_labelwords": avg_labelwords,
+            "avg_totalwords": avg_totalwords,
+            "inputwords_per_sample": inputwords_per_sample,
+            "labelwords_per_sample": labelwords_per_sample,
+            "totalwords_per_sample": totalwords_per_sample,
+        }
+
+        return all_measurements
 
     @classmethod
     def batchify(cls, data, with_labels, batch_format=None, batch_pad_id=0, buffer=0):
@@ -385,8 +418,8 @@ if __name__ == "__main__":
         session = '-'.join(['1'] + version)
     speaker_prefixes = ['<me>', '<you>']
     add_tokens = speaker_prefixes
-    include_persona = False
-    include_history = False
+    include_persona = True
+    include_history = True
     augmented = True
     persona_selector = None #'test_bart'
 
@@ -445,10 +478,15 @@ if __name__ == "__main__":
         augmented=augmented,
         persona_selector=persona_selector
     )
+    
+    for k,v in msc_turns.measurements().items():
+        print(k, v)
+
     for sentence in msc_turns.corpus()[10:30]:
         logging.verbose(sentence)
     logging.verbose('-'*40)
-        
+
+
     data = [msc_turns[i] for i in range(10)]
 
     for item in data:
