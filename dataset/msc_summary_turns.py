@@ -103,34 +103,34 @@ class MSC_Turns(Dataset):
         return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
 
     @classmethod
-    def batchify(cls, data, has_labels=True, batch_format=None, batch_pad_id=0):
+    def batchify(cls, data, with_labels=True, batch_format=None, batch_pad_id=0):
         """
         Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
         assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
         assert batch_format is not None, f"batch_format should be specified"
 
+        history_batch, persona_batch = zip(*data)
+
         if batch_format == "huggingface":
 
-            if has_labels:
-                data, labels = zip(*data)  
-                encoded = cls.tokenizer(text=data, text_target=labels, padding=True, return_tensors="pt")
+            if with_labels:
+                encoded = cls.tokenizer(text=history_batch, text_target=persona_batch, padding=True, return_tensors="pt")
             else:
-                encoded = cls.tokenizer(text=data, padding=True, return_tensors="pt")
+                encoded = cls.tokenizer(text=history_batch, padding=True, return_tensors="pt")
 
         elif batch_format == "padded_sequences":
 
-            if has_labels:
-                data, labels = zip(*data)
-                ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in labels]
+            if with_labels:
+                ys = [torch.tensor(cls.tokenizer.encode(p).ids, dtype=torch.long) for p in persona_batch]
                 ys_len = [len(y) for y in ys]
                 padded_ys = torch.nn.utils.rnn.pad_sequence(ys, batch_first=True, padding_value=batch_pad_id)
             
-            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in data]
+            xs = [torch.tensor(cls.tokenizer.encode(t).ids, dtype=torch.long) for t in history_batch]
             xs_len = [len(x) for x in xs]
             padded_xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=batch_pad_id)
             
-            if has_labels:
+            if with_labels:
                 encoded = padded_xs, padded_ys, xs_len, ys_len
             else:
                 encoded = padded_xs, xs_len
@@ -158,7 +158,7 @@ class MSC_Turns(Dataset):
         for i in range(self.__len__()):
 
             target_persona = self.__getitem__(i)[1]
-            batch = self.batchify([self.__getitem__(i)], has_labels=False, batch_format=model.batch_format)  # Batch with one sample
+            batch = self.batchify([self.__getitem__(i)], with_labels=False, batch_format=model.batch_format)  # Batch with one sample
 
             with torch.no_grad():
                 if model.batch_format == "huggingface":
@@ -237,7 +237,7 @@ class MSC_Turns(Dataset):
 
         for item in data:
 
-            batch = cls.batchify([item], has_labels=False, batch_format=model.batch_format)  # Batch with one sample
+            batch = cls.batchify([item], with_labels=False, batch_format=model.batch_format)  # Batch with one sample
 
             with torch.no_grad():
                 if model.batch_format == "huggingface":

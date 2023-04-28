@@ -316,7 +316,7 @@ if __name__ == "__main__":
     MSC_Turns.set(tokenizer=tokenizer, len_context=len_context, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
     msc_turns = MSC_Turns(basedir=basedir, sessions=sessions, subset=subset)
     data = [msc_turns[i] for i in range(10)]
-    batch = msc_turns.batchify(data)
+    batch = msc_turns.batchify(data, batch_format=model.batch_format)
 
     # Test forward
     fact_logprobs, lm_logprobs = model(batch['input_ids'], batch['attention_mask'], batch['labels'])
