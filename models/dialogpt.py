@@ -100,7 +100,7 @@ if __name__ == "__main__":
     print(vars(args))
 
     def predict(obs_batch, model, tokenizer, device, collate_fn):
-        inputs = collate_fn(obs_batch)
+        inputs = collate_fn(obs_batch, batch_format=model.batch_format)
         B, L = inputs.input_ids.shape[:2]
         bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)
@@ -138,16 +138,13 @@ if __name__ == "__main__":
         tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/'
+    MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
     dataset = MSC_Session(
         basedir=basedir,
-        sessions=[2],
+        session=2,
         subset='train', 
-        tokenizer=tokenizer, 
-        speaker_prefixes=args.speaker_prefixes,
         include_persona=args.include_persona,
         max_samples=None, 
-        batch_format="huggingface_xycat", 
-        batch_pad_id=tokenizer.pad_token_id
     )
     model = DialoGPT(args.lm, tokenizer.bos_token_id)
     model.model.resize_token_embeddings(len(tokenizer))
@@ -156,10 +153,9 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     data = [dataset[i] for i in range(args.batch_size)]
-    batch = dataset.batchify(data)
+    batch = dataset.batchify(data, batch_format=model.batch_format)
 
-    dataset.batch_format = "huggingface_x"
-    responses = predict(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
+    responses = predict(data, model, tokenizer, device=args.device, collate_fn=MSC_Session.batchify)
     responses_stringlist = [
         "Context:  {}\n"
         "Label:    {}\n"
