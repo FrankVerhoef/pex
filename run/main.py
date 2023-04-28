@@ -12,6 +12,7 @@ import os
 from functools import partial
 from filelock import FileLock
 import json
+import argparse
 
 import ray
 from ray import air, tune
@@ -67,7 +68,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
             if (step % valid_interval == 0) or (step % num_batches == 0):
                 # Evaluate on validation set
                 model.eval()
-                valid_stats = eval(model, validloader, criterion, device)
+                valid_stats = valid(model, validloader, criterion, device)
                 valid_acc = valid_stats['valid_acc']
                 valid_loss = valid_stats['valid_loss']
                 logging.info("Epoch {}, step {}: Validation stats={}".format(epoch, step, valid_stats))
@@ -102,20 +103,20 @@ def train(model, trainloader, validloader, optimizer, criterion,
     return best_model, {"valid_acc": max_accuracy}
 
 
-def eval(model, dataloader, criterion, device):
+def valid(model, dataloader, criterion, device):
 
-    eval_stats = []
+    valid_stats = []
     model.to(device)
     model.eval()
 
     for batch in iter(dataloader):
 
         stats = model.valid_step(batch, criterion, device)
-        eval_stats.append(stats)
+        valid_stats.append(stats)
 
     stats = {
-        "valid_loss": sum([stats["loss"] for stats in eval_stats]) / len(eval_stats),
-        "valid_acc": sum([stats["acc"] for stats in eval_stats]) / len(eval_stats)}
+        "valid_loss": sum([stats["loss"] for stats in valid_stats]) / len(valid_stats),
+        "valid_acc": sum([stats["acc"] for stats in valid_stats]) / len(valid_stats)}
 
     return stats
 
@@ -144,18 +145,9 @@ def evaluate(model, testdata, args):
     return eval_stats 
 
 
-def train_with_args(config, args):
+def prepare_model_and_data(args):
 
-    if config is not None:
-        for k, v in config.items():
-            logging.info("Override/set {} to {}".format(k, v))
-            setattr(args, k, v)
-
-    logging.info("Set up {} to {}".format(args.model, args.task))
-
-    # set seed
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    model, traindata, validdata, testdata, collate_fn, criterion = None, None, None, None, None, None
 
     if args.task == 'classify': 
         
@@ -178,12 +170,14 @@ def train_with_args(config, args):
         MSC_Turn_Facts.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
         dataset_config = {
             'basedir': args.datadir + args.basedir,
-            'session': args.session
-        } 
+            'sessions': args.sessions
+        }
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
-            traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
-            validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
-            testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
+            if args.do_train:
+                traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
+                validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
+            if args.do_eval:
+                testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
         collate_fn = MSC_Turn_Facts.batchify
 
     elif args.task == 'generate': 
@@ -261,11 +255,12 @@ def train_with_args(config, args):
             'sessions': args.sessions
         } 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
-            validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
-            testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
+            if args.do_train:
+                traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
+                validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
+            if args.do_eval:
+                testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
         collate_fn = partial(MSC_Turns.batchify, batch_format=model.batch_format, batch_pad_id=pad_token_id)
-
 
     elif args.task == "dialog": # Generate next utterance based on previous dialog turns
 
@@ -276,13 +271,35 @@ def train_with_args(config, args):
             if args.add_tokens is not None:
                 tokenizer.add_tokens(args.add_tokens)
             tokenizer.bos_token_id = tokenizer.eos_token_id
-            model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+            model = KnowledgeGroundedDecoder(
+                args.lm, tokenizer.bos_token_id, args.fixed_lm, args.num_hops, args.gamma, args.aggregate_method, args.block_src, args.gate,
+                tokenizer, 
+                config=PretrainedConfig()
+            )
             model.gpt2model.resize_token_embeddings(len(tokenizer))
             criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
 
             kg = ConceptGraph(args.kg_datadir, args.kg)
             kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
-            del args.kg  # argument kg becomes the graph (instead of the filename)
+
+            KG_enriched_MSC_Session.set(
+                tokenizer, args.speaker_prefixes, 
+                kg, args.num_hops, args.max_branch, args.max_concepts, args.max_triples, args.overlapping_concepts
+            )
+
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
+                'include_persona': args.include_persona
+            }
+
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
+                if args.do_train:
+                    traindata = KG_enriched_MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
+                    validdata = KG_enriched_MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                if args.do_eval:
+                    testdata = KG_enriched_MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+            collate_fn = partial(KG_enriched_MSC_Session.batchify, batch_format=KnowledgeGroundedDecoder.batch_format)
 
         elif args.model == "dialogpt":
 
@@ -297,39 +314,15 @@ def train_with_args(config, args):
             model.model.resize_token_embeddings(len(tokenizer))
             criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
-        else:
-            assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
-
-        if args.session == 1:
-            args.session = '-'.join(['1'] + args.convai2_version)
-
-        dataset_config = {
-            'basedir': args.datadir + args.basedir,
-            'session': args.session,
-            'include_persona': args.include_persona
-        }
-
-        if args.model == "kg_gen":
-
-            KG_enriched_MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
-
-            dataset_config.update({
-                'num_hops': args.num_hops,
-                'max_branch': args.max_branch,
-                'max_concepts': args.max_concepts,
-                'max_triples': args.max_triples,
-                'overlapping_concepts': args.overlapping_concepts
-            })
-
-            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-                traindata = KG_enriched_MSC_Session(subset='train', kg=kg, max_samples=args.train_samples, **dataset_config)
-                validdata = KG_enriched_MSC_Session(subset='valid', kg=kg, max_samples=args.valid_samples, **dataset_config)
-                testdata = KG_enriched_MSC_Session(subset='test', kg=kg, max_samples=args.test_samples, **dataset_config)
-            collate_fn = partial(KG_enriched_MSC_Session.batchify, batch_format=KnowledgeGroundedDecoder.batch_format, batch_pad_id=tokenizer.pad_token_id)
-
-        elif args.model == "dialogpt":
-
             MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
+
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
+                'include_persona': args.include_persona,
+                'include_history': args.include_history,
+                'augmented': args.augmented
+            }
 
             if args.persona_selector is not None:
 
@@ -360,11 +353,33 @@ def train_with_args(config, args):
                 dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-                traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
-                validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
-                testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+                if args.do_train:
+                    traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
+                    validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                if args.do_eval:
+                    testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
             collate_fn = partial(MSC_Session.batchify, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id)
-                
+
+        else:
+            assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
+
+    return model, traindata, validdata, testdata, collate_fn, criterion
+
+
+def train_with_args(config, args):
+
+    if config is not None:
+        for k, v in config.items():
+            logging.info("Override/set {} to {}".format(k, v))
+            setattr(args, k, v)
+
+    # set seed
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    logging.info("Set up for model: {}, task: {}".format(args.model, args.task))
+    model, traindata, validdata, testdata, collate_fn, criterion = prepare_model_and_data(args)
+
     if args.use_wandb:
         wandb.init(project="pex", entity="thegist")
         wandb.config.update(args)  # Converts args to a dictionary and logs it in wandb
@@ -373,45 +388,52 @@ def train_with_args(config, args):
         loadpath = args.checkpoint_dir + args.load
         logging.info("Loading model from {}".format(loadpath))
         model.load_state_dict(torch.load(loadpath))
-        
-    train_loader = torch.utils.data.DataLoader(dataset=traindata, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-    valid_loader = torch.utils.data.DataLoader(dataset=validdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
-    if args.valid_interval is None:
-        args.valid_interval = len(train_loader)
 
-    logging.info("Use train/valid/test dataset with {}/{}/{} samples".format(len(traindata), len(validdata), len(testdata)))
-    logging.info("Start training")
+    stats = {}
+    if args.do_train:        
+        train_loader = torch.utils.data.DataLoader(dataset=traindata, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+        valid_loader = torch.utils.data.DataLoader(dataset=validdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        if args.valid_interval is None:
+            args.valid_interval = len(train_loader)
 
-    best_model, train_stats = train(
-        model, train_loader, valid_loader, optimizer, criterion, 
-        device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval, patience=args.patience,
-        do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
-    )
+        logging.info("Start training")
+        logging.info("Use train/valid dataset with {}/{} samples".format(len(traindata), len(validdata)))
+ 
+        model, stats = train(
+            model, train_loader, valid_loader, optimizer, criterion, 
+            device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval, patience=args.patience,
+            do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
+        )
 
     if not args.do_grid_search:
 
         if args.save != "":
             savepath = args.checkpoint_dir + savename(args)
             logging.info("Saving model to {}".format(savepath))
-            torch.save(best_model.state_dict(), savepath)
+            torch.save(model.state_dict(), savepath)
             with open(savepath + '.config', 'w') as f:
                 f.write(json.dumps(vars(args)))
 
-        logging.info("Start testing")
-        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
-        test_stats = eval(best_model, test_loader, criterion, device=args.device)
+        if args.do_eval:
 
-        logging.success("Test stats: {}".format(test_stats))
-        train_stats["test_loss"] = test_stats["valid_loss"]
-        train_stats["test_acc"] = test_stats["valid_acc"]
-        if args.use_wandb:
-            wandb.run.summary["test_accuracy"] = test_stats["valid_acc"]  
+            logging.info("Start testing")
+            test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
+            test_stats = valid(model, test_loader, criterion, device=args.device)
+
+            logging.success("Test stats: {}".format(test_stats))
+            stats.update({
+                "test_loss": test_stats["valid_loss"],
+                "test_acc": test_stats["valid_acc"]
+            })
+
+            if args.use_wandb:
+                wandb.run.summary["test_accuracy"] = stats["test_acc"]  
     
-        eval_stats = evaluate(best_model, testdata, args)
-        train_stats.update(eval_stats)
+            eval_stats = evaluate(model, testdata, args)
+            stats.update(eval_stats)
 
-    return train_stats
+    return stats
 
 
 def do_grid_search(args):
@@ -479,6 +501,8 @@ def get_parser():
     parser.add_argument("--load", type=str, default="", help="filename of model to load")
     parser.add_argument("--save", type=str, default="", help="filename to save the model")
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
+    parser.add_argument("--do_train", type=bool, default=True, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--do_eval", type=bool, default=True, action=argparse.BooleanOptionalAction)
     parser.add_argument("--do_grid_search", default=False, action='store_true')
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
@@ -492,15 +516,19 @@ def get_parser():
     parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
     parser.add_argument("--valid_samples", type=int, default=None, help="Max number of test samples")
     parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
-    
-    # Training
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
-    parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
-    parser.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
 
     args = parser.parse_known_args()[0]
+    
+    if args.do_train:
+
+        parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
+        parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
+        parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
+        parser.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
+
+    if args.do_eval:
+        parser.add_argument("--print_max", type=int, default=20, help="Max number of test examples to print")
 
     # Add cmdline arguments for model
     parser = {
@@ -533,7 +561,6 @@ def get_parser():
 
 
 if __name__ == "__main__":
-    import argparse
 
     parser = get_parser()
     args = parser.parse_args()
