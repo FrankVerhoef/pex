@@ -100,7 +100,7 @@ if __name__ == "__main__":
     print(vars(args))
 
     def predict(obs_batch, model, tokenizer, device, collate_fn):
-        inputs = collate_fn(obs_batch, batch_format=model.batch_format)
+        inputs = collate_fn(obs_batch, with_labels=False, batch_format=model.batch_format)
         B, L = inputs.input_ids.shape[:2]
         bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)
@@ -124,7 +124,7 @@ if __name__ == "__main__":
         return responses
 
     logging.set_log_level(logging.SPAM)
-    logging.set_only_message(True)
+    # logging.set_only_message(True)
 
     # Settings for test
     tokenizer = AutoTokenizer.from_pretrained(args.lm)
@@ -142,9 +142,11 @@ if __name__ == "__main__":
     dataset = MSC_Session(
         basedir=basedir,
         session=2,
-        subset='train', 
-        include_persona=args.include_persona,
-        max_samples=None, 
+        subset='test', 
+        include_persona=True,
+        include_history=True,
+        augmented=True,
+        max_samples=3, 
     )
     model = DialoGPT(args.lm, tokenizer.bos_token_id)
     model.model.resize_token_embeddings(len(tokenizer))
@@ -153,7 +155,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     data = [dataset[i] for i in range(args.batch_size)]
-    batch = dataset.batchify(data, batch_format=model.batch_format)
+    batch = dataset.batchify(data, with_labels=False, batch_format=model.batch_format)
 
     responses = predict(data, model, tokenizer, device=args.device, collate_fn=MSC_Session.batchify)
     responses_stringlist = [
