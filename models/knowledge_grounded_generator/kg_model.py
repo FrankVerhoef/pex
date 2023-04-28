@@ -322,7 +322,7 @@ class KG_Probs_Model(nn.Module):
 
 class KnowledgeGroundedDecoder(PreTrainedModel):
 
-    batch_format = "huggingface_xysplit"
+    batch_format = "huggingface_kg"
 
     @classmethod
     def add_cmdline_args(cls, parser):
@@ -330,7 +330,7 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         group.add_argument(
             "--lm",
             type=str,
-            default="microsoft/DialoGPT-medium",
+            default="gpt2",
             help="Language model"
         )
         group.add_argument(
@@ -385,28 +385,28 @@ class KnowledgeGroundedDecoder(PreTrainedModel):
         group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
         return parser
     
-    def __init__(self, opt, tokenizer, config):
+    def __init__(self, lm, bos_token_id, fixed_lm, num_hops, gamma, aggregate_method, block_src, gate, tokenizer, config):
         super().__init__(config)
         self.tokenizer = tokenizer      # TODO: Remove --> does not belong here; only used for testing
 
         # Model and parameters for language model
-        self.gpt2model = AutoModelForCausalLM.from_pretrained(opt["lm"])
+        self.gpt2model = AutoModelForCausalLM.from_pretrained(lm)
         self.softmax = nn.Softmax(dim=-1)
-        self.bos_token_id = opt['bos_token_id']
-        if opt['fixed_lm'] == True:
+        self.bos_token_id = bos_token_id
+        if fixed_lm == True:
             self.fix_lm_weights()
 
         # Model and parameters to encode knowledge triples
-        self.triple_encoder = TripleEncoder(self.gpt2model.transformer.wte, opt['num_hops'])
+        self.triple_encoder = TripleEncoder(self.gpt2model.transformer.wte, num_hops)
 
         # Graph convolutionel network to calculate concept probabilities
         self.kg_probs = KG_Probs_Model(
             self.gpt2model.config.n_embd,   # This should match with the size of the last hidden layer of the language model
-            opt['num_hops'],
-            opt['gamma'],
-            opt['aggregate_method'],
-            opt['block_src'],
-            opt['gate']
+            num_hops,
+            gamma,
+            aggregate_method,
+            block_src,
+            gate
         )
         logging.info("Initialized KnowledgeGroundedDecoder")
 
