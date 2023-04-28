@@ -260,7 +260,7 @@ def prepare_model_and_data(args):
                 validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
             if args.do_eval:
                 testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
-        collate_fn = partial(MSC_Turns.batchify, batch_format=model.batch_format, batch_pad_id=pad_token_id)
+        collate_fn = partial(MSC_Turns.batchify, with_labels=True, batch_format=model.batch_format, batch_pad_id=pad_token_id)
 
     elif args.task == "dialog": # Generate next utterance based on previous dialog turns
 
@@ -357,7 +357,7 @@ def prepare_model_and_data(args):
                     validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, augmented=args.augmented, **dataset_config)
                 if args.do_eval:
                     testdata = MSC_Session(subset='test', max_samples=args.test_samples, augmented=True, **dataset_config)
-            collate_fn = partial(MSC_Session.batchify, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id)
+            collate_fn = partial(MSC_Session.batchify, with_labels=True, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id, buffer=0)
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
