@@ -652,7 +652,7 @@ if __name__ == "__main__":
         return parser
 
     def predict(obs_batch, model, tokenizer, device, collate_fn):
-        inputs, labels, kg_info = collate_fn(obs_batch)
+        inputs, labels, kg_info = collate_fn(obs_batch, model.batch_format)
         B, L = inputs.input_ids.shape[:2]
         bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
         model.to(device)
@@ -736,34 +736,33 @@ if __name__ == "__main__":
     args.add_tokens = None # args.speaker_prefixes
     if args.add_tokens is not None:
         tokenizer.add_tokens(args.add_tokens)
-    # if args.speaker_prefixes is not None:
-    #     args.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
-    # else:
-    args.bos_token_id = tokenizer.eos_token_id
-
 
     kg = ConceptGraph(args.kg_datadir, args.kg)
     kg.build_reduced_graph(args.kg_datadir + args.dataset_concepts)
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_dialogue/'
-    dataset = KG_enriched_MSC_Session(
-        vars(args), 
-        basedir=basedir,
-        sessions=[2],
-        subset='train', 
-        tokenizer=tokenizer, 
-        kg=kg,
-        max_samples=None, 
-        batch_format="huggingface", 
-        batch_pad_id=tokenizer.pad_token_id
+    KG_enriched_MSC_Session.set(
+        tokenizer, args.speaker_prefixes, 
+        kg, args.num_hops, args.max_branch, args.max_concepts, args.max_triples, args.overlapping_concepts
     )
-    model = KnowledgeGroundedDecoder(vars(args), tokenizer, config=PretrainedConfig())
+    dataset = KG_enriched_MSC_Session(
+        basedir=basedir,
+        session=2,
+        subset='train', 
+        max_samples=None, 
+    )
+    tokenizer.bos_token_id = tokenizer.eos_token_id
+    model = KnowledgeGroundedDecoder(
+        args.lm, tokenizer.bos_token_id, args.fixed_lm, args.num_hops, args.gamma, args.aggregate_method, args.block_src, args.gate,
+        tokenizer, 
+        config=PretrainedConfig()
+    )
     model.gpt2model.resize_token_embeddings(len(tokenizer))
     criterion = KG_loss(ignore_index=tokenizer.pad_token_id, invalid=-1, alpha = args.alpha, beta = args.beta)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     data = [dataset[i] for i in range(args.batch_size)]
-    batch = dataset.batchify(data)
+    batch = dataset.batchify(data, batch_format=model.batch_format)
 
     responses = predict(data, model, tokenizer, device=args.device, collate_fn=dataset.batchify)
     responses_stringlist = [
