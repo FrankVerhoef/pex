@@ -320,8 +320,7 @@ def prepare_model_and_data(args):
                 'basedir': args.datadir + args.basedir,
                 'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
                 'include_persona': args.include_persona,
-                'include_history': args.include_history,
-                'augmented': args.augmented
+                'include_history': args.include_history
             }
 
             if args.persona_selector is not None:
@@ -354,10 +353,10 @@ def prepare_model_and_data(args):
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 if args.do_train:
-                    traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
-                    validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                    traindata = MSC_Session(subset='train', max_samples=args.train_samples, augmented=args.augmented, **dataset_config)
+                    validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, augmented=args.augmented, **dataset_config)
                 if args.do_eval:
-                    testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+                    testdata = MSC_Session(subset='test', max_samples=args.test_samples, augmented=True, **dataset_config)
             collate_fn = partial(MSC_Session.batchify, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id)
 
         else:
