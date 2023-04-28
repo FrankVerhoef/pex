@@ -1,6 +1,7 @@
 import torch
-from torcheval.metrics.functional import bleu_score
+from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
+import evaluate
 
 from transformers import BatchEncoding, GenerationConfig
 
@@ -15,7 +16,16 @@ from dataset.convai2 import ConvAI2
 
 class KG_enriched_MSC_Session(MSC_Session):
 
-    _cache_sorted_dict_ind = None
+    @classmethod
+    def set(cls, tokenizer, speaker_prefixes, kg, num_hops, max_branch, max_concepts, max_triples, overlapping_concepts):
+        super().set(tokenizer, speaker_prefixes)
+        cls._cache_sorted_dict_ind = sorted(cls.tokenizer.get_vocab().values())
+        cls.kg = kg
+        cls.num_hops = num_hops
+        cls.max_branch = max_branch
+        cls.max_concepts = max_concepts
+        cls.max_triples = max_triples
+        cls.overlapping_concepts = overlapping_concepts
 
     @classmethod
     def add_cmdline_args(cls, parser):
@@ -80,23 +90,16 @@ class KG_enriched_MSC_Session(MSC_Session):
         basedir='./', 
         session=2,
         subset='train', 
-        kg=None, 
-        max_samples=None, 
-        **kwargs
+        include_persona=False,
+        max_samples=None
     ):
         super().__init__(
             basedir=basedir,
             session=session, 
             subset=subset,
-            include_persona=kwargs['include_persona'], 
+            include_persona=include_persona, 
             max_samples=max_samples, 
         )
-        self.num_hops = kwargs['num_hops']
-        self.max_branch = kwargs['max_branch']
-        self.max_concepts = kwargs['max_concepts']
-        self.max_triples = kwargs['max_triples']
-        self.overlapping_concepts = kwargs['overlapping_concepts']
-        self.kg = kg
         logging.info("Initialized KG_enriched_MSC_Session")
 
 
@@ -108,8 +111,6 @@ class KG_enriched_MSC_Session(MSC_Session):
         present in the observation. The vocab mask and map mask are used in the KGG-model to map the 
         calculated concept-scores back to token-scores in the GPT2 vocabulary.
         """
-        if self._cache_sorted_dict_ind is None:
-            self._cache_sorted_dict_ind = sorted(self.tokenizer.get_vocab().values())
         vocab_map = torch.zeros(len(self._cache_sorted_dict_ind), dtype=torch.long)
         map_mask = torch.zeros_like(vocab_map)
         for i, token_id in enumerate(self._cache_sorted_dict_ind):
@@ -200,16 +201,18 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         return kg_info
 
-
-    def batchify(self, data):
+    @classmethod
+    def batchify(cls, data, batch_format):
         # TODO: make sure total length of input + labels fits in transformer!
+
+        assert batch_format == f"huggingface_kg", "batch_format '{batch_format}' not supported by {cls.__name__}"
 
         # seperate source and target sequences and kg_info
         text_batch, labels_batch, kg_info_batch = zip(*data)
 
         # use left padding for the input
-        self.tokenizer.padding_size = 'left'
-        inputs = self.tokenizer(
+        cls.tokenizer.padding_size = 'left'
+        inputs = cls.tokenizer(
             text_batch, 
             padding=True, 
             truncation=True,
@@ -219,9 +222,9 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         # use right padding for labels
         # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
-        self.tokenizer.padding_side = 'right'
-        labels = self.tokenizer(
-            [labels[0] + self.tokenizer.eos_token for labels in labels_batch],
+        cls.tokenizer.padding_side = 'right'
+        labels = cls.tokenizer(
+            [labels[0] + cls.tokenizer.eos_token for labels in labels_batch],
             padding=True, 
             truncation=True,
             return_attention_mask=True,
@@ -229,10 +232,10 @@ class KG_enriched_MSC_Session(MSC_Session):
         )
 
         kg_info = KG_Info(
-            concept_ids = padded_tensor([obs['concept_token_ids'] for obs in kg_info_batch], pad_value=self.tokenizer.pad_token_id),
+            concept_ids = padded_tensor([obs['concept_token_ids'] for obs in kg_info_batch], pad_value=cls.tokenizer.pad_token_id),
             concept_labels = padded_tensor([obs['concept_labels'] for obs in kg_info_batch], pad_value=-1),
             distances = padded_tensor([obs['distances'] for obs in kg_info_batch], pad_value=0),
-            relation_ids = padded_tensor([obs['relation_ids'] for obs in kg_info_batch], pad_value=self.kg.relation2id[NORELATION_TOKEN]),
+            relation_ids = padded_tensor([obs['relation_ids'] for obs in kg_info_batch], pad_value=cls.kg.relation2id[NORELATION_TOKEN]),
             head_idx = padded_tensor([obs['head_idx'] for obs in kg_info_batch], pad_value=0),
             tail_idx = padded_tensor([obs['tail_idx'] for obs in kg_info_batch], pad_value=0),
             triple_labels = padded_tensor([obs['triple_labels'] for obs in kg_info_batch], pad_value=-1),
@@ -258,10 +261,12 @@ class KG_enriched_MSC_Session(MSC_Session):
         target_responses = []
         pred_responses = []
         interval_counter = 0
+        meteor = evaluate.load("meteor")
+        google_bleu = evaluate.load("google_bleu")
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
-            inputs, _, kg_input = self.batchify(data)
+            inputs, _, kg_input = self.batchify(data, model.batch_format)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
@@ -295,13 +300,18 @@ class KG_enriched_MSC_Session(MSC_Session):
 
         logging.info(f"Completed evaluation of {len(pred_responses)} samples")
 
-        try:
-            bleu_4 = bleu_score(target_responses, pred_responses).item()
-        except ValueError:
-            bleu_4 = 0
+        bleu_google = google_bleu.compute(predictions=pred_responses, references=[[t] for t in target_responses])
+        meteor_score = meteor.compute(predictions=pred_responses, references=[[t] for t in target_responses])
+        bleu_2 = bleu_score(pred_responses, target_responses, n_gram=2, smooth=True).item()
+        bleu_4 = bleu_score(pred_responses, target_responses, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
 
-        stats = {"bleu": bleu_4}
+        stats = {
+            "bleu_2": bleu_2, 
+            "bleu_4": bleu_4, 
+            "gleu": bleu_google, 
+            "meteor": meteor_score
+        }
         stats.update({k: v.item() for k, v in rouge_scores.items()})
 
         return stats
