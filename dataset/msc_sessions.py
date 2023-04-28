@@ -241,7 +241,7 @@ class MSC_Session(Dataset):
                 labels = cls.tokenizer(
                     [cls.tokenizer.bos_token + label + cls.tokenizer.eos_token for label in next_utterance_batch],
                     padding=True, 
-                    max_length=cls.tokenizer.model_max_length
+                    max_length=cls.tokenizer.model_max_length,
                     truncation=True,
                     return_attention_mask=True,
                     return_tensors='pt'            
