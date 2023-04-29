@@ -1,6 +1,7 @@
 from dataset.msc_summary_turns import MSC_Turns
 import torch
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
+from collections import Counter
 
 class MSC_Turn_Facts(MSC_Turns):
 
@@ -33,6 +34,29 @@ class MSC_Turn_Facts(MSC_Turns):
             turn_1 = turn[-1][1]
         has_fact = self.personas[index] != self.nofact_token
         return turn_0, turn_1, has_fact
+
+
+    def measurements(self):
+
+        num_samples = self.__len__()
+        inputwords = len(' '.join([self.__getitem__(i)[0] + ' ' + self.__getitem__(i)[1] for i in range(self.__len__())]).split())
+        avg_inputwords = inputwords / num_samples
+        inputwords_per_sample = Counter([len((self.__getitem__(i)[0] + ' ' + self.__getitem__(i)[1]) .split()) for i in range(self.__len__())])
+        inputwords_per_sample = sorted(inputwords_per_sample.items(), key=lambda x:x[0])
+        num_samples_perclass = Counter([self.__getitem__(i)[2] for i in range(self.__len__())])
+        num_samples_perclass = sorted(num_samples_perclass.items(), key=lambda x:x[0])
+        avg_samples_perclass = [(c, n / num_samples) for c, n in num_samples_perclass]
+
+        all_measurements = {
+            "num_samples": num_samples,
+            "inputwords": inputwords,
+            "avg_inputwords": avg_inputwords,
+            "inputwords_per_sample": inputwords_per_sample,
+            "num_samples_perclass": num_samples_perclass,
+            "avg_samples_perclass": avg_samples_perclass,
+        }
+
+        return all_measurements
 
 
     @classmethod
@@ -102,9 +126,9 @@ if __name__ == "__main__":
     sessions = [2]
     subset='train'
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased')
-    speaker_prefixes=["[me]", "[you]"]
+    speaker_prefixes=None #["[me]", "[you]"]
     add_tokens = None
-    len_context = 4
+    len_context = 2
 
     # Prepare for test
     if add_tokens is not None:
@@ -117,6 +141,9 @@ if __name__ == "__main__":
         sessions=sessions, 
         subset=subset
     )
+
+    for k,v in msc_turns.measurements().items():
+        print(k, v)
 
     batch = [msc_turns[i] for i in range(10)]
 

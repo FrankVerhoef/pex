@@ -9,6 +9,7 @@ from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
 import json
 import random
+from collections import Counter
 
 import utils.logging as logging
 
@@ -32,7 +33,7 @@ class MSC_Turns(Dataset):
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('MSC_Turns')
-        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
+        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'other' and 'self'")
         group.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--len_context", default=2, type=int, help="Number of utterances to include in context")
@@ -63,7 +64,7 @@ class MSC_Turns(Dataset):
                 
                 turn = []
                 for j in range(self.len_context):
-                    p = (self.len_context - j) % 2
+                    p = (self.len_context + 1 - j) % 2
                     t = d["dialog"][i+j].get("text","")
                     turn.append((p, t))
                 turns.append(turn)
@@ -86,21 +87,46 @@ class MSC_Turns(Dataset):
         return len(self.turns)
     
     def __getitem__(self, i):
-        """
-        TODO: decide whether to include space between persona token and utterance
-        """
-        # last_p, last_t = self.turns[i][-1]
-
         if self.speaker_prefixes is not None:
             history = ' '.join([self.speaker_prefixes[p] + t for p, t in self.turns[i]])
-            # last_utterance = self.speaker_prefixes[last_p] + last_t
         else:
             history = ' '.join([t for p, t in self.turns[i]])
-            # last_utterance = last_t
         return history, self.personas[i]
     
     def corpus(self):
         return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
+
+    def measurements(self):
+
+        num_samples = self.__len__()
+        inputwords = len(' '.join([self.__getitem__(i)[0] for i in range(self.__len__())]).split())
+        labelwords = len(' '.join([self.__getitem__(i)[1] for i in range(self.__len__())]).split())
+        avg_inputwords = inputwords / num_samples
+        avg_labelwords = labelwords / num_samples
+        inputwords_per_sample = Counter([len(self.__getitem__(i)[0].split()) for i in range(self.__len__())])
+        inputwords_per_sample = sorted(inputwords_per_sample.items(), key=lambda x:x[0])
+        labelwords_per_sample = Counter([len(self.__getitem__(i)[1].split()) for i in range(self.__len__())])
+        labelwords_per_sample = sorted(labelwords_per_sample.items(), key=lambda x:x[0])
+        totalwords_per_sample = Counter([
+            len((self.__getitem__(i)[0] + ' ' + self.__getitem__(i)[1]).split()) 
+            for i in range(self.__len__())
+        ])
+        totalwords_per_sample = sorted(totalwords_per_sample.items(), key=lambda x:x[0])
+        avg_totalwords = sum([length * freq for length, freq in totalwords_per_sample]) / num_samples
+
+        all_measurements = {
+            "num_samples": num_samples,
+            "inputwords": inputwords,
+            "labelwords": labelwords,
+            "avg_inputwords": avg_inputwords,
+            "avg_labelwords": avg_labelwords,
+            "avg_totalwords": avg_totalwords,
+            "inputwords_per_sample": inputwords_per_sample,
+            "labelwords_per_sample": labelwords_per_sample,
+            "totalwords_per_sample": totalwords_per_sample
+        }
+
+        return all_measurements
 
     @classmethod
     def batchify(cls, data, with_labels=True, batch_format=None, batch_pad_id=0):
@@ -268,11 +294,11 @@ if __name__ == "__main__":
     logging.info("Unit test {}".format(__file__))
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
-    sessions = [1]
+    sessions = [2]
     subset = 'train'
-    speaker_prefixes = ["<me>", "<you>"]
-    nofact_token = '<nofact>'
-    add_tokens = speaker_prefixes + [nofact_token]
+    speaker_prefixes = None #["<me>", "<you>"]
+    nofact_token = '' #'<nofact>'
+    add_tokens = None #speaker_prefixes + [nofact_token]
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
@@ -284,13 +310,16 @@ if __name__ == "__main__":
     if add_tokens is not None:
         tokenizer.add_tokens(add_tokens)
 
-    MSC_Turns.set(tokenizer=tokenizer, len_context=3, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    MSC_Turns.set(tokenizer=tokenizer, len_context=2, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
 
     msc_turns = MSC_Turns(
         basedir=basedir, 
         sessions=sessions, 
         subset=subset
     )
+
+    for k,v in msc_turns.measurements().items():
+        print(k, v)
 
     data = [msc_turns[i] for i in range(10)]
 
