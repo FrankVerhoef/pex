@@ -53,31 +53,55 @@ class MSC_Session(Dataset):
             max_samples=None
         ):
         super(MSC_Session, self).__init__()
+        self.basedir = basedir
         self.session = session
         self.subset=subset
         self.dialogues = []
-        if str(session)[0] == '1':
-            version = str(session).split('-')[1:]
-            if len(version) > 0:
-                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
-            else:
-                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
-            logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
-            self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
+        if str(session).split(":")[0] == 'preprocessed':
+            filepath = basedir + session
+            self.history, self.next_utterance = self.load_preprocessed(filepath)
         else:
-            filepath = f"{basedir}session_{session}/{subset}.txt"
-            try:
-                with open(filepath, "r") as f:
-                    msc_dialogues = [json.loads(line) for line in f]
-                logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {session} for {subset} dataset")
-                self.dialogues.extend(msc_dialogues)
-            except FileNotFoundError:
-                logging.warning(f"File '{filepath}' not found -> skipped")
-        self.include_persona = include_persona
-        self.include_history = include_history
-        self.augmented = augmented
-        self.persona_selector = persona_selector
-        self.history, self.next_utterance = self.transform_dialogues(max_samples)   
+            if str(session)[0] == '1':
+                version = str(session).split('-')[1:]
+                if len(version) > 0:
+                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
+                else:
+                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
+                logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
+                self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
+            else:
+                filepath = f"{basedir}session_{session}/{subset}.txt"
+                try:
+                    with open(filepath, "r") as f:
+                        msc_dialogues = [json.loads(line) for line in f]
+                    logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {session} for {subset} dataset")
+                    self.dialogues.extend(msc_dialogues)
+                except FileNotFoundError:
+                    logging.warning(f"File '{filepath}' not found -> skipped")
+            self.include_persona = include_persona
+            self.include_history = include_history
+            self.augmented = augmented
+            self.persona_selector = persona_selector
+            self.history, self.next_utterance = self.transform_dialogues(max_samples)
+            if self.persona_selector is not None:
+                self.save_preprocessed()
+
+    def load_preprocessed(self, filepath):
+        logging.info("Loading preprocessed dataset from: " + filepath)
+        with open(filepath, 'r') as f:
+            all_history = json.loads(f.readline())
+            all_next_utterance = json.loads(f.readline())
+        return all_history, all_next_utterance
+
+    def save_preprocessed(self):
+        filepath = self.basedir + "preprocessed:" + f"session_{self.session}_{self.subset}"
+        filepath += "_{}prefixes".format("no" if self.speaker_prefixes is None else "with")
+        filepath += "_{}persona".format("selected" if self.persona_selector is not None else ("gold" if self.include_persona else "no"))
+        filepath += "_{}history".format("with" if self.include_history else "no")
+        logging.info("Saving preprocessed dataset to: " + filepath)
+        with open(filepath, "w") as f:
+            f.write(json.dumps(self.history) + '\n')
+            f.write(json.dumps(self.next_utterance) + '\n') 
 
     def transform_dialogues(self, max_samples):
         all_history, all_next_utterance = [], []
@@ -210,7 +234,7 @@ class MSC_Session(Dataset):
         return all_measurements
 
     @classmethod
-    def batchify(cls, data, with_labels, batch_format=None, batch_pad_id=0, buffer=0):
+    def batchify(cls, data, with_labels=True, batch_format=None, batch_pad_id=0, buffer=0):
         """
             Transforms a list of dataset elements to batch of consisting of contexts and a batch with the corresponding next utterance.
         """
@@ -412,16 +436,16 @@ if __name__ == "__main__":
     basedir = 'msc/msc_dialogue/'
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     subset = 'train'
-    session = 4
+    session = "preprocessed:session_2_train_withprefixes_selectedpersona_nohistory"
     if session == 1:
         version = ['both', 'revised']
         session = '-'.join(['1'] + version)
-    speaker_prefixes = ['<me>', '<you>']
+    speaker_prefixes = ['<you>', 'me']
     add_tokens = speaker_prefixes
     include_persona = True
-    include_history = True
+    include_history = False
     augmented = True
-    persona_selector = None #'test_bart'
+    persona_selector = 'test_bart'
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -473,6 +497,7 @@ if __name__ == "__main__":
         basedir=datadir+basedir, 
         session=session, 
         subset=subset, 
+        max_samples=2,
         include_persona=include_persona,
         include_history=include_history,
         augmented=augmented,
