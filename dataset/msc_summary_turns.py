@@ -249,7 +249,7 @@ class MSC_Turns(Dataset):
         if len(utterances) > 0:
             dataset.turns = [[(0, utterances[i][1]), (1, utterances[i + 1][1])] for i in range(0, len(utterances), 2)]
             dataset.personas = [None for i in range(0, len(utterances), 2)]
-        turns = [dataset[i][0] for i in range(len(dataset))]
+        turns = [(dataset[i][0], "") for i in range(len(dataset))]
         pred_personas = cls.predict(turns, model, device, decoder_max)
         return pred_personas
 
