@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
 from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
+from torchmetrics.functional.text.bert import bert_score
 import json
 import random
 from collections import Counter
@@ -226,6 +227,7 @@ class MSC_Turns(Dataset):
         bleu_2 = bleu_score(pred_personas, target_personas, n_gram=2, smooth=True).item()
         bleu_4 = bleu_score(pred_personas, target_personas, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_personas, target_personas, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
+        bert_scores = bert_score(pred_personas, target_personas, model_name_or_path='bert-base-uncased')
 
         stats = {
             "test_acc": binary_accuracy(pred_facts, target_facts).item(),
@@ -235,6 +237,7 @@ class MSC_Turns(Dataset):
             "cm": binary_confusion_matrix(pred_facts, target_facts).tolist(),
             "bleu_2": bleu_2, 
             "bleu_4": bleu_4, 
+            "bert_f1": sum(bert_scores['f1']) / len(bert_scores['f1']),
         }
         stats.update({k: v.item() for k, v in rouge_scores.items()})
 
