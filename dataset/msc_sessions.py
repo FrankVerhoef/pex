@@ -5,6 +5,8 @@
 import torch
 from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
+from torchmetrics.functional.text.bert import bert_score
+from torchmetrics.text.perplexity import Perplexity
 import evaluate
 from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
@@ -248,20 +250,19 @@ class MSC_Session(Dataset):
 
             if with_labels:
 
-                # use right padding
+                # use right padding OR LEFT ????
                 # add <bos> token between context and target
                 # add <eos> token at end of all targets (necessary to make sure 'shift_right' of labels is possible )
-                cls.tokenizer.padding_side = 'right'
+                cls.tokenizer.padding_side = 'left'
                 cls.tokenizer.truncation_side = 'left'
                 encoded = cls.tokenizer(
                     [history + cls.tokenizer.bos_token + next_utterance + cls.tokenizer.eos_token for history, next_utterance in data],
                     padding=True,
-                    max_length=cls.tokenizer.model_max_length, 
-                    truncation=True,
+                    # max_length=cls.tokenizer.model_max_length, 
+                    # truncation=True,
                     return_attention_mask=True,
-                    return_tensors='pt'            
+                    return_tensors='pt',
                 )
-                logging.spam(f"Encoded shape={encoded.input_ids.shape}")
 
             else:
 
@@ -271,11 +272,21 @@ class MSC_Session(Dataset):
                 encoded = cls.tokenizer(
                     history_batch, 
                     padding=True, 
-                    max_length=cls.tokenizer.model_max_length - buffer,  # Leave some room for generation! 
-                    truncation=True,
+                    # max_length=cls.tokenizer.model_max_length - buffer,  # Leave some room for generation! 
+                    # truncation=True,
                     return_attention_mask=True,
                     return_tensors='pt'
-                )         
+                )
+
+            encoded.num_original_tokens = encoded.attention_mask.sum().item()
+            encoded.num_truncated_tokens = 0
+            truncated_size = encoded.input_ids.shape[1] + (buffer if not with_labels else 0) - cls.tokenizer.model_max_length
+            if truncated_size > 0:
+                encoded.num_truncated_tokens = encoded.attention_mask[:, :truncated_size].sum().item()
+                encoded["input_ids"] = encoded.input_ids[:, truncated_size:]
+                encoded["attention_mask"] = encoded.attention_mask[:, truncated_size:]
+            encoded.num_tokens = encoded.attention_mask.sum().item()
+            logging.spam(f"Encoded shape={encoded.input_ids.shape}, num_truncated_tokens={encoded.num_truncated_tokens}, {(encoded.num_truncated_tokens / encoded.num_original_tokens):.2%}")
 
         elif batch_format == "huggingface_xysplit":
 
@@ -284,8 +295,8 @@ class MSC_Session(Dataset):
             encoded = cls.tokenizer(
                 history_batch, 
                 padding=True, 
-                max_length=cls.tokenizer.model_max_length - buffer,
-                truncation=True,
+                # max_length=cls.tokenizer.model_max_length - buffer,
+                # truncation=True,
                 return_attention_mask=True,
                 return_tensors='pt'
             )
@@ -299,16 +310,23 @@ class MSC_Session(Dataset):
                 labels = cls.tokenizer(
                     [cls.tokenizer.bos_token + label + cls.tokenizer.eos_token for label in next_utterance_batch],
                     padding=True, 
-                    max_length=cls.tokenizer.model_max_length,
-                    truncation=True,
+                    # max_length=cls.tokenizer.model_max_length,
+                    # truncation=True,
                     return_attention_mask=True,
                     return_tensors='pt'            
                 )
-                total_size = encoded.input_ids.shape[1] + labels.input_ids.shape[1]
-                if total_size > cls.tokenizer.model_max_length:
-                    truncated_size = cls.tokenizer.model_max_length - labels.input_ids.shape[1]
-                    encoded.input_ids = encoded.input_ids[:, -truncated_size:]
-                    encoded.attention_mask = encoded.attention_mask[:, -truncated_size:]
+
+            encoded.num_original_tokens = encoded.attention_mask.sum().item()
+            encoded.num_truncated_tokens = 0
+            truncated_size = encoded.input_ids.shape[1] + (buffer if not with_labels else labels.input_ids.shape[1]) - cls.tokenizer.model_max_length
+            if truncated_size > 0:
+                encoded.num_truncated_tokens = encoded.attention_mask[:, :truncated_size].sum().item()
+                encoded["input_ids"] = encoded.input_ids[:, truncated_size:]
+                encoded["attention_mask"] = encoded.attention_mask[:, truncated_size:]
+            encoded.num_tokens = encoded.attention_mask.sum().item()
+            logging.spam(f"Encoded shape={encoded.input_ids.shape}, num_truncated_tokens={encoded.num_truncated_tokens}, {(encoded.num_truncated_tokens / encoded.num_original_tokens):.2%}")
+
+            if with_labels:
                 encoded = encoded, labels
 
         elif batch_format == "padded_sequences":
@@ -346,10 +364,12 @@ class MSC_Session(Dataset):
         interval_counter = 0
         meteor = evaluate.load("meteor")
         google_bleu = evaluate.load("google_bleu")
+        ppl = Perplexity(ignore_index=self.tokenizer.pad_token_id)
+        total_original_tokens, total_truncated_tokens = 0, 0
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
-            inputs = self.batchify(data, with_labels=False, batch_format=model.batch_format, buffer=decoder_max)
+            inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=decoder_max)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
@@ -363,11 +383,14 @@ class MSC_Session(Dataset):
                         use_cache=True,
                         num_beams=1,
                         do_sample=False,
-                        max_new_tokens=decoder_max
+                        max_new_tokens=labels.input_ids.shape[1],
+                        output_scores=True,
+                        return_dict_in_generate=True
                     )
                 )
-                output = output.cpu()
-            responses = self.tokenizer.batch_decode(output[:, L+1:]) # Do not include <bos> token in response
+                # output = output.to("cpu")
+            responses = self.tokenizer.batch_decode(output.sequences[:, L+1:].to("cpu")) # Do not include <bos> token in response
+
 
             if print_max > 0:
                 print_responses(data, responses)
@@ -375,6 +398,12 @@ class MSC_Session(Dataset):
 
             target_responses.extend([label for _, label in data])
             pred_responses.extend(responses)
+
+            scores = torch.cat(output.scores, dim=-1).view(labels.input_ids.shape + (-1,))
+            batch_ppl = ppl(scores, labels.input_ids)
+            if hasattr(inputs, "num_truncated_tokens"):
+                total_original_tokens += inputs.num_original_tokens
+                total_truncated_tokens += inputs.num_truncated_tokens
 
             interval_counter += len(pred_responses)
             if interval_counter >= log_interval:
@@ -388,13 +417,19 @@ class MSC_Session(Dataset):
         bleu_2 = bleu_score(pred_responses, target_responses, n_gram=2, smooth=True).item()
         bleu_4 = bleu_score(pred_responses, target_responses, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
+        bert_scores = bert_score(pred_responses, target_responses, model_name_or_path='bert-base-uncased')
+        perplexity = ppl.compute()
+        truncation = total_truncated_tokens / max(total_original_tokens, 1)
 
         stats = {
             "bleu_2": bleu_2, 
             "bleu_4": bleu_4, 
-            "gleu": bleu_google, 
-            "meteor": meteor_score
+            "bert_f1": sum(bert_scores['f1']) / len(bert_scores['f1']),
+            "perplexity": perplexity,
+            "truncation": truncation
         }
+        stats.update(bleu_google)
+        stats.update(meteor_score)
         stats.update({k: v.item() for k, v in rouge_scores.items()})
 
         return stats
@@ -436,16 +471,16 @@ if __name__ == "__main__":
     basedir = 'msc/msc_dialogue/'
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     subset = 'train'
-    session = "preprocessed:session_2_train_withprefixes_selectedpersona_nohistory"
+    session = 4 #"preprocessed:session_2_train_withprefixes_selectedpersona_nohistory"
     if session == 1:
         version = ['both', 'revised']
         session = '-'.join(['1'] + version)
-    speaker_prefixes = ['<you>', 'me']
+    speaker_prefixes = ['<you>', '<me>']
     add_tokens = speaker_prefixes
     include_persona = True
-    include_history = False
+    include_history = True
     augmented = True
-    persona_selector = 'test_bart'
+    persona_selector = None #'test_bart'
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -504,7 +539,7 @@ if __name__ == "__main__":
         persona_selector=persona_selector
     )
     
-    for k,v in msc_turns.measurements().items():
+    for k,v in msc_turns.measurements.items():
         print(k, v)
 
     for sentence in msc_turns.corpus()[10:30]:
