@@ -364,7 +364,7 @@ class MSC_Session(Dataset):
         interval_counter = 0
         meteor = evaluate.load("meteor")
         google_bleu = evaluate.load("google_bleu")
-        ppl = Perplexity(ignore_index=self.tokenizer.pad_token_id)
+        ppl = Perplexity(ignore_index=self.tokenizer.pad_token_id).to(device)
         total_original_tokens, total_truncated_tokens = 0, 0
 
         for start_index in range(0, self.__len__(), batch_size):
@@ -400,7 +400,7 @@ class MSC_Session(Dataset):
             pred_responses.extend(responses)
 
             scores = torch.cat(output.scores, dim=-1).view(labels.input_ids.shape + (-1,))
-            batch_ppl = ppl(scores, labels.input_ids)
+            batch_ppl = ppl(scores, labels.input_ids.to(device))
             if hasattr(inputs, "num_truncated_tokens"):
                 total_original_tokens += inputs.num_original_tokens
                 total_truncated_tokens += inputs.num_truncated_tokens
@@ -418,7 +418,7 @@ class MSC_Session(Dataset):
         bleu_4 = bleu_score(pred_responses, target_responses, n_gram=4, smooth=True).item()
         rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
         bert_scores = bert_score(pred_responses, target_responses, model_name_or_path='bert-base-uncased')
-        perplexity = ppl.compute()
+        perplexity = ppl.compute().item()
         truncation = total_truncated_tokens / max(total_original_tokens, 1)
 
         stats = {

@@ -144,7 +144,7 @@ class BartExtractor(nn.Module):
         token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
 
         # LM perplexity
-        ppl = perplexity(preds=lm_logprobs, target=y, ignore_index=self.bart.config.pad_token_id)
+        ppl = perplexity(preds=lm_logprobs, target=y, ignore_index=self.bart.config.pad_token_id).item()
 
         stats = {
             "loss": loss.item(),
