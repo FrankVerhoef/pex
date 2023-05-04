@@ -3,7 +3,7 @@ import torch
 import utils.logging as logging
 
 from transformers import PreTrainedModel, AutoModelForCausalLM, PretrainedConfig
-
+from torchmetrics.functional.text.perplexity import perplexity
 
 class DialoGPT(PreTrainedModel):
 
@@ -58,19 +58,24 @@ class DialoGPT(PreTrainedModel):
             )
             loss = criterion(output.logits[:, :-1].transpose(1,2), inputs.input_ids[:, 1:])
 
-        pred = output.logits[:, :-1].cpu().argmax(dim=-1)
+        logits = output.logits[:, :-1, :].to("cpu")
+        pred = logits.argmax(dim=-1)
         inputs = inputs.to("cpu")
 
         # LM accuracy
         token_correct = inputs.input_ids[:, 1:].eq(pred) * inputs.attention_mask[:, 1:]
         token_acc = (token_correct.sum() / inputs.attention_mask[:, 1:].sum()).item() 
 
+        # LM perplexity
+        ppl = perplexity(preds=logits, target=inputs.input_ids[:, 1:], ignore_index=self.model.config.pad_token_id).item()
+
         stats = {
             "loss": loss.mean().item(),
-            "acc": token_acc
+            "acc": token_acc,
+            "perplexity": ppl
         }
 
-        logging.debug("Valid: loss {:.4f}".format(loss.mean().item()))
+        logging.debug("Valid: loss {:.4f}, ppl {:.2f}".format(loss.mean().item(), ppl))
         return stats
 
 
@@ -115,6 +120,7 @@ if __name__ == "__main__":
                     num_beams=1,
                     do_sample=False,
                     max_new_tokens=25,
+                    output_scores=True,
                     return_dict_in_generate=True
                 )
             )
