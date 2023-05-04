@@ -49,6 +49,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
     if patience is None:
         patience = num_batches
     patience_count = patience * epochs
+    total_original_tokens, total_truncated_tokens = 0, 0
 
     for epoch in range(epochs):
 
@@ -56,6 +57,10 @@ def train(model, trainloader, validloader, optimizer, criterion,
         model.train()
         for batch in iter(trainloader):
             step += 1
+            if hasattr(batch, "num_truncated_tokens"):
+                total_original_tokens += batch.num_original_tokens
+                total_truncated_tokens += batch.num_truncated_tokens
+
             loss = model.train_step(batch, optimizer, criterion, device)
             train_losses.append(loss)
     
@@ -99,7 +104,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
         if patience_count < 0: 
             logging.info("Training loop terminated after epoch {}, step {}".format(epoch, step))
             break
-
+    logging.info("Average truncation: {}".format(total_truncated_tokens / max(total_original_tokens, 1)))
     return best_model, {"valid_acc": max_accuracy}
 
 
@@ -386,7 +391,7 @@ def train_with_args(config, args):
     if args.load != "":
         loadpath = args.checkpoint_dir + args.load
         logging.info("Loading model from {}".format(loadpath))
-        model.load_state_dict(torch.load(loadpath))
+        model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
 
     stats = {}
     if args.do_train:        
