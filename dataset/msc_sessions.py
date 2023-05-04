@@ -304,11 +304,11 @@ class MSC_Session(Dataset):
             if with_labels:
                 
                 # use right padding for labels
-                # add <bos> token between context and target
+                # do not add <bos> token between context and target
                 # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
                 cls.tokenizer.padding_side = 'right'
                 labels = cls.tokenizer(
-                    [cls.tokenizer.bos_token + label + cls.tokenizer.eos_token for label in next_utterance_batch],
+                    [next_utterance + cls.tokenizer.eos_token for next_utterance in next_utterance_batch],
                     padding=True, 
                     # max_length=cls.tokenizer.model_max_length,
                     # truncation=True,
@@ -539,7 +539,7 @@ if __name__ == "__main__":
         persona_selector=persona_selector
     )
     
-    for k,v in msc_turns.measurements.items():
+    for k,v in msc_turns.measurements().items():
         print(k, v)
 
     for sentence in msc_turns.corpus()[10:30]:
