@@ -3,11 +3,13 @@
 ###
 
 import torch
-from torchmetrics.functional import bleu_score
-from torchmetrics.functional.text.rouge import rouge_score
-from torchmetrics.functional.text.bert import bert_score
+
+from torchmetrics import SacreBLEUScore, BLEUScore,  MeanMetric
+from torchmetrics.text.rouge import ROUGEScore
+from torchmetrics.text.bert import BERTScore
 from torchmetrics.text.perplexity import Perplexity
 import evaluate
+
 from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import json
@@ -19,6 +21,55 @@ from dataset.convai2 import ConvAI2
 
 import utils.logging as logging
 
+class MSC_Metrics:
+
+    def __init__(self, ignore_index, device):
+        self.avg_truncated_tokens = MeanMetric()
+        self.perplexity = Perplexity(ignore_index=ignore_index).to(device)
+        self.sacreblue4_score = SacreBLEUScore(n_gram=4)
+        self.bleu2_score = BLEUScore(n_gram=2, smooth=True)
+        self.bleu4_score = BLEUScore(n_gram=4, smooth=True)
+        self.rouge_score = ROUGEScore(rouge_keys='rougeL')
+        self.bert_score = BERTScore(model_name_or_path='bert-base-uncased')
+        self.meteor = evaluate.load("meteor")
+        self.google_bleu = evaluate.load("google_bleu")
+
+    def update(self, responses, targets, input_batch, label_batch, output_batch):
+    
+        if hasattr(input_batch, "num_truncated_tokens"):
+            self.avg_truncated_tokens.update(
+                value=input_batch.num_truncated_tokens / max(input_batch.num_original_tokens, 1), 
+                weight=input_batch.input_ids.shape[0]
+            )
+        scores = torch.cat(output_batch.scores, dim=-1).view(label_batch.input_ids.shape + (-1,))
+        self.perplexity.update(scores, label_batch.input_ids.to(scores.device))
+        self.sacreblue4_score.update(responses, targets)
+        self.bleu2_score.update(responses, targets)
+        self.bleu4_score.update(responses, targets)
+        self.rouge_score.update(responses, targets)
+        self.bert_score.update(responses, targets)
+        self.meteor.add_batch(predictions=responses, references=targets)
+        self.google_bleu.add_batch(predictions=responses, references=targets)
+
+    def compute(self):
+
+        rouge_scores = self.rouge_score.compute()
+        bert_scores = self.bert_score.compute()
+
+        stats = {
+            "truncation": self.avg_truncated_tokens.compute().item(),
+            "perplexity": self.perplexity.compute().item(),
+            "sacreblue_4": self.sacreblue4_score.compute().item(),
+            "bleu_2": self.bleu2_score.compute().item(), 
+            "bleu_4": self.bleu4_score.compute().item(),             
+        }
+        stats['bert_f1'] = sum(bert_scores['f1']) / len(bert_scores['f1'])
+        stats.update({k: v.item() for k, v in rouge_scores.items()})
+        stats.update(self.meteor.compute())
+        stats.update(self.google_bleu.compute())
+
+        return stats
+        
 
 class MSC_Session(Dataset):
     
@@ -359,25 +410,23 @@ class MSC_Session(Dataset):
 
         model = model.to(device)
         model.eval()
-        target_responses = []
-        pred_responses = []
+        all_responses = []
         interval_counter = 0
-        meteor = evaluate.load("meteor")
-        google_bleu = evaluate.load("google_bleu")
-        ppl = Perplexity(ignore_index=self.tokenizer.pad_token_id).to(device)
-        total_original_tokens, total_truncated_tokens = 0, 0
+
+        # Initialize metrics
+        msc_metrics = MSC_Metrics(ignore_index=self.tokenizer.pad_token_id, device=device)
 
         for start_index in range(0, self.__len__(), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
+            targets = [label for _, label in data]
             inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=decoder_max)
             B, L = inputs.input_ids.shape[:2]
             bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
             with torch.no_grad():
                 output = model.model.generate(
-                    # Add the bos_token to the input. 
+                    # Add the bos_token to the input
                     inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
-                    # inputs.input_ids,
                     generation_config=GenerationConfig(
                         pad_token_id=model.model.config.eos_token_id,
                         use_cache=True,
@@ -388,49 +437,23 @@ class MSC_Session(Dataset):
                         return_dict_in_generate=True
                     )
                 )
-                # output = output.to("cpu")
             responses = self.tokenizer.batch_decode(output.sequences[:, L+1:].to("cpu")) # Do not include <bos> token in response
-
+            all_responses.extend(responses)
 
             if print_max > 0:
                 print_responses(data, responses)
                 print_max -= len(data)
 
-            target_responses.extend([label for _, label in data])
-            pred_responses.extend(responses)
+            msc_metrics.update(responses, targets, inputs, labels, output)
 
-            scores = torch.cat(output.scores, dim=-1).view(labels.input_ids.shape + (-1,))
-            batch_ppl = ppl(scores, labels.input_ids.to(device))
-            if hasattr(inputs, "num_truncated_tokens"):
-                total_original_tokens += inputs.num_original_tokens
-                total_truncated_tokens += inputs.num_truncated_tokens
-
-            interval_counter += len(pred_responses)
+            interval_counter += B
             if interval_counter >= log_interval:
-                logging.verbose(f"Evaluated {len(pred_responses)}/{self.__len__()} samples")
+                logging.verbose(f"Evaluated {len(all_responses)}/{self.__len__()} samples")
                 interval_counter =- log_interval
 
-        logging.info(f"Completed evaluation of {len(pred_responses)} samples")
+        logging.info(f"Completed evaluation of {len(all_responses)} samples")
 
-        bleu_google = google_bleu.compute(predictions=pred_responses, references=[[t] for t in target_responses])
-        meteor_score = meteor.compute(predictions=pred_responses, references=[[t] for t in target_responses])
-        bleu_2 = bleu_score(pred_responses, target_responses, n_gram=2, smooth=True).item()
-        bleu_4 = bleu_score(pred_responses, target_responses, n_gram=4, smooth=True).item()
-        rouge_scores = rouge_score(pred_responses, target_responses, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
-        bert_scores = bert_score(pred_responses, target_responses, model_name_or_path='bert-base-uncased')
-        perplexity = ppl.compute().item()
-        truncation = total_truncated_tokens / max(total_original_tokens, 1)
-
-        stats = {
-            "bleu_2": bleu_2, 
-            "bleu_4": bleu_4, 
-            "bert_f1": sum(bert_scores['f1']) / len(bert_scores['f1']),
-            "perplexity": perplexity,
-            "truncation": truncation
-        }
-        stats.update(bleu_google)
-        stats.update(meteor_score)
-        stats.update({k: v.item() for k, v in rouge_scores.items()})
+        stats = msc_metrics.compute()
 
         return stats
 
