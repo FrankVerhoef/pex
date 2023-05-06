@@ -4,10 +4,12 @@
 
 import torch
 from torch.utils.data import Dataset
-from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
+
+from torchmetrics.functional.classification import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
 from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
 from torchmetrics.functional.text.bert import bert_score
+
 import json
 import random
 from collections import Counter
