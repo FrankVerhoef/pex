@@ -248,16 +248,29 @@ class MSC_Summaries(Dataset):
 
 
 if __name__ == "__main__":
-
+    import argparse
     from transformers import AutoTokenizer
+    from models.bart_extractor import BartExtractor
+
+    parser = argparse.ArgumentParser(description="Test MSC_Summary")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
+    parser.add_argument("--log_interval", type=int, default=10, help="report interval")
+    parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
+    parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
+    parser.add_argument("--load", type=str, default="", help="filename of model to load")
+    parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
+    parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
+    parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
+    parser = MSC_Summaries.add_cmdline_args(parser)
+    parser = BartExtractor.add_cmdline_args(parser)
+    parser.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
+    args = parser.parse_args()
 
     logging.set_log_level("SPAM")
     logging.info("Unit test {}".format(__file__))
 
     # Settings for dataset
-    datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
-    basedir = '/msc/msc_personasummary/'
-    sessions = [1]
     subset = 'test'
     speaker_prefixes = ["<self>", "<other>"]
     nofact_token = '<no_fact>'
@@ -267,11 +280,11 @@ if __name__ == "__main__":
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
     tokenizer.add_tokens(add_tokens)
-    MSC_Summaries.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    MSC_Summaries.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
     msc_summaries = MSC_Summaries(
-        basedir=datadir + basedir, 
-        sessions=sessions, 
-        subset=subset, 
+        basedir=args.datadir + args.basedir, 
+        sessions=args.sessions, 
+        subset=args.subset, 
         max_samples=test_samples, 
     )
     data = [msc_summaries[i] for i in range(5)]
@@ -285,24 +298,18 @@ if __name__ == "__main__":
     logging.spam(batch)
 
     # Test the evaluation with BART model
-    from models.bart_extractor import BartExtractor
-
-    checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
-    load = 'trained_bart'
-    bart_base = 'facebook/bart-large-cnn'
-
-    nofact_token_id = tokenizer.convert_tokens_to_ids(nofact_token) if nofact_token != '' else tokenizer.eos_token_id
+    nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
     assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(nofact_token)
 
-    model = BartExtractor(bart_base=bart_base, nofact_token_id=nofact_token_id)
+    model = BartExtractor(bart_base=args.bart_base, nofact_token_id=nofact_token_id)
     model.bart.resize_token_embeddings(len(tokenizer))
 
-    logging.info("Loading model from {}".format(checkpoint_dir + load))
-    model.load_state_dict(torch.load(checkpoint_dir + load, map_location=torch.device('cpu')))
+    logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
+    model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device(args.device)))
 
     pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
     logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
-    eval_kwargs = {'nofact_token': nofact_token, 'device': 'cpu', 'log_interval': 10, 'decoder_max': 20}
+    eval_kwargs = {'nofact_token': args.nofact_token, 'device': args.device, 'log_interval': args.log_interval, 'decoder_max': 20}
     eval_stats = msc_summaries.evaluate(model, **eval_kwargs)
     logging.report(eval_stats)
