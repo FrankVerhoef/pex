@@ -17,17 +17,20 @@ import random
 import utils.logging as logging
 from utils.general import padded_tensor_left
 
-MINIMUM_TER = 0.5
+TER_MAXIMUM = 0.5
+BERT_MINIMUM = 0.9
 
 def calc_stats(predicted_summaries, target_summaries):
 
     ter_metric = TranslationEditRate(return_sentence_level_score=True)
-    infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
+    # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
     ter_per_summary = []
-    avg_precision = MeanMetric()
-    avg_recall = MeanMetric()
-    infolm_per_summary = []
+    ter_precision = MeanMetric()
+    ter_recall = MeanMetric()
+    bert_precision = []
+    bert_recall = []
+    # infolm_per_summary = []
     bert_per_summary = []
     for prediction, target in zip(predicted_summaries, target_summaries):
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
@@ -35,30 +38,42 @@ def calc_stats(predicted_summaries, target_summaries):
         prediction_correct = torch.zeros(len(pred_sentences), dtype=torch.bool)
         recall_correct = torch.zeros(len(target_sentences), dtype=torch.bool)
         summary_ter = MeanMetric()
-        summary_infolm = MeanMetric()
+        # summary_infolm = MeanMetric()
         summary_bert = MeanMetric()
+        bert_prediction_correct = torch.zeros(len(pred_sentences), dtype=torch.bool)
+        bert_recall_correct = torch.zeros(len(target_sentences), dtype=torch.bool)
+
         for i, target in enumerate(target_sentences):
             ter_scores = ter_metric(pred_sentences, [target] * len(pred_sentences))[1]
-            infolm_scores = infolm_metric(pred_sentences, [target] * len(pred_sentences))[1]
-            bert_scores = bert_metric(pred_sentences, [target] * len(pred_sentences))
             summary_ter.update(min(ter_scores))
-            summary_infolm.update(max(infolm_scores))
-            summary_bert.update(max(bert_scores['recall']))
-            matching_predictions = ter_scores <= MINIMUM_TER
+            matching_predictions = ter_scores <= TER_MAXIMUM
             prediction_correct = torch.logical_or(prediction_correct, matching_predictions)
             recall_correct[i] = torch.any(matching_predictions)
-        ter_per_summary.append(summary_ter.compute().item())
-        avg_precision.update(prediction_correct.float().mean().item())
-        avg_recall.update(recall_correct.float().mean().item())
-        infolm_per_summary.append(summary_infolm.compute().item())
-        bert_per_summary.append(summary_bert.compute().item())
 
+            # infolm_scores = infolm_metric(pred_sentences, [target] * len(pred_sentences))[1]
+            # summary_infolm.update(max(infolm_scores))
+
+            bert_scores = bert_metric(pred_sentences, [target] * len(pred_sentences))
+            matching_predictions = bert_scores['f1'] >= BERT_MINIMUM
+            bert_prediction_correct = torch.logical_or(prediction_correct, matching_predictions)
+            bert_recall_correct[i] = torch.any(matching_predictions)
+            summary_bert.update(max(bert_scores['f1']))
+
+        ter_per_summary.append(summary_ter.compute().item())
+        ter_precision.append(prediction_correct.float().mean().item())
+        ter_recall.append(recall_correct.float().mean().item())
+        # infolm_per_summary.append(summary_infolm.compute().item())
+        bert_per_summary.append(summary_bert.compute().item())
+        bert_precision.append(bert_prediction_correct.float().mean().item())
+        bert_recall.append(bert_recall_correct.float().mean().item())
     stats = {
         "ter": ter_per_summary,
-        "precision": avg_precision.compute(),
-        "recall": avg_recall.compute(),
-        "infolm": infolm_per_summary,
-        "bert": bert_per_summary
+        "precision": ter_precision, #.compute(),
+        "recall": ter_recall, #.compute(),
+        # "infolm": infolm_per_summary,
+        "bert": bert_per_summary,
+        "bert_precision": bert_precision,
+        "bert_recall": bert_recall
     }
 
     return stats
