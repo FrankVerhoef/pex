@@ -4,16 +4,78 @@
 
 
 import torch
+
+from torchmetrics import MeanMetric, TranslationEditRate
+from torchmetrics.text.bert import BERTScore
+from torchmetrics.text.infolm import InfoLM
+ 
 from torch.utils.data import Dataset
-from torcheval.metrics.functional import bleu_score
-from torchmetrics.functional.text.rouge import rouge_score
+
 import json
 import random
 
 import utils.logging as logging
 from utils.general import padded_tensor_left
 
+MINIMUM_TER = 0.5
+
+def calc_stats(predicted_summaries, target_summaries):
+
+    ter_metric = TranslationEditRate(return_sentence_level_score=True)
+    # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
+    # bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
+    ter_per_summary = []
+    avg_precision = MeanMetric()
+    avg_recall = MeanMetric()
+    infolm_per_summary = []
+    bert_per_summary = []
+    for prediction, target in zip(predicted_summaries, target_summaries):
+        pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
+        target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
+        prediction_correct = torch.zeros(len(pred_sentences), dtype=torch.bool)
+        recall_correct = torch.zeros(len(target_sentences), dtype=torch.bool)
+        summary_ter = MeanMetric()
+        summary_infolm = MeanMetric()
+        summary_bert = MeanMetric()
+        for i, target in enumerate(target_sentences):
+            ter_scores = ter_metric(pred_sentences, [target] * len(pred_sentences))[1]
+            # infolm_scores = infolm_metric(pred_sentences, [target] * len(pred_sentences))[1]
+            # bert_scores = bert_metric(pred_sentences, [target] * len(pred_sentences))
+            summary_ter.update(min(ter_scores))
+            # summary_infolm.update(max(infolm_scores))
+            # summary_bert.update(max(bert_scores['recall']))
+            matching_predictions = ter_scores <= MINIMUM_TER
+            prediction_correct = torch.logical_or(prediction_correct, matching_predictions)
+            recall_correct[i] = torch.any(matching_predictions)
+        ter_per_summary.append(summary_ter.compute().item())
+        avg_precision.update(prediction_correct.float().mean().item())
+        avg_recall.update(recall_correct.float().mean().item())
+        # infolm_per_summary.append(summary_infolm.compute().item())
+        # bert_per_summary.append(summary_bert.compute().item())
+
+    stats = {
+        "ter": ter_per_summary,
+        "precision": avg_precision.compute(),
+        "recall": avg_recall.compute()
+        # "infolm": infolm_per_summary,
+        # "bert": bert_per_summary
+    }
+
+    return stats
+
+
 class MSC_Summaries(Dataset):
+
+    tokenizer = None
+    speaker_prefixes = None
+    nofact_token = None
+        
+    @classmethod
+    def set(cls, tokenizer, speaker_prefixes, nofact_token):
+        assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
+        cls.tokenizer = tokenizer
+        cls.speaker_prefixes = speaker_prefixes
+        cls.nofact_token = nofact_token
 
     @classmethod
     def add_cmdline_args(cls, parser):
@@ -22,11 +84,10 @@ class MSC_Summaries(Dataset):
         group.add_argument("--sessions", default=[1], nargs='+', help="MSC sessions to include in dataset")
         return parser
 
-    def __init__(self, basedir='./', sessions=[1], subset='train', tokenizer=None, speaker_prefixes=None, max_samples=None, batch_pad_id=0):
+    def __init__(self, basedir='./', sessions=[1], subset='train', max_samples=None):
         super(MSC_Summaries, self).__init__()
         self.sessions = sessions
         self.subset = subset
-        self.speaker_prefixes = speaker_prefixes
         dialogues = []
         for s in self.sessions:
             filepath = f"{basedir}session_{s}/{subset}.txt"
@@ -36,8 +97,6 @@ class MSC_Summaries(Dataset):
                         dialogues.append(json.loads(line))
             except FileNotFoundError:
                 logging.warning(f"File '{filepath}' not found -> skipped")
-        self.tokenizer = tokenizer
-        self.batch_pad_id = batch_pad_id
         self.turns, self.summaries = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
@@ -65,6 +124,11 @@ class MSC_Summaries(Dataset):
         return len(self.summaries)
     
     def __getitem__(self, i):
+        """
+        Each item is a tuple with two elements:
+        0) a list of turns (each turn has two utterances)
+        1) a summary (which is a string of persona sentences joined by '\n')
+        """
 
         if self.speaker_prefixes is not None:
             utterances = [
@@ -79,28 +143,22 @@ class MSC_Summaries(Dataset):
 
         return utterances, self.summaries[i]
 
-    def batchify(self, data):
+    @classmethod
+    def batchify(cls, data):
         """
         Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
-        assert self.tokenizer is not None, "Need to specify function to vectorize dataset"
+        assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
         # assert self.tokenizer.padding_side == 'left', "Tokenizer padding_side must be 'left'"
 
         # seperate source and target sequences
         utterances, summaries = zip(*data)
 
         encoded_utterances = [
-            self.tokenizer(text=turns, padding=True, return_tensors="pt")
+            cls.tokenizer(text=turns, padding=True, return_tensors="pt")
             for turns in utterances
         ]
-        encoded_summaries = self.tokenizer(text=summaries, padding=True, return_tensors='pt')
-        # encoded_summaries = padded_tensor_left(
-        #     [
-        #         self.tokenizer.encode(text=s, padding=False, return_tensors="pt")[0]
-        #         for s in summaries
-        #     ], 
-        #     pad_value=self.batch_pad_id
-        # )
+        encoded_summaries = cls.tokenizer(text=summaries, padding=True, return_tensors='pt')
 
         return encoded_utterances, encoded_summaries
 
@@ -155,16 +213,39 @@ class MSC_Summaries(Dataset):
             if (i + 1) % log_interval == 0:
                 logging.verbose(f"Evaluated {i + 1}/{self.__len__()} samples")
         
-        try:
-            bleu_4 = bleu_score(pred_summaries, target_summaries).item()
-        except ValueError:
-            bleu_4 = 0
-        rouge_scores = rouge_score(pred_summaries, target_summaries, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
-
-        stats = {"bleu": bleu_4}
-        stats.update({k: v.item() for k, v in rouge_scores.items()})
+        stats = calc_stats(pred_summaries, target_summaries)
 
         return stats
+
+    @classmethod
+    def predict(cls, data, model, nofact_token='', device="cpu", decoder_max=20):
+
+        model = model.to(device)
+        model.eval()
+        pred_summaries = []
+
+        for input_utterances in data:
+
+            batch = cls.batchify([(input_utterances, "")])  # Batch with one sample, and empty summary
+            encoded_utterances = batch[0][0]
+
+            with torch.no_grad():
+                pred_tokens = model.generate(
+                    input_ids=encoded_utterances['input_ids'].to(device), 
+                    attention_mask=encoded_utterances['attention_mask'].to(device),
+                    min_length=2,
+                    max_new_tokens=decoder_max, 
+                    num_beams=5,
+                    do_sample=True,
+                )
+
+            preds = cls.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
+            pred_summary = '\n'.join([pred for pred in preds if pred != nofact_token])
+
+            pred_summaries.append(pred_summary)
+
+        return pred_summaries
+
 
 if __name__ == "__main__":
 
@@ -181,21 +262,19 @@ if __name__ == "__main__":
     speaker_prefixes = ["<self>", "<other>"]
     nofact_token = '<no_fact>'
     add_tokens = speaker_prefixes + [nofact_token]
-    test_samples = 20
+    test_samples = 5
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
     tokenizer.add_tokens(add_tokens)
+    MSC_Summaries.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
     msc_summaries = MSC_Summaries(
         basedir=datadir + basedir, 
         sessions=sessions, 
         subset=subset, 
-        tokenizer=tokenizer, 
-        speaker_prefixes=speaker_prefixes, 
         max_samples=test_samples, 
-        batch_pad_id=tokenizer.pad_token_id
     )
-    data = [msc_summaries[i] for i in range(10)]
+    data = [msc_summaries[i] for i in range(5)]
 
     for item in data:
         logging.verbose(msc_summaries.formatted_item(item))
@@ -206,19 +285,23 @@ if __name__ == "__main__":
     logging.spam(batch)
 
     # Test the evaluation with BART model
-    from models.bart_extractor import BartExtractor, BART_BASE
+    from models.bart_extractor import BartExtractor
 
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     load = 'trained_bart'
+    bart_base = 'facebook/bart-large-cnn'
 
     nofact_token_id = tokenizer.convert_tokens_to_ids(nofact_token) if nofact_token != '' else tokenizer.eos_token_id
     assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(nofact_token)
 
-    model = BartExtractor(bart_base=BART_BASE, nofact_token_id=nofact_token_id)
+    model = BartExtractor(bart_base=bart_base, nofact_token_id=nofact_token_id)
     model.bart.resize_token_embeddings(len(tokenizer))
 
     logging.info("Loading model from {}".format(checkpoint_dir + load))
     model.load_state_dict(torch.load(checkpoint_dir + load, map_location=torch.device('cpu')))
+
+    pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
+    logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
     eval_kwargs = {'nofact_token': nofact_token, 'device': 'cpu', 'log_interval': 10, 'decoder_max': 20}
     eval_stats = msc_summaries.evaluate(model, **eval_kwargs)
