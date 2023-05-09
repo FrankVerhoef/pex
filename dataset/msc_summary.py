@@ -54,7 +54,7 @@ def calc_stats(predicted_summaries, target_summaries):
             # summary_infolm.update(max(infolm_scores))
 
             bert_scores = bert_metric(pred_sentences, [target] * len(pred_sentences))
-            matching_predictions = bert_scores['f1'] >= BERT_MINIMUM
+            matching_predictions = torch.as_tensor(bert_scores['f1']) >= BERT_MINIMUM
             bert_prediction_correct = torch.logical_or(prediction_correct, matching_predictions)
             bert_recall_correct[i] = torch.any(matching_predictions)
             summary_bert.update(max(bert_scores['f1']))
