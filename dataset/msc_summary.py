@@ -26,12 +26,12 @@ def calc_stats(predicted_summaries, target_summaries):
     # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
     ter_per_summary = []
-    ter_precision = MeanMetric()
-    ter_recall = MeanMetric()
-    bert_precision = []
-    bert_recall = []
+    ter_precision = [] # MeanMetric()
+    ter_recall = [] # MeanMetric()
     # infolm_per_summary = []
     bert_per_summary = []
+    bert_precision = []
+    bert_recall = []
     for prediction, target in zip(predicted_summaries, target_summaries):
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
         target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
