@@ -250,9 +250,10 @@ class MSC_Summaries(Dataset):
 if __name__ == "__main__":
     import argparse
     from transformers import AutoTokenizer
+    from dataset.msc_summary_turns import MSC_Turns
     from models.bart_extractor import BartExtractor
 
-    parser = argparse.ArgumentParser(description="Test MSC_Summary")
+    parser = argparse.ArgumentParser(description="Test MSC_Summary", conflict_handler="resolve")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--log_interval", type=int, default=10, help="report interval")
@@ -262,6 +263,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
+    parser = MSC_Turns.add_cmdline_args(parser)
     parser = MSC_Summaries.add_cmdline_args(parser)
     parser = BartExtractor.add_cmdline_args(parser)
     parser.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
@@ -270,21 +272,27 @@ if __name__ == "__main__":
     logging.set_log_level("SPAM")
     logging.info("Unit test {}".format(__file__))
 
-    # Settings for dataset
+    # Settings for this test
     subset = 'test'
-    speaker_prefixes = ["<self>", "<other>"]
-    nofact_token = '<no_fact>'
-    add_tokens = speaker_prefixes + [nofact_token]
     test_samples = 5
+    args.load = "trained_bart"
+    args.speaker_prefixes = ["<other>", "<self>"]
+    args.nofact_token = "<nofact>"
+    args.add_tokens = ["<other>", "<self>", "<nofact>"]
 
     # Test extraction of dialogue turns and persona sentences
-    tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
-    tokenizer.add_tokens(add_tokens)
+    tokenizer = AutoTokenizer.from_pretrained(args.bart_base)
+    if args.add_tokens is not None:
+        num_added_toks = tokenizer.add_tokens(args.add_tokens)
+    pad_token_id = tokenizer.pad_token_id
+    nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
+    assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
+
     MSC_Summaries.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
     msc_summaries = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
         sessions=args.sessions, 
-        subset=args.subset, 
+        subset=subset, 
         max_samples=test_samples, 
     )
     data = [msc_summaries[i] for i in range(5)]
@@ -299,7 +307,7 @@ if __name__ == "__main__":
 
     # Test the evaluation with BART model
     nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
-    assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(nofact_token)
+    assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
 
     model = BartExtractor(bart_base=args.bart_base, nofact_token_id=nofact_token_id)
     model.bart.resize_token_embeddings(len(tokenizer))
