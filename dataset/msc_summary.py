@@ -13,69 +13,74 @@ from torch.utils.data import Dataset
 
 import json
 import random
+import itertools
 
 import utils.logging as logging
 from utils.general import padded_tensor_left
+from utils.plotting import plot_heatmap
 
 TER_MAXIMUM = 0.5
-BERT_MINIMUM = 0.9
+BERT_MINIMUM = 0.8
 
 def calc_stats(predicted_summaries, target_summaries):
 
+    def _format_scores(target_sentences, recall_correct):
+        format_string = "{:20} " + "{:4} " * len(recall_correct)
+        result = ""
+        for s, r in zip(target_sentences, recall_correct):
+            result += format_string.format(s, *r.int().tolist()) + '\n'
+        return result
+
     ter_metric = TranslationEditRate(return_sentence_level_score=True)
-    # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
-    bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
     ter_per_summary = []
     ter_precision = [] # MeanMetric()
     ter_recall = [] # MeanMetric()
-    # infolm_per_summary = []
+
+    bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
     bert_per_summary = []
     bert_precision = []
     bert_recall = []
+
+    # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
+    # infolm_per_summary = []
+
     for prediction, target in zip(predicted_summaries, target_summaries):
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
         target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
-        prediction_correct = torch.zeros(len(pred_sentences), dtype=torch.bool)
-        recall_correct = torch.zeros(len(target_sentences), dtype=torch.bool)
-        summary_ter = MeanMetric()
-        # summary_infolm = MeanMetric()
-        summary_bert = MeanMetric()
-        bert_prediction_correct = torch.zeros(len(pred_sentences), dtype=torch.bool)
-        bert_recall_correct = torch.zeros(len(target_sentences), dtype=torch.bool)
+        combinations = list(itertools.product(pred_sentences, target_sentences))
+        
+        ter_scores = ter_metric(*zip(*combinations))
+        ter_scores = ter_scores[1].view(-1,len(target_sentences))
+        matching_predictions = ter_scores <= TER_MAXIMUM
+        ter_prediction_correct = torch.any(matching_predictions, dim=1)
+        ter_recall_correct = torch.any(matching_predictions, dim=0)
 
-        for i, target in enumerate(target_sentences):
-            ter_scores = ter_metric(pred_sentences, [target] * len(pred_sentences))[1]
-            summary_ter.update(min(ter_scores))
-            matching_predictions = ter_scores <= TER_MAXIMUM
-            prediction_correct = torch.logical_or(prediction_correct, matching_predictions)
-            recall_correct[i] = torch.any(matching_predictions)
+        bert_scores = bert_metric(*zip(*combinations))
+        bert_scores = torch.as_tensor(bert_scores['f1']).view(-1,len(target_sentences))
+        matching_predictions = bert_scores >= BERT_MINIMUM
+        bert_prediction_correct = torch.any(matching_predictions, dim=1)
+        bert_recall_correct = torch.any(matching_predictions, dim=0)
 
-            # infolm_scores = infolm_metric(pred_sentences, [target] * len(pred_sentences))[1]
-            # summary_infolm.update(max(infolm_scores))
+        # plot_heatmap(ter_scores.permute(1,0), target_sentences, pred_sentences)
+        # plot_heatmap(bert_scores.permute(1,0), target_sentences, pred_sentences)
 
-            bert_scores = bert_metric(pred_sentences, [target] * len(pred_sentences))
-            matching_predictions = torch.as_tensor(bert_scores['f1']) >= BERT_MINIMUM
-            bert_prediction_correct = torch.logical_or(prediction_correct, matching_predictions)
-            bert_recall_correct[i] = torch.any(matching_predictions)
-            summary_bert.update(max(bert_scores['f1']))
+        ter_per_summary.append(ter_scores.mean().item())
+        ter_precision.append(ter_prediction_correct.float().mean().item())
+        ter_recall.append(ter_recall_correct.float().mean().item())
 
-        ter_per_summary.append(summary_ter.compute().item())
-        ter_precision.append(prediction_correct.float().mean().item())
-        ter_recall.append(recall_correct.float().mean().item())
-        # infolm_per_summary.append(summary_infolm.compute().item())
-        bert_per_summary.append(summary_bert.compute().item())
+        bert_per_summary.append(bert_scores.mean().item())
         bert_precision.append(bert_prediction_correct.float().mean().item())
         bert_recall.append(bert_recall_correct.float().mean().item())
+
     stats = {
         "ter": ter_per_summary,
-        "precision": ter_precision, #.compute(),
-        "recall": ter_recall, #.compute(),
-        # "infolm": infolm_per_summary,
+        "ter_precision": ter_precision, #.compute(),
+        "ter_recall": ter_recall, #.compute(),
         "bert": bert_per_summary,
         "bert_precision": bert_precision,
-        "bert_recall": bert_recall
+        "bert_recall": bert_recall,
+        # "infolm": infolm_per_summary,
     }
-
     return stats
 
 
