@@ -14,6 +14,7 @@ from torch.utils.data import Dataset
 import json
 import random
 import itertools
+from collections import Counter
 
 import utils.logging as logging
 from utils.general import padded_tensor_left
@@ -33,13 +34,13 @@ def calc_stats(predicted_summaries, target_summaries):
 
     ter_metric = TranslationEditRate(return_sentence_level_score=True)
     ter_per_summary = []
-    ter_precision = [] # MeanMetric()
-    ter_recall = [] # MeanMetric()
+    ter_precisions = [] # MeanMetric()
+    ter_recalls = [] # MeanMetric()
 
     bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
     bert_per_summary = []
-    bert_precision = []
-    bert_recall = []
+    bert_precisions = []
+    bert_recalls = []
 
     # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     # infolm_per_summary = []
@@ -52,33 +53,33 @@ def calc_stats(predicted_summaries, target_summaries):
         ter_scores = ter_metric(*zip(*combinations))
         ter_scores = ter_scores[1].view(-1,len(target_sentences))
         matching_predictions = ter_scores <= TER_MAXIMUM
-        ter_prediction_correct = torch.any(matching_predictions, dim=1)
-        ter_recall_correct = torch.any(matching_predictions, dim=0)
+        ter_precision = torch.any(matching_predictions, dim=1).float().mean().item()
+        ter_recall = torch.any(matching_predictions, dim=0).float().mean().item()
 
         bert_scores = bert_metric(*zip(*combinations))
         bert_scores = torch.as_tensor(bert_scores['f1']).view(-1,len(target_sentences))
         matching_predictions = bert_scores >= BERT_MINIMUM
-        bert_prediction_correct = torch.any(matching_predictions, dim=1)
-        bert_recall_correct = torch.any(matching_predictions, dim=0)
+        bert_precision = torch.any(matching_predictions, dim=1).float().mean().item()
+        bert_recall = torch.any(matching_predictions, dim=0).float().mean().item()
 
         # plot_heatmap(ter_scores.permute(1,0), target_sentences, pred_sentences)
         # plot_heatmap(bert_scores.permute(1,0), target_sentences, pred_sentences)
 
-        ter_per_summary.append(ter_scores.mean().item())
-        ter_precision.append(ter_prediction_correct.float().mean().item())
-        ter_recall.append(ter_recall_correct.float().mean().item())
+        ter_per_summary.append(2 * ter_precision * ter_recall / (ter_precision + ter_recall))
+        ter_precisions.append(ter_precision)
+        ter_recalls.append(ter_recall)
 
-        bert_per_summary.append(bert_scores.mean().item())
-        bert_precision.append(bert_prediction_correct.float().mean().item())
-        bert_recall.append(bert_recall_correct.float().mean().item())
+        bert_per_summary.append(2 * bert_precision * bert_recall / (bert_precision + bert_recall))
+        bert_precisions.append(bert_precision)
+        bert_recalls.append(bert_recall)
 
     stats = {
         "ter": ter_per_summary,
-        "ter_precision": ter_precision, #.compute(),
-        "ter_recall": ter_recall, #.compute(),
+        "ter_precision": ter_precisions, #.compute(),
+        "ter_recall": ter_recalls, #.compute(),
         "bert": bert_per_summary,
-        "bert_precision": bert_precision,
-        "bert_recall": bert_recall,
+        "bert_precision": bert_precisions,
+        "bert_recall": bert_recalls,
         # "infolm": infolm_per_summary,
     }
     return stats
@@ -162,6 +163,45 @@ class MSC_Summaries(Dataset):
             ]
 
         return utterances, self.summaries[i]
+
+
+    def measurements(self):
+
+        num_samples = self.__len__()
+        inputwords = len(' '.join([' '.join(self.__getitem__(i)[0]) for i in range(self.__len__())]).split())
+        labelwords = len(' '.join([self.__getitem__(i)[1] for i in range(self.__len__())]).split())
+        avg_inputwords = inputwords / num_samples
+        avg_labelwords = labelwords / num_samples
+        inputwords_per_sample = Counter([len(' '.join(self.__getitem__(i)[0]).split()) for i in range(self.__len__())])
+        inputwords_per_sample = sorted(inputwords_per_sample.items(), key=lambda x:x[0])
+        labelwords_per_sample = Counter([len(self.__getitem__(i)[1].split()) for i in range(self.__len__())])
+        labelwords_per_sample = sorted(labelwords_per_sample.items(), key=lambda x:x[0])
+        totalwords_per_sample = Counter([
+            len((' '.join(self.__getitem__(i)[0]) + ' ' + self.__getitem__(i)[1]).split()) 
+            for i in range(self.__len__())
+        ])
+        totalwords_per_sample = sorted(totalwords_per_sample.items(), key=lambda x:x[0])
+        avg_totalwords = sum([length * freq for length, freq in totalwords_per_sample]) / num_samples
+        labelsentences_per_sample = Counter([len(self.__getitem__(i)[1].split('\n')) for i in range(self.__len__())])
+        labelsentences_per_sample = sorted(labelsentences_per_sample.items(), key=lambda x:x[0])
+        avg_labelsentences = sum([length * freq for length, freq in labelsentences_per_sample]) / num_samples
+
+        all_measurements = {
+            "num_samples": num_samples,
+            "inputwords": inputwords,
+            "labelwords": labelwords,
+            "avg_inputwords": avg_inputwords,
+            "avg_labelwords": avg_labelwords,
+            "avg_totalwords": avg_totalwords,
+            "inputwords_per_sample": inputwords_per_sample,
+            "labelwords_per_sample": labelwords_per_sample,
+            "totalwords_per_sample": totalwords_per_sample,
+            "labelsentences_per_sample": labelsentences_per_sample,
+            "avg_labelsentences": avg_labelsentences,
+        }
+
+        return all_measurements
+
 
     @classmethod
     def batchify(cls, data):
@@ -309,13 +349,20 @@ if __name__ == "__main__":
     assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
 
     MSC_Summaries.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
+    train_measurements = MSC_Summaries(
+        basedir=args.datadir + args.basedir, 
+        sessions=args.sessions, 
+        subset="train",         
+    ).measurements()
+    logging.report('\n'.join(["{}:\t{}".format(k, v) for k, v in train_measurements.items()]))
+
     msc_summaries = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
         sessions=args.sessions, 
         subset=subset, 
         max_samples=test_samples, 
     )
-    data = [msc_summaries[i] for i in range(5)]
+    data = [msc_summaries[i] for i in range(test_samples)]
 
     for item in data:
         logging.verbose(msc_summaries.formatted_item(item))
@@ -338,6 +385,6 @@ if __name__ == "__main__":
     pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
     logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
-    eval_kwargs = {'nofact_token': args.nofact_token, 'device': args.device, 'log_interval': args.log_interval, 'decoder_max': 20}
+    eval_kwargs = {'nofact_token': args.nofact_token, 'device': args.device, 'log_interval': args.log_interval, 'decoder_max': 30}
     eval_stats = msc_summaries.evaluate(model, **eval_kwargs)
     logging.report(eval_stats)
