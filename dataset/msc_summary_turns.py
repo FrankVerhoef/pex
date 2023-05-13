@@ -99,34 +99,37 @@ class MSC_Turns(Dataset):
     def corpus(self):
         return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
 
+    @classmethod
+    def item_measurements(cls, item):
+        stats = {
+            "inputwords": len(item[0].split()), 
+            "labelwords": len(item[1].split()), 
+        }       
+        return stats
+
     def measurements(self):
 
         num_samples = self.__len__()
-        inputwords = len(' '.join([self.__getitem__(i)[0] for i in range(self.__len__())]).split())
-        labelwords = len(' '.join([self.__getitem__(i)[1] for i in range(self.__len__())]).split())
-        avg_inputwords = inputwords / num_samples
-        avg_labelwords = labelwords / num_samples
-        inputwords_per_sample = Counter([len(self.__getitem__(i)[0].split()) for i in range(self.__len__())])
-        inputwords_per_sample = sorted(inputwords_per_sample.items(), key=lambda x:x[0])
-        labelwords_per_sample = Counter([len(self.__getitem__(i)[1].split()) for i in range(self.__len__())])
-        labelwords_per_sample = sorted(labelwords_per_sample.items(), key=lambda x:x[0])
-        totalwords_per_sample = Counter([
-            len((self.__getitem__(i)[0] + ' ' + self.__getitem__(i)[1]).split()) 
-            for i in range(self.__len__())
-        ])
-        totalwords_per_sample = sorted(totalwords_per_sample.items(), key=lambda x:x[0])
-        avg_totalwords = sum([length * freq for length, freq in totalwords_per_sample]) / num_samples
+        allitem_measurements = [self.item_measurements(self.__getitem__(i)) for i in range(self.__len__())]
+        inputwords_per_sample = Counter([m["inputwords"] for m in allitem_measurements])
+        labelwords_per_sample = Counter([m["labelwords"] for m in allitem_measurements])
+        totalwords_per_sample = Counter([m["inputwords"] + m["labelwords"] for m in allitem_measurements])
+
+        inputwords = sum([length * freq for length, freq in inputwords_per_sample.items()])
+        labelwords = sum([length * freq for length, freq in labelwords_per_sample.items()])
+        totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
 
         all_measurements = {
             "num_samples": num_samples,
             "inputwords": inputwords,
             "labelwords": labelwords,
-            "avg_inputwords": avg_inputwords,
-            "avg_labelwords": avg_labelwords,
-            "avg_totalwords": avg_totalwords,
-            "inputwords_per_sample": inputwords_per_sample,
-            "labelwords_per_sample": labelwords_per_sample,
-            "totalwords_per_sample": totalwords_per_sample
+            "totalwords": totalwords,
+            "avg_inputwords": inputwords / num_samples,
+            "avg_labelwords": labelwords / num_samples,
+            "avg_totalwords": totalwords / num_samples,
+            "inputwords_per_sample": sorted(inputwords_per_sample.items(), key=lambda x:x[0]),
+            "labelwords_per_sample": sorted(labelwords_per_sample.items(), key=lambda x:x[0]),
+            "totalwords_per_sample": sorted(totalwords_per_sample.items(), key=lambda x:x[0])
         }
 
         return all_measurements
@@ -323,6 +326,7 @@ if __name__ == "__main__":
         subset=subset
     )
 
+    m = MSC_Turns.item_measurements(msc_turns[0])
     for k,v in msc_turns.measurements().items():
         print(k, v)
 
