@@ -15,37 +15,33 @@ import json
 import random
 import itertools
 from collections import Counter
+import subprocess, os
 
 import utils.logging as logging
 from utils.general import padded_tensor_left
 from utils.plotting import plot_heatmap
 
-TER_MAXIMUM = 0.5
-BERT_MINIMUM = 0.8
+TER_MAXIMUM = 0.6
+TERP_MAXIMUM = 0.6
+BERT_MINIMUM = 0.75
+TERP_DIR = '/Users/FrankVerhoef/Programming/terp/'
 
-def calc_stats(predicted_summaries, target_summaries):
-
-    def _format_scores(target_sentences, recall_correct):
-        format_string = "{:20} " + "{:4} " * len(recall_correct)
-        result = ""
-        for s, r in zip(target_sentences, recall_correct):
-            result += format_string.format(s, *r.int().tolist()) + '\n'
-        return result
+def calc_stats(predicted_summaries, target_summaries, savedir='./'):
 
     ter_metric = TranslationEditRate(return_sentence_level_score=True)
-    ter_per_summary = []
-    ter_precisions = [] # MeanMetric()
-    ter_recalls = [] # MeanMetric()
+    ter_f1s = []
+    ter_precisions = []
+    ter_recalls = []
 
     bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
-    bert_per_summary = []
+    bert_f1s = []
     bert_precisions = []
     bert_recalls = []
 
     # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     # infolm_per_summary = []
 
-    for prediction, target in zip(predicted_summaries, target_summaries):
+    for i, (prediction, target) in enumerate(zip(predicted_summaries, target_summaries)):
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
         target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
         combinations = list(itertools.product(pred_sentences, target_sentences))
@@ -55,34 +51,155 @@ def calc_stats(predicted_summaries, target_summaries):
         matching_predictions = ter_scores <= TER_MAXIMUM
         ter_precision = torch.any(matching_predictions, dim=1).float().mean().item()
         ter_recall = torch.any(matching_predictions, dim=0).float().mean().item()
+        ter_f1 = (2 * ter_precision * ter_recall) / (ter_precision + ter_recall) if (ter_precision + ter_recall) != 0 else 0
 
         bert_scores = bert_metric(*zip(*combinations))
         bert_scores = torch.as_tensor(bert_scores['f1']).view(-1,len(target_sentences))
         matching_predictions = bert_scores >= BERT_MINIMUM
         bert_precision = torch.any(matching_predictions, dim=1).float().mean().item()
         bert_recall = torch.any(matching_predictions, dim=0).float().mean().item()
+        bert_f1 = (2 * bert_precision * bert_recall) / (bert_precision + bert_recall) if (bert_precision + bert_recall) != 0 else 0
 
-        # plot_heatmap(ter_scores.permute(1,0), target_sentences, pred_sentences)
-        # plot_heatmap(bert_scores.permute(1,0), target_sentences, pred_sentences)
+        plot_heatmap(
+            scores=ter_scores.permute(1,0), 
+            threshold=TER_MAXIMUM,
+            criterion = lambda x, threshold: x <= threshold,
+            targets=target_sentences, 
+            predictions=pred_sentences, 
+            title=f"TER heatmap {i}\n(threshold={TER_MAXIMUM:.2f})"
+        ).figure.savefig(f"{savedir}ter_heatmap_{i:06d}.jpg")
+        plot_heatmap(
+            scores=bert_scores.permute(1,0), 
+            threshold=BERT_MINIMUM,
+            criterion = lambda x, threshold: x >= threshold,
+            targets=target_sentences, 
+            predictions=pred_sentences, 
+            title=f"BERT heatmap {i}\n(threshold={BERT_MINIMUM:.2f})"
+        ).figure.savefig(f"{savedir}bert_heatmap_{i:06d}.jpg")
 
-        ter_per_summary.append(2 * ter_precision * ter_recall / (ter_precision + ter_recall))
+        ter_f1s.append(ter_f1)
         ter_precisions.append(ter_precision)
         ter_recalls.append(ter_recall)
 
-        bert_per_summary.append(2 * bert_precision * bert_recall / (bert_precision + bert_recall))
+        bert_f1s.append(bert_f1)
         bert_precisions.append(bert_precision)
         bert_recalls.append(bert_recall)
 
     stats = {
-        "ter": ter_per_summary,
-        "ter_precision": ter_precisions, #.compute(),
-        "ter_recall": ter_recalls, #.compute(),
-        "bert": bert_per_summary,
+        "ter_f1": ter_f1s,
+        "ter_precision": ter_precisions,
+        "ter_recall": ter_recalls,
+        "bert_f1": bert_f1s,
         "bert_precision": bert_precisions,
         "bert_recall": bert_recalls,
         # "infolm": infolm_per_summary,
     }
     return stats
+
+def calc_terp_stats(predicted_summaries, target_summaries, subset, session, savedir='./'):
+
+    prepare_terp_files(predicted_summaries, target_summaries, subset, session, savedir)
+    env = os.environ.copy()
+    env["JAVA_HOME"] = '/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home'
+    completed_process = subprocess.run(
+        ["bin/terpa", "-r", savedir + "ref.trans", "-h", savedir + "hyp.trans", "-o", "sum,pra,nist,html"],
+        cwd=TERP_DIR,
+        env=env,
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.STDOUT,
+        check=True
+    )
+    logging.spam("TERp output\n" + completed_process.stdout.decode())
+    stats = get_stats_and_save_heatmaps(savedir + "eval.txt", TERP_DIR + ".seg.scr", savedir)
+
+    return stats
+
+def prepare_terp_files(predicted_summaries, target_summaries, subset, session, savedir='./'):
+    """
+    Dump predictions and targets in two files in 'TRANS'-format.
+    The output files can be used to calculate TERp scores.
+    """
+    eval_file = open(savedir + "eval.txt", "w")
+    refs = open(savedir + "ref.trans", 'w')
+    hyps = open(savedir + "hyp.trans", 'w')
+    for i, (prediction, target) in enumerate(zip(predicted_summaries, target_summaries)): 
+        pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
+        target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
+        combinations = list(itertools.product(pred_sentences, target_sentences))
+
+        eval_file.write(json.dumps({"prediction": pred_sentences, "target": target_sentences}) + '\n')
+        for c, (pred, target) in enumerate(combinations):
+            hyps.write(f"{pred} ([session_{session}/{subset}.txt][{i:06d}][{c:06d}])\n")
+            refs.write(f"{target} ([session_{session}/{subset}.txt][{i:06d}][{c:06d}])\n")
+
+    eval_file.close()
+    refs.close()
+    hyps.close()
+
+def read_terp_results(terp_results_file):
+    results = []
+    with open(terp_results_file) as results_file:
+        for line in results_file:
+            sys, i, c, terp, n = line.split()
+            results.append((int(i), int(c), float(terp)))
+    result_list = []
+    i = -1
+    for r in results:
+        if r[0] != i:
+            i = r[0]
+            assert len(result_list) == i, f"Mismatch between index {i} and length of results list {len(result_list)}"
+            result_list.append([])
+        assert len(result_list[-1]) == r[1], f"Index error for result {r}"
+        result_list[-1].append(r[2])
+    result_list = [torch.tensor(r) for r in result_list]
+    return result_list
+
+def get_stats_and_save_heatmaps(eval_file, terp_results_file, savedir='./'):
+
+    # Load predictions and targets from eval_file and corresponding terp scores from terp_results_file
+    with open(eval_file, "r") as f:
+        eval_list = [json.loads(line) for line in f]
+    result_list = read_terp_results(terp_results_file)
+
+    # Initialise metrics lists
+    terp_f1s= []
+    terp_precisions = []
+    terp_recalls = []
+
+    # Loop over all evaluation samples (prediction, target) and corresponding scores to calculate recall, precision and f1
+    for i, (eval, scores) in enumerate(zip(eval_list, result_list)):
+
+        pred_sentences = eval["prediction"]
+        target_sentences = eval["target"]
+        terp_scores = scores.view(len(eval["prediction"]), len(eval["target"]))
+
+        # Calculate precision, recall and f1, using a threshold for terp_scores of TERP_MAXIMUM
+        matching_predictions = terp_scores <= TERP_MAXIMUM
+        terp_precision = torch.any(matching_predictions, dim=1).float().mean().item()
+        terp_recall = torch.any(matching_predictions, dim=0).float().mean().item()
+        terp_f1 = (2 * terp_precision * terp_recall / (terp_precision + terp_recall)) if (terp_precision + terp_recall) != 0 else 0
+
+        # Append metrics to metric lists, and save corresponding heatmap
+        terp_f1s.append(terp_f1)
+        terp_precisions.append(terp_precision)
+        terp_recalls.append(terp_recall)
+        im = plot_heatmap(
+            scores=terp_scores.permute(1,0), 
+            threshold=TER_MAXIMUM,
+            criterion = lambda x, threshold: x <= threshold,
+            targets=target_sentences, 
+            predictions=pred_sentences, 
+            title=f"TERp heatmap {i}\n(threshold={TERP_MAXIMUM:.2f})" # \nRecall {ter_recall:.2f}, Precision {ter_precision:.2f}, F1_score {ter_f1:.2f}"
+        )
+        im.figure.savefig(f"{savedir}terp_heatmap_{i:06d}.jpg")
+
+    # Collect and return stats
+    stats = {
+        "terp_f1": terp_f1s,
+        "terp_precision": terp_precisions,
+        "terp_recall": terp_recalls,
+    }
+    return stats 
 
 
 class MSC_Summaries(Dataset):
@@ -100,24 +217,25 @@ class MSC_Summaries(Dataset):
 
     @classmethod
     def add_cmdline_args(cls, parser):
-        group = parser.add_argument_group('MSC_Turns')
-        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")        
-        group.add_argument("--sessions", default=[1], nargs='+', help="MSC sessions to include in dataset")
+        group = parser.add_argument_group('MSC_Summary')
+        group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
+        group.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
+        group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")   
+        group.add_argument("--session", default=1, type=int, help="MSC session to include in dataset")
         return parser
 
-    def __init__(self, basedir='./', sessions=[1], subset='train', max_samples=None):
+    def __init__(self, basedir='./', session=1, subset='train', max_samples=None):
         super(MSC_Summaries, self).__init__()
-        self.sessions = sessions
+        self.session = session
         self.subset = subset
         dialogues = []
-        for s in self.sessions:
-            filepath = f"{basedir}session_{s}/{subset}.txt"
-            try:
-                with open(filepath, "r") as f:
-                    for line in f:
-                        dialogues.append(json.loads(line))
-            except FileNotFoundError:
-                logging.warning(f"File '{filepath}' not found -> skipped")
+        filepath = f"{basedir}session_{session}/{subset}.txt"
+        try:
+            with open(filepath, "r") as f:
+                for line in f:
+                    dialogues.append(json.loads(line))
+        except FileNotFoundError:
+            logging.warning(f"File '{filepath}' not found -> skipped")
         self.turns, self.summaries = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
@@ -276,7 +394,8 @@ class MSC_Summaries(Dataset):
             if (i + 1) % log_interval == 0:
                 logging.verbose(f"Evaluated {i + 1}/{self.__len__()} samples")
         
-        stats = calc_stats(pred_summaries, target_summaries)
+        stats = calc_stats(pred_summaries, target_summaries, savedir='/Users/FrankVerhoef/Programming/PEX/output/')
+        stats.update(calc_terp_stats(pred_summaries, target_summaries, self.subset, self.session, savedir='/Users/FrankVerhoef/Programming/PEX/output/'))
 
         return stats
 
@@ -326,10 +445,9 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
-    parser = MSC_Turns.add_cmdline_args(parser)
+    # parser = MSC_Turns.add_cmdline_args(parser)
     parser = MSC_Summaries.add_cmdline_args(parser)
     parser = BartExtractor.add_cmdline_args(parser)
-    parser.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
     args = parser.parse_args()
 
     logging.set_log_level("SPAM")
@@ -337,7 +455,7 @@ if __name__ == "__main__":
 
     # Settings for this test
     subset = 'test'
-    test_samples = 5
+    test_samples = 10
     args.load = "trained_bart"
     args.speaker_prefixes = ["<other>", "<self>"]
     args.nofact_token = "<nofact>"
@@ -354,7 +472,7 @@ if __name__ == "__main__":
     MSC_Summaries.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
     train_set = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
-        sessions=args.sessions, 
+        session=args.session, 
         subset="train",         
     )
     m = MSC_Summaries.item_measurements(train_set[0])
@@ -363,7 +481,7 @@ if __name__ == "__main__":
 
     msc_summaries = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
-        sessions=args.sessions, 
+        session=args.session, 
         subset=subset, 
         max_samples=test_samples, 
     )
@@ -392,4 +510,10 @@ if __name__ == "__main__":
 
     eval_kwargs = {'nofact_token': args.nofact_token, 'device': args.device, 'log_interval': args.log_interval, 'decoder_max': 30}
     eval_stats = msc_summaries.evaluate(model, **eval_kwargs)
-    logging.report(eval_stats)
+
+    logging.info(eval_stats)
+    logging.report({
+        k: sum(v)/len(v)
+        for k, v in eval_stats.items()
+        if isinstance(v, list)
+    })
