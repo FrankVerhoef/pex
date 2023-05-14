@@ -1,9 +1,10 @@
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
 import numpy as np
 import torch
 
-def heatmap(data, row_labels, col_labels, ax=None, cbar_kw=None, cbarlabel="", **kwargs):
+def heatmap(data, row_labels, col_labels, title="", ax=None, cbar_ax=None, cbar_kw=None, cbarlabel="", **kwargs):
     """
     Create a heatmap from a numpy array and two lists of labels.
 
@@ -36,12 +37,15 @@ def heatmap(data, row_labels, col_labels, ax=None, cbar_kw=None, cbarlabel="", *
     im = ax.imshow(data, **kwargs)
 
     # Create colorbar
-    cbar = ax.figure.colorbar(im, ax=ax, **cbar_kw)
-    cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
+    cbar = None # ax.figure.colorbar(im, ax=cbar_ax, **cbar_kw)
+    # cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
 
     # Show all ticks and label them with the respective list entries.
     ax.set_xticks(np.arange(data.shape[1]), labels=col_labels)
     ax.set_yticks(np.arange(data.shape[0]), labels=row_labels)
+
+    # Show title
+    ax.set_title(title)
 
     # Let the horizontal axes labeling appear on top.
     ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
@@ -51,7 +55,6 @@ def heatmap(data, row_labels, col_labels, ax=None, cbar_kw=None, cbarlabel="", *
 
     # Turn spines off and create white grid.
     ax.spines[:].set_visible(False)
-
     ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
     ax.set_yticks(np.arange(data.shape[0]+1)-.5, minor=True)
     ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
@@ -60,7 +63,7 @@ def heatmap(data, row_labels, col_labels, ax=None, cbar_kw=None, cbarlabel="", *
     return im, cbar
 
 
-def annotate_heatmap(im, data=None, valfmt="{x:.2f}", textcolors=("black", "white"), threshold=None, **textkw):
+def annotate_heatmap(im, data=None, valfmt="{x:.2f}", textcolors=("black", "white"), criterion=None, threshold=None, **textkw):
     """
     A function to annotate a heatmap.
 
@@ -86,10 +89,12 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}", textcolors=("black", "whit
         the text labels.
     """
 
-    if not isinstance(data, (list, np.ndarray)):
+    if not isinstance(data, (list, np.ndarray, torch.Tensor)):
         data = im.get_array()
 
     # Normalize the threshold to the images color range.
+    if criterion is None:
+        criterion = lambda x, threshold: x >= threshold
     if threshold is not None:
         threshold = im.norm(threshold)
     else:
@@ -100,34 +105,113 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}", textcolors=("black", "whit
     kw.update(textkw)
 
     # Get the formatter in case a string is supplied
+    display_bool = False
     if isinstance(valfmt, str):
-        valfmt = matplotlib.ticker.StrMethodFormatter(valfmt)
+        if valfmt == 'bool_char':
+            display_bool = True
+            valfmt = matplotlib.ticker.StrMethodFormatter("{x}")
+        else:
+            valfmt = matplotlib.ticker.StrMethodFormatter(valfmt)
 
     # Loop over the data and create a `Text` for each "pixel".
     # Change the text's color depending on the data.
     texts = []
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
-            kw.update(color=textcolors[int(im.norm(data[i, j]) < threshold)])
-            text = im.axes.text(j, i, valfmt(data[i, j], None), **kw)
+            # kw.update(color=textcolors[int(criterion(im.norm(data[i, j]), threshold))])
+            if display_bool:
+                kw.update(weight=("bold" if data[i, j] else "normal"))
+                text = im.axes.text(j, i, valfmt('T' if data[i, j] else 'F', None), **kw)
+            else:
+                kw.update(weight=["normal", "bold"][int(criterion(im.norm(data[i, j]), threshold))])
+                text = im.axes.text(j, i, valfmt(data[i, j], None), **kw)
             texts.append(text)
 
     return texts
 
+def best(values, better_than, dim):
+    if better_than(0, 1):
+        return torch.min(values, dim=dim, keepdim=True)[0]
+    else:
+        return torch.max(values, dim=dim, keepdim=True)[0]
+    
+def match(values, better_than, threshold, dim):
+    if better_than(0, 1):
+        return best(values, better_than, dim=dim) <= threshold
+    else:
+        return best(values, better_than, dim=dim) >= threshold
 
-def plot_heatmap(matches, targets, predictions):
-    fig, ax = plt.subplots()
+def plot_heatmap(scores, threshold, criterion, targets, predictions, title):
 
+    fig, ((ax_heatmap, ax_recall), (ax_precision, ax_f1)) = plt.subplots(
+        nrows=2, ncols=2, figsize=(9,6),
+        sharex='col', sharey='row',
+        gridspec_kw={'height_ratios': [len(targets), 1], 'width_ratios': [len(predictions), 1]}
+    )
+
+    # Cap length of labels (if necessary)
     # targets = [t[:20] for t in targets]
     # predictions = [p[:20] for p in predictions]
 
-    im, cbar = heatmap(matches, targets, predictions, ax=ax, vmin=0, vmax=1.0, cmap="magma", cbarlabel="Matches based on TER")
-    texts = annotate_heatmap(im, valfmt="{x:.1f}", threshold=1.0)
+    # Define the colormap
+    if criterion(0,1):  
+        # Reversed map (smaller is better --> low scores get green color, high scores get red color)
+        colors_below = plt.cm.RdYlGn(np.linspace(0.85, 0.55, 256))
+        colors_above = plt.cm.RdYlGn(np.linspace(0.4, 0.15, 256))
+        all_colors = np.vstack((colors_below, colors_above))
+    else: 
+        # Regular map (bigger is better --> low scores get red color, high scores get green color)
+        colors_below = plt.cm.RdYlGn(np.linspace(0.15, 0.4, 256))
+        colors_above = plt.cm.RdYlGn(np.linspace(0.55, 0.85, 256))
+        all_colors = np.vstack((colors_below, colors_above))
+    score_map = colors.LinearSegmentedColormap.from_list('score_map', all_colors)
+    divnorm = colors.TwoSlopeNorm(vmin=0, vcenter=threshold, vmax=1)
+
+    # Make and annotate the heatmap
+    im_heatmap, cbar = heatmap(scores, targets, predictions, title=title, ax=ax_heatmap, cbar_ax=ax_recall, cmap=score_map, norm=divnorm, cbarlabel="Score")
+    texts = annotate_heatmap(im_heatmap, valfmt="{x:.1f}", threshold=threshold, criterion=criterion)
+
+    # Calculate precision and recall for the summary bars
+    precision = torch.any(criterion(scores, threshold), dim=0).view(1,-1).float()
+    recall = torch.any(criterion(scores, threshold), dim=1).view(-1,1).float()
+    avg_precision = precision.mean().item()
+    avg_recall = recall.mean().item()
+    f1 = (2 * avg_precision * avg_recall) / (avg_precision + avg_recall) if (avg_precision + avg_recall) != 0 else 0
+
+    # Display the summary bars with precision and recall
+    im_precision = ax_precision.imshow(best(scores, criterion, dim=0), cmap=score_map, norm=divnorm)
+    texts = annotate_heatmap(im_precision, data=match(scores, criterion, threshold, dim=0), valfmt="bool_char", threshold=threshold, criterion=criterion)
+    im_recall = ax_recall.imshow(best(scores, criterion, dim=1), cmap=score_map, norm=divnorm)
+    texts = annotate_heatmap(im_recall, data=match(scores, criterion, threshold, dim=1), valfmt="bool_char", threshold=threshold, criterion=criterion)
+
+    # Turn spines off and create white grid for precision bar
+    ax_precision.spines[:].set_visible(False)
+    ax_precision.tick_params(labelleft=False, labelbottom=False, left=False, bottom=False)
+    ax_precision.grid(which="minor", color="w", linestyle='-', linewidth=3)
+    ax_precision.tick_params(which="minor", bottom=False, left=False)
+    ax_precision.text(-0.6, 0, f"precision: {avg_precision:.2f}", ha='right', va='center', weight='bold')
+
+    # Turn spines off and create white grid for recall bar
+    ax_recall.spines[:].set_visible(False)
+    ax_recall.tick_params(labelleft=False, labelbottom=False, left=False, bottom=False)
+    ax_recall.grid(which="minor", color="w", linestyle='-', linewidth=3)
+    ax_recall.tick_params(which="minor", bottom=False, left=False)
+    ax_recall.text(0, -0.6, f"recall: {avg_recall:.2f}", rotation=-30, ha="right", rotation_mode="anchor", weight='bold')
+
+    # Show only the text for f1 score
+    ax_f1.spines[:].set_visible(False)
+    ax_f1.axes.xaxis.set_visible(False)
+    ax_f1.axes.yaxis.set_visible(False)
+    ax_f1.text(0, 0, f"F1 score\n{f1:.2f}", ha='center', va='center', weight='bold')
 
     fig.tight_layout()
-    plt.show()
+    return im_heatmap
 
-# matches = torch.rand((4,6)) * 2
-# targets = ["A", "b", 'c', 'd']
-# predictions = np.arange(6)
-# plot_heatmap(matches, targets, predictions)
+# matches = torch.rand((4,6))
+# targets = ["A" * 35, "b"*20, 'c' * 40, 'd'* 15]
+# predictions = [str(i) * 25 for i in range(6)]
+# threshold = 0.8
+# criterion = lambda x, threshold: x >= threshold
+# im = plot_heatmap(matches, threshold, criterion, targets, predictions, title="this is a title")
+# plt.show()
+# im.figure.savefig("test.jpg")
