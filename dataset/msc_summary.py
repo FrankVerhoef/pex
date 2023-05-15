@@ -8,7 +8,7 @@ import torch
 from torchmetrics import TranslationEditRate
 from torchmetrics.text.bert import BERTScore
 from torchmetrics.text.infolm import InfoLM
-from metrics.terp import calc_terp_stats
+from metrics.terp import TerpMetric, TERP_DIR, JAVA_HOME
  
 from torch.utils.data import Dataset
 
@@ -22,77 +22,128 @@ from utils.plotting import plot_heatmap
 
 TER_MAXIMUM = 0.6
 BERT_MINIMUM = 0.75
+TERP_MAXIMUM = 0.6
 
-def calc_stats(predicted_summaries, target_summaries, session, subset, indices, savedir='./'):
+def calc_stats(predicted_summaries, target_summaries, indices, metrics=None, tmpdir='./'):
 
-    ter_metric = TranslationEditRate(return_sentence_level_score=True)
-    ter_f1s = []
-    ter_precisions = []
-    ter_recalls = []
+    if metrics is None:
+        metrics = metric.keys()
 
-    bert_metric = BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli')
-    bert_f1s = []
-    bert_precisions = []
-    bert_recalls = []
+    metric = {
+        "ter": TranslationEditRate(return_sentence_level_score=True),
+        "bert": BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli'),
+        "terp": TerpMetric(terp_dir=TERP_DIR, java_home=JAVA_HOME, tmp_dir=tmpdir),
+        # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
+    }
+    stats_dict = {}
+    for m in metrics:
+        stats_dict[m] = {"f1s": [], "precisions": [], "recalls": []} 
 
-    # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
-    # infolm_per_summary = []
+    result_dict = {}
 
     for dialog_nr, prediction, target in zip(indices, predicted_summaries, target_summaries):
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
         target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
         combinations = list(itertools.product(pred_sentences, target_sentences))
+        result_dict[dialog_nr] = {
+            "pred_sentences": pred_sentences,
+            "target_sentences": target_sentences,
+            "num_combinations": len(combinations)
+        }
+        if "ter" in metrics:
+            metric["ter"].update(*zip(*combinations))
+        if "bert" in metrics:
+            metric["bert"].update(*zip(*combinations))
+        if "terp" in metrics:
+            metric["terp"].update(dialog_nr, *zip(*combinations))
+
+    all_scores = {m: metric[m].compute() for m in metrics}
+    
+    i_start = 0
+    for dialog_nr in result_dict.keys():
+        r = result_dict[dialog_nr]
+        i_end = i_start + r["num_combinations"]
+
+        if "ter" in metrics:
+            scores = all_scores["ter"][1][i_start:i_end]
+            scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+            matching_predictions = scores <= TER_MAXIMUM
+            precision = torch.any(matching_predictions, dim=0).float().mean().item()
+            recall = torch.any(matching_predictions, dim=1).float().mean().item()
+            f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
+
+            r["ter"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
+
+            stats_dict["ter"]["f1s"].append(f1)
+            stats_dict["ter"]["precisions"].append(precision)
+            stats_dict["ter"]["recalls"].append(recall)
         
-        ter_scores = ter_metric(*zip(*combinations))
-        ter_scores = ter_scores[1].view(-1,len(target_sentences))
-        matching_predictions = ter_scores <= TER_MAXIMUM
-        ter_precision = torch.any(matching_predictions, dim=1).float().mean().item()
-        ter_recall = torch.any(matching_predictions, dim=0).float().mean().item()
-        ter_f1 = (2 * ter_precision * ter_recall) / (ter_precision + ter_recall) if (ter_precision + ter_recall) != 0 else 0
+        if "bert" in metrics:
+            scores = torch.as_tensor(all_scores["bert"]['f1'][i_start:i_end])
+            scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+            matching_predictions = scores >= BERT_MINIMUM
+            precision = torch.any(matching_predictions, dim=0).float().mean().item()
+            recall = torch.any(matching_predictions, dim=1).float().mean().item()
+            f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
 
-        ter_f1s.append(ter_f1)
-        ter_precisions.append(ter_precision)
-        ter_recalls.append(ter_recall)
+            r["bert"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
 
-        plot_heatmap(
-            scores=ter_scores.permute(1,0), 
-            threshold=TER_MAXIMUM,
-            criterion = lambda x, threshold: x <= threshold,
-            targets=target_sentences, 
-            predictions=pred_sentences, 
-            title=f"TER heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={TER_MAXIMUM:.2f})"
-        ).figure.savefig(f"{savedir}ter_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
-        
-        bert_scores = bert_metric(*zip(*combinations))
-        bert_scores = torch.as_tensor(bert_scores['f1']).view(-1,len(target_sentences))
-        matching_predictions = bert_scores >= BERT_MINIMUM
-        bert_precision = torch.any(matching_predictions, dim=1).float().mean().item()
-        bert_recall = torch.any(matching_predictions, dim=0).float().mean().item()
-        bert_f1 = (2 * bert_precision * bert_recall) / (bert_precision + bert_recall) if (bert_precision + bert_recall) != 0 else 0
+            stats_dict["bert"]["f1s"].append(f1)
+            stats_dict["bert"]["precisions"].append(precision)
+            stats_dict["bert"]["recalls"].append(recall)
 
-        bert_f1s.append(bert_f1)
-        bert_precisions.append(bert_precision)
-        bert_recalls.append(bert_recall)
+        if "terp" in metrics:
+            scores = all_scores["terp"][dialog_nr]
+            scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+            matching_predictions = scores <= TERP_MAXIMUM
+            precision = torch.any(matching_predictions, dim=0).float().mean().item()
+            recall = torch.any(matching_predictions, dim=1).float().mean().item()
+            f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
 
-        plot_heatmap(
-            scores=bert_scores.permute(1,0), 
-            threshold=BERT_MINIMUM,
-            criterion = lambda x, threshold: x >= threshold,
-            targets=target_sentences, 
-            predictions=pred_sentences, 
-            title=f"BERT heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={BERT_MINIMUM:.2f})"
-        ).figure.savefig(f"{savedir}bert_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
+            r["terp"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
 
-    stats = {
-        "ter_f1": ter_f1s,
-        "ter_precision": ter_precisions,
-        "ter_recall": ter_recalls,
-        "bert_f1": bert_f1s,
-        "bert_precision": bert_precisions,
-        "bert_recall": bert_recalls,
-        # "infolm": infolm_per_summary,
-    }
-    return stats
+            stats_dict["terp"]["f1s"].append(f1)
+            stats_dict["terp"]["precisions"].append(precision)
+            stats_dict["terp"]["recalls"].append(recall)
+
+        i_start = i_end
+
+    return stats_dict, result_dict
+
+def plot_heatmaps(results_dict, session, subset, savedir):
+    
+    for dialog_nr in results_dict.keys():
+        r = results_dict[dialog_nr]
+
+        if "ter" in r.keys():
+            plot_heatmap(
+                scores=r["ter"]["scores"], 
+                threshold=TER_MAXIMUM,
+                criterion = lambda x, threshold: x <= threshold,
+                targets=r["target_sentences"], 
+                predictions=r["pred_sentences"], 
+                title=f"TER heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={TER_MAXIMUM:.2f})"
+            ).figure.savefig(f"{savedir}ter_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
+
+        if "bert" in r.keys():
+            plot_heatmap(
+                scores=r["bert"]["scores"], 
+                threshold=BERT_MINIMUM,
+                criterion = lambda x, threshold: x >= threshold,
+                targets=r["target_sentences"], 
+                predictions=r["pred_sentences"], 
+                title=f"BERT heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={BERT_MINIMUM:.2f})"
+            ).figure.savefig(f"{savedir}bert_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
+
+        if "terp" in r.keys():
+            plot_heatmap(
+                scores=r["terp"]["scores"], 
+                threshold=TERP_MAXIMUM,
+                criterion = lambda x, threshold: x <= threshold,
+                targets=r["target_sentences"], 
+                predictions=r["pred_sentences"], 
+                title=f"TERp heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={TERP_MAXIMUM:.2f})"
+            ).figure.savefig(f"{savedir}terp_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
 
 class MSC_Summaries(Dataset):
 
@@ -242,13 +293,14 @@ class MSC_Summaries(Dataset):
         output += 'Summary: ' + '\n\t' + summary.replace('\n', '\n\t')
         return output
 
-    def evaluate(self, model, nofact_token='', device="cpu", decoder_max=20, print_max=20, log_interval=100):
+    def evaluate(self, model, metrics=None, nofact_token='', device="cpu", decoder_max=20, print_max=20, log_interval=100, tmpdir='./'):
 
         model = model.to(device)
         model.eval()
         target_summaries = []
         pred_summaries = []
 
+        logging.info(f"Start evaluation of model {model.__class__.__name__} on metrics: {','.join(metrics) if metrics is not None else 'all'}")
         for i in range(len(self)):
 
             target_summary = self[i][1]
@@ -279,10 +331,9 @@ class MSC_Summaries(Dataset):
             if (i + 1) % log_interval == 0:
                 logging.verbose(f"Evaluated {i + 1}/{len(self)} samples")
         
-        stats = calc_stats(pred_summaries, target_summaries, self.session, self.subset, self.indices, savedir='/Users/FrankVerhoef/Programming/PEX/output/')
-        stats.update(calc_terp_stats(pred_summaries, target_summaries, self.session, self.subset, self.indices, savedir='/Users/FrankVerhoef/Programming/PEX/output/'))
+        stats, results_dict = calc_stats(pred_summaries, target_summaries, self.indices, metrics=metrics, tmpdir=tmpdir)
 
-        return stats
+        return stats, results_dict
 
     @classmethod
     def predict(cls, data, model, nofact_token='', device="cpu", decoder_max=20):
@@ -367,7 +418,7 @@ if __name__ == "__main__":
     )
     m = MSC_Summaries.item_measurements(train_set[0])
     train_measurements = train_set.measurements()
-    logging.report('\n'.join(["{}:\t{}".format(k, v) for k, v in train_measurements.items()]))
+    logging.report('Measurements for session_{args.session}/train\n' + '\n'.join(["{}:\t{}".format(k, v) for k, v in train_measurements.items()]))
 
     msc_summaries = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
@@ -382,28 +433,40 @@ if __name__ == "__main__":
         logging.verbose('-'*40)
 
     batch = msc_summaries.batchify(data)
-    # logging.info("Components of batch: {}".format(str(batch.keys())))
     logging.spam(batch)
 
-    # Test the evaluation with BART model
+    # Prepare BART model for prediction and evaluation
     nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
     assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
 
     model = BartExtractor(bart_base=args.bart_base, nofact_token_id=nofact_token_id)
     model.bart.resize_token_embeddings(len(tokenizer))
 
-    logging.info("Loading model from {}".format(args.checkpoint_dir + args.load))
+    logging.info("Loading model {} from {}".format(model.__class__.__name__, args.checkpoint_dir + args.load))
     model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device(args.device)))
 
-    # pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
-    # logging.report(('\n----------------------------------------\n').join(pred_summaries))
+    # Test predictions
+    pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
+    logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
-    eval_kwargs = {'nofact_token': args.nofact_token, 'device': args.device, 'log_interval': args.log_interval, 'decoder_max': 30}
-    eval_stats = msc_summaries.evaluate(model, **eval_kwargs)
-
+    # Run evaluation
+    eval_kwargs = {
+        'metrics': ["terp", "ter", "bert"], 
+        'nofact_token': args.nofact_token, 
+        'device': args.device, 
+        'log_interval': args.log_interval, 
+        'decoder_max': 30,
+        'tmpdir': '/Users/FrankVerhoef/Programming/PEX/output/'
+    }
+    eval_stats, results_dict = msc_summaries.evaluate(model, **eval_kwargs)
     logging.info(eval_stats)
-    logging.report({
-        k: sum(v)/len(v)
-        for k, v in eval_stats.items()
+    logging.report('\n'.join([
+        f"{metric}_{k}:\t{sum(v)/len(v):.4f}"
+        for metric, stats in eval_stats.items() for k, v in stats.items()
         if isinstance(v, list)
-    })
+    ]))
+
+    # Save results
+    with open(f"./output/MSC_Summary_session_{msc_summaries.session}_{msc_summaries.subset}_evalresults.json", "w") as f:
+        f.write(json.dumps(results_dict, sort_keys=True, indent=2))
+    plot_heatmaps(results_dict, msc_summaries.session, msc_summaries.subset, savedir='./output/')

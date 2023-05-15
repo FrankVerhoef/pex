@@ -168,6 +168,7 @@ def plot_heatmap(scores, threshold, criterion, targets, predictions, title):
     divnorm = colors.TwoSlopeNorm(vmin=0, vcenter=threshold, vmax=1)
 
     # Make and annotate the heatmap
+    scores = torch.tensor(scores)
     im_heatmap, cbar = heatmap(scores, targets, predictions, title=title, ax=ax_heatmap, cbar_ax=ax_recall, cmap=score_map, norm=divnorm, cbarlabel="Score")
     texts = annotate_heatmap(im_heatmap, valfmt="{x:.1f}", threshold=threshold, criterion=criterion)
 
