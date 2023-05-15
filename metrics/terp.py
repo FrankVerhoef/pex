@@ -5,6 +5,7 @@
 ###
 
 import torch
+from torchmetrics import Metric
 
 import json
 import itertools
@@ -12,6 +13,103 @@ import subprocess, os
 
 import utils.logging as logging
 from utils.plotting import plot_heatmap
+
+
+class TerpMetric(Metric):
+
+    terp_command = "bin/terpa -r {ref_path} -h {hyp_path} -o sum,pra,nist,html"
+    trans_format = "{sentence} ([sys][{seg:06d}][{id:06d}])\n"
+    ref_file = "ref.trans"
+    hyp_file = "hyp.trans"
+    terpscores_file = ".seg.scr"
+
+    def __init__(self, terp_dir, java_home, tmp_dir):
+        super().__init__()
+        self.terp_dir = terp_dir
+        self.java_home = java_home
+        self.tmp_dir = tmp_dir
+        self.add_state("info", default=[], dist_reduce_fx="cat", persistent=False)
+        self.add_state("targets", default=[], dist_reduce_fx="cat", persistent=False)
+        self.add_state("predictions", default=[], dist_reduce_fx="cat", persistent=False)
+
+    def update(self, id, preds, targets):
+        assert len(preds) == len(targets)
+        self.info.append({"id": id, "length": len(targets)})
+        self.targets.append(targets)
+        self.predictions.append(preds)
+
+    def compute(self):
+        
+        # Define paths to input and output files
+        ref_path = self.tmp_dir + self.ref_file
+        hyp_path = self.tmp_dir + self.hyp_file
+        terpscores_path = self.terp_dir + self.terpscores_file
+
+        # Create a reference file and hypothesis file in TRANS format, as input for the TERp program
+        self._to_trans_files(ref_path, hyp_path)
+
+        # Execute TERp calculation in appropriate environment
+        # The results are written to the file TERP_SCORES_FILENAME, which is stored in the root directory of the TERp program (TERP_DIR)
+        env = os.environ.copy()
+        env["JAVA_HOME"] = self.java_home
+        completed_process = subprocess.run(
+            self.terp_command.format(ref_path=ref_path, hyp_path=hyp_path).split(),
+            cwd=self.terp_dir,
+            env=env,
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT,
+            check=True
+        )
+        logging.spam("TERp output\n" + completed_process.stdout.decode())
+
+        # Collect the statistics from the resultsfile
+        stats = self._get_stats(terpscores_path)
+
+        return stats
+    
+    def _to_trans_files(self, ref_path, hyp_path):
+        """
+        Create a reference file and hypothesis file in TRANS format, as input for the TERp program
+        """
+        refs = open(ref_path, 'w')
+        hyps = open(hyp_path, 'w')
+        for seg, (preds, targets) in enumerate(zip(self.predictions, self.targets)):
+            for i, (pred, target) in enumerate(zip(preds, targets)):
+                refs.write(self.trans_format.format(sentence=target, seg=seg, id=i))
+                hyps.write(self.trans_format.format(sentence=pred, seg=seg, id=i))
+        refs.close()
+        hyps.close()
+
+    def _get_stats(self, terp_scores_path):
+        """
+        Reads the results file created by the TERp program and returns the results in a dict with a tensor of TERp scores per id
+        """
+        results = {}
+
+        # Collect the individual scores in a dict
+        with open(terp_scores_path) as results_file:
+            for item_info in self.info:
+                id = item_info["id"]
+                results[id] = []
+                for _ in range(item_info["length"]):
+                    line = results_file.readline()
+
+                    # Split line in components. Each line in the results file has format: 
+                    # <sys> <seg> <id> <terp score> <number of words>
+                    terp_score = float(line.split()[3])
+
+                    # Append score to current results_list
+                    results[id].append(terp_score)
+                
+                # Convert to tensor
+                results[id] = torch.tensor(results[id])
+
+        return results      
+
+###
+### TERp calculation as a series of functions
+###
+
 
 # Info required to run the TERp program
 TERP_DIR = '/Users/FrankVerhoef/Programming/terp/'
@@ -42,7 +140,7 @@ def calc_terp_stats(predicted_summaries, target_summaries, session, subset, indi
     terpscores_path = TERP_DIR + TERPSCORES_FILENAME
 
     # Create the input files needed for the TERp program
-    prepare_terp_files(predicted_summaries, target_summaries, session, subset, indices, ref_path, hyp_path, eval_path)
+    _prepare_terp_files(predicted_summaries, target_summaries, session, subset, indices, ref_path, hyp_path, eval_path)
 
     # Execute TERp calculation in appropriate environment
     # The results are written to the file TERP_SCORES_FILENAME, which is stored in the root directory of the TERp program (TERP_DIR)
@@ -59,12 +157,12 @@ def calc_terp_stats(predicted_summaries, target_summaries, session, subset, indi
     logging.spam("TERp output\n" + completed_process.stdout.decode())
 
     # Summarize the statistics and save heatmaps to visualize results
-    stats = get_stats_and_save_heatmaps(eval_path, terpscores_path, session, subset, indices, savedir)
+    stats = _get_stats_and_save_heatmaps(eval_path, terpscores_path, session, subset, indices, savedir)
 
     return stats
 
 
-def prepare_terp_files(predicted_summaries, target_summaries, session, subset, indices, ref_path, hyp_path, eval_path):
+def _prepare_terp_files(predicted_summaries, target_summaries, session, subset, indices, ref_path, hyp_path, eval_path):
     """
     Dump predictions and targets in two files in 'TRANS'-format, 
     These output files can be used to calculate TERp scores.
@@ -96,7 +194,7 @@ def prepare_terp_files(predicted_summaries, target_summaries, session, subset, i
     evals.close()
 
 
-def read_terp_results(terp_results_file, session, subset, indices):
+def _read_terp_results(terp_results_file, session, subset, indices):
     """
     Reads the results file created by the TERp program and returns the results in a dict, 
     with the dialog_id as key and a tensor with the scores for one dialog as value.
@@ -140,12 +238,12 @@ def read_terp_results(terp_results_file, session, subset, indices):
     return results_dict
 
 
-def get_stats_and_save_heatmaps(eval_file, terp_results_file, session, subset, indices, savedir='./'):
+def _get_stats_and_save_heatmaps(eval_file, terp_results_file, session, subset, indices, savedir='./'):
 
     # Load predictions and targets from eval_file and corresponding terp scores from terp_results_file
     with open(eval_file, "r") as f:
         eval_list = [json.loads(line) for line in f]
-    terp_results = read_terp_results(terp_results_file, session, subset, indices)
+    terp_results = _read_terp_results(terp_results_file, session, subset, indices)
 
     # Initialise metrics lists
     terp_f1s= []
