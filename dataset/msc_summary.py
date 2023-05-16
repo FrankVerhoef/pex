@@ -381,6 +381,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
+    parser.add_argument("--savedir", type=str, default="./output/", help="directory for output files")
 
     parser = TerpMetric.add_cmdline_args(parser)
     parser = MSC_Summaries.add_cmdline_args(parser)
@@ -468,6 +469,6 @@ if __name__ == "__main__":
     ]))
 
     # Save results
-    with open(f"./output/MSC_Summary_session_{msc_summaries.session}_{msc_summaries.subset}_evalresults.json", "w") as f:
+    with open(args.savedir + f"MSC_Summary_session_{msc_summaries.session}_{msc_summaries.subset}_evalresults.json", "w") as f:
         f.write(json.dumps(results_dict, sort_keys=True, indent=2))
-    plot_heatmaps(results_dict, msc_summaries.session, msc_summaries.subset, savedir='./output/')
+    plot_heatmaps(results_dict, msc_summaries.session, msc_summaries.subset, savedir=args.savedir)
