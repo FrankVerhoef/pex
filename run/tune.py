@@ -35,13 +35,13 @@ def do_grid_search(train_fn):
         #         if spec.config.prefix_size == 0 else 12
         #     ),
     }
-    trainable_with_resources = tune.with_resources(train_fn, {"cpu": 4})
+    trainable_with_resources = tune.with_resources(train_fn, {"gpu": 1})
     tuner = tune.Tuner(
-        trainable=train_fn, #trainable_with_resources,
+        trainable=trainable_with_resources,
         param_space=search_space,
         tune_config=tune.TuneConfig(
             scheduler=HyperBandScheduler(),
-            metric="valid_loss", 
+            metric="loss", 
             mode="min",
             num_samples=5,
             max_concurrent_trials=8
