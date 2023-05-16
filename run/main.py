@@ -14,10 +14,6 @@ from filelock import FileLock
 import json
 import argparse
 
-import ray
-from ray import air, tune
-from ray.tune.schedulers import ASHAScheduler, HyperBandScheduler
-
 from transformers import AutoTokenizer, AutoModelForCausalLM, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
@@ -31,7 +27,10 @@ from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
-from utils.general import savename
+from run.tune import do_grid_search
+from ray import tune
+from utils.general import savename, prettydict
+from utils.listdict import ListDict
 import utils.logging as logging
 
 
@@ -40,15 +39,14 @@ def train(model, trainloader, validloader, optimizer, criterion,
     do_grid_search, use_wandb):
 
     train_losses = []
-    max_accuracy = -1
-    min_loss = float('inf')
+    saved_stats = {"loss": float('inf')}
     step = 0
     model.to(device)
     best_model = model
     num_batches = len(trainloader)
     if patience is None:
-        patience = num_batches
-    patience_count = patience * epochs
+        patience = num_batches * epochs
+    patience_count = patience
     total_original_tokens, total_truncated_tokens = 0, 0
 
     for epoch in range(epochs):
@@ -74,8 +72,8 @@ def train(model, trainloader, validloader, optimizer, criterion,
                 # Evaluate on validation set
                 model.eval()
                 valid_stats = valid(model, validloader, criterion, device)
-                valid_acc = valid_stats['valid_acc']
-                valid_loss = valid_stats['valid_loss']
+                # valid_acc = valid_stats['valid_acc']
+                # valid_loss = valid_stats['valid_loss']
                 logging.info("Epoch {}, step {}: Validation stats={}".format(epoch, step, valid_stats))
                 patience_count -= 1
                 model.train()
@@ -85,19 +83,14 @@ def train(model, trainloader, validloader, optimizer, criterion,
                     wandb.log(valid_stats, step=step)
 
                 if do_grid_search:
-                    tune.report(valid_acc=valid_acc, valid_loss=valid_loss)
-                    # tune.report(valid_loss=valid_loss)
+                    tune.report(valid_stats)
 
-                if valid_acc > max_accuracy:
-                        max_accuracy = valid_acc
-                        logging.info("Best accuracy improved to {:.2%}".format(max_accuracy))
+                if valid_stats["loss"] < saved_stats["loss"]:
+                        saved_stats = valid_stats
+                        logging.info("Best loss improved to {:.4f}".format(saved_stats["loss"]))
                         patience_count = patience
                         best_model = copy.deepcopy(model)
-                # if valid_loss < min_loss:
-                #         min_loss = valid_loss
-                #         logging.info("Best loss improved to {:.4f}".format(min_loss))
-                #         patience_count = patience
-                #         best_model = copy.deepcopy(model)
+
             if patience_count < 0:
                 logging.info("Training loop terminated because it ran out of patience after {} validation interval(s) without improvement".format(patience + 1))
                 break
@@ -105,12 +98,12 @@ def train(model, trainloader, validloader, optimizer, criterion,
             logging.info("Training loop terminated after epoch {}, step {}".format(epoch, step))
             break
     logging.info("Average truncation: {}".format(total_truncated_tokens / max(total_original_tokens, 1)))
-    return best_model, {"valid_acc": max_accuracy}
+    return best_model, saved_stats
 
 
 def valid(model, dataloader, criterion, device):
 
-    valid_stats = []
+    valid_stats = ListDict()
     model.to(device)
     model.eval()
 
@@ -119,9 +112,7 @@ def valid(model, dataloader, criterion, device):
         stats = model.valid_step(batch, criterion, device)
         valid_stats.append(stats)
 
-    stats = {
-        "valid_loss": sum([stats["loss"] for stats in valid_stats]) / len(valid_stats),
-        "valid_acc": sum([stats["acc"] for stats in valid_stats]) / len(valid_stats)}
+    stats = valid_stats.mean()
 
     return stats
 
@@ -144,8 +135,7 @@ def evaluate(model, testdata, args):
 
     logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
     eval_stats = testdata.evaluate(model, **eval_kwargs)
-    report = '\n'.join(["{:<10}: {}".format(k, v) for k, v in eval_stats.items()])
-    logging.report(report)
+    logging.report(prettydict(eval_stats, title="Eval_stats"))
 
     return eval_stats 
 
@@ -404,11 +394,13 @@ def train_with_args(config, args):
         logging.info("Start training")
         logging.info("Use train/valid dataset with {}/{} samples".format(len(traindata), len(validdata)))
  
-        model, stats = train(
+        model, valid_stats = train(
             model, train_loader, valid_loader, optimizer, criterion, 
             device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval, patience=args.patience,
             do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
         )
+        for k, v in valid_stats.items():
+            stats['valid_' + k] = v
 
     if not args.do_grid_search:
 
@@ -425,71 +417,18 @@ def train_with_args(config, args):
             test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
             test_stats = valid(model, test_loader, criterion, device=args.device)
 
-            logging.success("Test stats: {}".format(test_stats))
-            stats.update({
-                "test_loss": test_stats["valid_loss"],
-                "test_acc": test_stats["valid_acc"]
-            })
+            logging.report("Test stats: {}".format(test_stats))
+            for k, v in test_stats.items():
+                stats['test_' + k] = v
 
             if args.use_wandb:
                 wandb.run.summary["test_accuracy"] = stats["test_acc"]  
     
             eval_stats = evaluate(model, testdata, args)
-            stats.update(eval_stats)
+            for k, v in eval_stats.items():
+                stats['eval_' + k] = v
 
     return stats
-
-
-def do_grid_search(args):
-    ray.init(
-        configure_logging=True,
-        logging_level="warning",
-        )
-    search_space = {
-        "seed": tune.grid_search([42, 123, 2206]),
-        # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
-        "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
-        "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "<nofact>"),
-        "add_tokens": tune.sample_from(
-            lambda spec: 
-                spec.config.speaker_prefixes 
-                if spec.config.speaker_prefixes is None 
-                else spec.config.speaker_prefixes + [spec.config.nofact_token]
-            ),
-        # "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
-        # "batch_size": tune.grid_search([16, 32, 64]),
-        # "prefix_size": tune.grid_search([0, 5]),
-        # # If there is a prefix, then freeze all Bert layers
-        # # If the is no prefix, then vary the number of frozen layers
-        # "freeze": tune.sample_from(
-        #         lambda spec: {
-        #             0: None, 
-        #             1: 8, 
-        #             2: 12
-        #         }[random.randint(0,2)]
-        #         if spec.config.prefix_size == 0 else 12
-        #     ),
-    }
-    trainable_with_resources = tune.with_resources(partial(train_with_args, args=args), {"gpu": 1})
-    tuner = tune.Tuner(
-        trainable=trainable_with_resources,
-        param_space=search_space,
-        tune_config=tune.TuneConfig(
-            scheduler=HyperBandScheduler(),
-            metric="valid_acc", 
-            mode="max",
-            num_samples=2,
-            max_concurrent_trials=8
-        ),
-        run_config = air.RunConfig(
-            verbose=3,
-        )
-    )
-    results = tuner.fit()
-    best_result = results.get_best_result() 
-    logging.success("BEST RESULTS: {}".format(best_result.config))
-    logging.success("BEST METRICS: {:.2%}".format(best_result.metrics["valid_acc"]))
-    return results
 
 
 def get_parser():
@@ -580,11 +519,12 @@ if __name__ == "__main__":
     logging.set_log_level(args.loglevel)
     if args.logdir is not None:
         logging.add_file_handler(logdir=args.logdir)
-    logging.info("Args: {}".format('\n'.join(["{:20s}: {}".format(k, v) for k, v in vars(args).items()])))
+    logging.info(prettydict(vars(args), title="Args"))
 
     if args.do_grid_search:
-        resuls = do_grid_search(args)
+        resuls = do_grid_search(partial(train_with_args, args=args))
     else:
         stats = train_with_args(config=None, args=args)
+        logging.success(prettydict(stats, title="Overview of stats"))
 
 
