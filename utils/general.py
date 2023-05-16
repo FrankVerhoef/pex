@@ -52,3 +52,9 @@ def padded_tensor_left(tensorlist, pad_value=0):
         else:
             padded[i, :] = tensorlist[i]
     return padded
+
+def prettydict(d, title=None):
+    max_keylen = max([len(str(k)) for k in d.keys()])
+    result = title + '\n' if title is not None else ""
+    result += '\n'.join([f"{key.ljust(max_keylen)} : {value}" for key, value in d.items()])
+    return result
