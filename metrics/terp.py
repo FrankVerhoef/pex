@@ -23,11 +23,22 @@ class TerpMetric(Metric):
     hyp_file = "hyp.trans"
     terpscores_file = ".seg.scr"
 
-    def __init__(self, terp_dir, java_home, tmp_dir):
+    @classmethod
+    def set(cls, terp_dir, java_home, tmp_dir):
+        cls.terp_dir = terp_dir
+        cls.java_home = java_home
+        cls.tmp_dir = tmp_dir
+
+    @classmethod
+    def add_cmdline_args(cls, parser):
+        group = parser.add_argument_group('TerpMetric')
+        group.add_argument("--java_home", type=str, required=True, help="Java home directory")
+        group.add_argument("--terpdir", type=str, required=True, help="Root directory of TERp program")
+        group.add_argument("--tmpdir", type=str, required=True, help="Temp directory to store intermediate results")
+        return parser
+
+    def __init__(self):
         super().__init__()
-        self.terp_dir = terp_dir
-        self.java_home = java_home
-        self.tmp_dir = tmp_dir
         self.add_state("info", default=[], dist_reduce_fx="cat", persistent=False)
         self.add_state("targets", default=[], dist_reduce_fx="cat", persistent=False)
         self.add_state("predictions", default=[], dist_reduce_fx="cat", persistent=False)

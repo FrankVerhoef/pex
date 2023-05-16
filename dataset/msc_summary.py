@@ -24,7 +24,7 @@ TER_MAXIMUM = 0.6
 BERT_MINIMUM = 0.75
 TERP_MAXIMUM = 0.6
 
-def calc_stats(predicted_summaries, target_summaries, indices, metrics=None, tmpdir='./'):
+def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
     if metrics is None:
         metrics = metric.keys()
@@ -32,7 +32,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None, tmp
     metric = {
         "ter": TranslationEditRate(return_sentence_level_score=True),
         "bert": BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli'),
-        "terp": TerpMetric(terp_dir=TERP_DIR, java_home=JAVA_HOME, tmp_dir=tmpdir),
+        "terp": TerpMetric(),
         # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     }
     stats_dict = {}
@@ -293,7 +293,7 @@ class MSC_Summaries(Dataset):
         output += 'Summary: ' + '\n\t' + summary.replace('\n', '\n\t')
         return output
 
-    def evaluate(self, model, metrics=None, nofact_token='', device="cpu", decoder_max=20, print_max=20, log_interval=100, tmpdir='./'):
+    def evaluate(self, model, metrics=None, nofact_token='', device="cpu", decoder_max=20, print_max=20, log_interval=100):
 
         model = model.to(device)
         model.eval()
@@ -331,7 +331,7 @@ class MSC_Summaries(Dataset):
             if (i + 1) % log_interval == 0:
                 logging.verbose(f"Evaluated {i + 1}/{len(self)} samples")
         
-        stats, results_dict = calc_stats(pred_summaries, target_summaries, self.indices, metrics=metrics, tmpdir=tmpdir)
+        stats, results_dict = calc_stats(pred_summaries, target_summaries, self.indices, metrics=metrics)
 
         return stats, results_dict
 
@@ -382,6 +382,7 @@ if __name__ == "__main__":
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
 
+    parser = TerpMetric.add_cmdline_args(parser)
     parser = MSC_Summaries.add_cmdline_args(parser)
     parser = BartExtractor.add_cmdline_args(parser)
     args = parser.parse_args()
@@ -450,13 +451,13 @@ if __name__ == "__main__":
     logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
     # Run evaluation
+    TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
     eval_kwargs = {
         'metrics': ["terp", "ter", "bert"], 
         'nofact_token': args.nofact_token, 
         'device': args.device, 
         'log_interval': args.log_interval, 
-        'decoder_max': 30,
-        'tmpdir': '/Users/FrankVerhoef/Programming/PEX/output/'
+        'decoder_max': 30
     }
     eval_stats, results_dict = msc_summaries.evaluate(model, **eval_kwargs)
     logging.info(eval_stats)
