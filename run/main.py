@@ -29,7 +29,7 @@ from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from run.tune import do_grid_search
 from ray import tune
-from utils.general import savename, prettydict
+from utils.general import savename, prettydict, dict_with_key_prefix
 from utils.listdict import ListDict
 import utils.logging as logging
 
@@ -39,7 +39,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
     do_grid_search, use_wandb):
 
     train_losses = []
-    saved_stats = {"loss": float('inf')}
+    saved_stats = {"valid_loss": float('inf')}
     step = 0
     model.to(device)
     best_model = model
@@ -72,8 +72,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
                 # Evaluate on validation set
                 model.eval()
                 valid_stats = valid(model, validloader, criterion, device)
-                # valid_acc = valid_stats['valid_acc']
-                # valid_loss = valid_stats['valid_loss']
+                valid_stats = dict_with_key_prefix(valid_stats, prefix="valid_")
                 logging.info("Epoch {}, step {}: Validation stats={}".format(epoch, step, valid_stats))
                 patience_count -= 1
                 model.train()
@@ -85,9 +84,9 @@ def train(model, trainloader, validloader, optimizer, criterion,
                 if do_grid_search:
                     tune.report(valid_stats)
 
-                if valid_stats["loss"] < saved_stats["loss"]:
+                if valid_stats["valid_loss"] < saved_stats["valid_loss"]:
                         saved_stats = valid_stats
-                        logging.info("Best loss improved to {:.4f}".format(saved_stats["loss"]))
+                        logging.info("Best loss improved to {:.4f}".format(saved_stats["valid_loss"]))
                         patience_count = patience
                         best_model = copy.deepcopy(model)
 
@@ -399,8 +398,7 @@ def train_with_args(config, args):
             device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval, patience=args.patience,
             do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
         )
-        for k, v in valid_stats.items():
-            stats['valid_' + k] = v
+        stats = valid_stats
 
     if not args.do_grid_search:
 
@@ -418,15 +416,14 @@ def train_with_args(config, args):
             test_stats = valid(model, test_loader, criterion, device=args.device)
 
             logging.report("Test stats: {}".format(test_stats))
-            for k, v in test_stats.items():
-                stats['test_' + k] = v
+            stats.update(dict_with_key_prefix(test_stats, prefix="test_"))
 
             if args.use_wandb:
                 wandb.run.summary["test_accuracy"] = stats["test_acc"]  
     
             eval_stats = evaluate(model, testdata, args)
-            for k, v in eval_stats.items():
-                stats['eval_' + k] = v
+            stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
+
 
     return stats
 

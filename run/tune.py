@@ -41,7 +41,7 @@ def do_grid_search(train_fn):
         param_space=search_space,
         tune_config=tune.TuneConfig(
             scheduler=HyperBandScheduler(),
-            metric="loss", 
+            metric="valid_loss", 
             mode="min",
             num_samples=5,
             max_concurrent_trials=8

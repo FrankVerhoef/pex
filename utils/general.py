@@ -58,3 +58,9 @@ def prettydict(d, title=None):
     result = title + '\n' if title is not None else ""
     result += '\n'.join([f"{key.ljust(max_keylen)} : {value}" for key, value in d.items()])
     return result
+
+def dict_with_key_prefix(d, prefix=None):
+    if prefix is None:
+        return d
+    else:
+        return {prefix + str(k): v for k, v in d.items()}
