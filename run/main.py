@@ -28,7 +28,7 @@ from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from run.tune import do_grid_search
-from ray import tune
+from ray.air import session
 from utils.general import savename, prettydict, dict_with_key_prefix
 from utils.listdict import ListDict
 import utils.logging as logging
@@ -82,7 +82,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
                     wandb.log(valid_stats, step=step)
 
                 if do_grid_search:
-                    tune.report(valid_stats)
+                    session.report(valid_stats)
 
                 if valid_stats["valid_loss"] < saved_stats["valid_loss"]:
                         saved_stats = valid_stats
@@ -519,7 +519,7 @@ if __name__ == "__main__":
     logging.info(prettydict(vars(args), title="Args"))
 
     if args.do_grid_search:
-        resuls = do_grid_search(partial(train_with_args, args=args))
+        results = do_grid_search(partial(train_with_args, args=args))
     else:
         stats = train_with_args(config=None, args=args)
         logging.success(prettydict(stats, title="Overview of stats"))
