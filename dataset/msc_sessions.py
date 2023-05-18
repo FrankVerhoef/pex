@@ -254,34 +254,36 @@ class MSC_Session(Dataset):
                 corpus.append(utterance['text'])
         return corpus
 
+    def item_measurements(self, i):
+        stats = {
+            "inputwords": len(self[i][0].split()), 
+            "labelwords": len(self[i][1].split()), 
+        }       
+        return stats
+    
     def measurements(self):
 
-        num_samples = self.__len__()
-        inputwords = len(' '.join([self.__getitem__(i)[0] for i in range(self.__len__())]).split())
-        labelwords = len(' '.join([self.__getitem__(i)[1] for i in range(self.__len__())]).split())
-        avg_inputwords = inputwords / num_samples
-        avg_labelwords = labelwords / num_samples
-        inputwords_per_sample = Counter([len(self.__getitem__(i)[0].split()) for i in range(self.__len__())])
-        inputwords_per_sample = sorted(inputwords_per_sample.items(), key=lambda x:x[0])
-        labelwords_per_sample = Counter([len(self.__getitem__(i)[1].split()) for i in range(self.__len__())])
-        labelwords_per_sample = sorted(labelwords_per_sample.items(), key=lambda x:x[0])
-        totalwords_per_sample = Counter([
-            len((self.__getitem__(i)[0] + ' ' + self.__getitem__(i)[1]).split()) 
-            for i in range(self.__len__())
-        ])
-        totalwords_per_sample = sorted(totalwords_per_sample.items(), key=lambda x:x[0])
-        avg_totalwords = sum([length * freq for length, freq in totalwords_per_sample]) / num_samples
+        num_samples = len(self)
+        allitem_measurements = [self.item_measurements(i) for i in range(len(self))]
+        inputwords_per_sample = Counter([m["inputwords"] for m in allitem_measurements])
+        labelwords_per_sample = Counter([m["labelwords"] for m in allitem_measurements])
+        totalwords_per_sample = Counter([m["inputwords"] + m["labelwords"] for m in allitem_measurements])
+
+        inputwords = sum([length * freq for length, freq in inputwords_per_sample.items()])
+        labelwords = sum([length * freq for length, freq in labelwords_per_sample.items()])
+        totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
 
         all_measurements = {
             "num_samples": num_samples,
             "inputwords": inputwords,
             "labelwords": labelwords,
-            "avg_inputwords": avg_inputwords,
-            "avg_labelwords": avg_labelwords,
-            "avg_totalwords": avg_totalwords,
-            "inputwords_per_sample": inputwords_per_sample,
-            "labelwords_per_sample": labelwords_per_sample,
-            "totalwords_per_sample": totalwords_per_sample,
+            "totalwords": totalwords,
+            "avg_inputwords": inputwords / num_samples,
+            "avg_labelwords": labelwords / num_samples,
+            "avg_totalwords": totalwords / num_samples,
+            "inputwords_per_sample": sorted(inputwords_per_sample.items(), key=lambda x:x[0]),
+            "labelwords_per_sample": sorted(labelwords_per_sample.items(), key=lambda x:x[0]),
+            "totalwords_per_sample": sorted(totalwords_per_sample.items(), key=lambda x:x[0]),
         }
 
         return all_measurements
@@ -416,8 +418,8 @@ class MSC_Session(Dataset):
         # Initialize metrics
         msc_metrics = MSC_Metrics(ignore_index=self.tokenizer.pad_token_id, device=device)
 
-        for start_index in range(0, self.__len__(), batch_size):
-            data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < self.__len__()]
+        for start_index in range(0, len(self), batch_size):
+            data = [self[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
             targets = [label for _, label in data]
             inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=decoder_max)
             B, L = inputs.input_ids.shape[:2]
@@ -448,7 +450,7 @@ class MSC_Session(Dataset):
 
             interval_counter += B
             if interval_counter >= log_interval:
-                logging.verbose(f"Evaluated {len(all_responses)}/{self.__len__()} samples")
+                logging.verbose(f"Evaluated {len(all_responses)}/{len(self)} samples")
                 interval_counter =- log_interval
 
         logging.info(f"Completed evaluation of {len(all_responses)} samples")
