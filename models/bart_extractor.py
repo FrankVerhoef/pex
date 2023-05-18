@@ -18,7 +18,7 @@ class ConditionalFactLoss(nn.Module):
 
     def forward(self, fact_logprobs, lm_logprobs, target):
 
-        assert (lm_logprobs.shape[2] > 0) and (target.shape[1] > 0), "Invalid shape for lm_logprobs {} or target {}".format(input.shape, target.shape)
+        assert (lm_logprobs.shape[2] > 0) and (target.shape[1] > 0), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
 
         # Classification loss: whether facts are recognized correctly
         target_fact = (target[:, 1] != self.nofact_token_id).int()
@@ -40,7 +40,6 @@ class BartExtractor(nn.Module):
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('BartExtractor')
         group.add_argument("--lm_loss_factor", type=float, default=0.5, help="Relative weight of lm_loss in combined loss")
-        group.add_argument("--teacher_forcing", default=False, action='store_true', help="Use teacher forcing")
         group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
         group.add_argument("--bart_base", type=str, default='facebook/bart-large-cnn', help="Name of pretrained BART model")
         return parser
@@ -58,7 +57,7 @@ class BartExtractor(nn.Module):
             self.nofact_sequence = self.nofact_sequence[:-1]
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
-    def select_fact_logprobs(self, lm_logprobs):
+    def _select_fact_logprobs(self, lm_logprobs):
         logprob_nofact = lm_logprobs[:, self.nofact_token_id]
         all_tokens_ids = torch.arange(lm_logprobs.shape[1])
         all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
@@ -67,43 +66,45 @@ class BartExtractor(nn.Module):
         return fact_logprobs
     
     def forward(self, input_ids, attention_mask, labels):
-        lm_logits = self.bart(input_ids=input_ids, attention_mask=attention_mask, labels=labels).logits
+        # NOTE: within bart.forward(), a decoder_start_token </s> is inserted (--> label shifted right)
+        output = self.bart(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        lm_logits = output.logits
         lm_logprobs = self.logsoftmax(lm_logits)
-        fact_logprobs = self.select_fact_logprobs(lm_logprobs[:, 1, :])  # Token directly after <bos> token signals whether sequence is a fact
+        fact_logprobs = self._select_fact_logprobs(lm_logprobs[:, 1, :])  # Token directly after <bos> token signals whether sequence is a fact
         return fact_logprobs, lm_logprobs
     
-    def generate(self, input_ids, **kwargs):
-
-        # # determine relevant length of each sequence
-        # relevant = kwargs.get("attention_mask")
-        # if relevant is None:
-        #     relevant = input_ids != self.bart.config.pad_token_id
-        # else:
-        #     del kwargs['attention_mask']
-        # input_lengths = relevant.sum(dim=1)
-
-        # # generate output tokens for earch input sequence individually
-        # gen_out = padded_tensor(
-        #     [
-        #         self.bart.generate(input_sequence[:l].unsqueeze(dim=0), **kwargs).squeeze(dim=0)
-        #         for input_sequence, l in zip(input_ids, input_lengths)
-        #     ],
-        #     pad_value=self.bart.config.pad_token_id
-        # )
+    def _update_generation_args(self, **generation_args):
+        """
+        Override the standard generation args for bart model:
+        - set minimum length to 2
+        - set conditional generation, to ensure <eos> is generated after <nofact>
+        """
+        def allowed(batch_id, sent):
+            if sent[-1] == self.nofact_token_id:
+                return [self.bart.config.eos_token_id]
+            else:
+                return list(range(self.bart.config.vocab_size))
+        
+        generation_args['min_length'] = 2
+        generation_args['prefix_allowed_tokens_fn'] = allowed
+        
+        return generation_args
+    
+    def generate(self, input_ids, **kwargs):       
+        """
+        NOTE: Within generate, first the input is encoded; attention_mask is defined by filtering on token != pad_token
+        A decoder_start_token is generated as first token of the output
+        """
+        kwargs = self._update_generation_args(**kwargs)
         gen_out = self.bart.generate(input_ids, **kwargs)
-        pred_fact = gen_out[:, 2] != self.nofact_token_id
+        normal_token_mask = (gen_out != self.nofact_token_id) * (gen_out!=self.bart.config.bos_token_id) * (gen_out!=self.bart.config.eos_token_id) * (gen_out!=self.bart.config.pad_token_id)
+        pred_fact = torch.any(normal_token_mask, dim=1)
+        # pred_fact = gen_out[:, 2] != self.nofact_token_id
 
         logging.spam("Generate: pred_fact={}".format(pred_fact))
         logging.spam("Generate: gen_out={}".format(gen_out))
 
-        gen_out_cleaned = padded_tensor(
-            [
-                gen if is_fact else self.nofact_sequence
-                for is_fact, gen in zip(pred_fact, gen_out)
-            ],
-            pad_value=self.bart.config.pad_token_id
-        )
-        return gen_out_cleaned
+        return gen_out
 
     def train_step(self, batch, optimizer, criterion, device):
 
@@ -135,7 +136,7 @@ class BartExtractor(nn.Module):
         
         # Classification accuracy
         pred_fact = pred[:, 1] != self.nofact_token_id  # Check for nofact-token, directly after the start-of-sentence
-        label_fact = batch['labels'][:, 1] != self.nofact_token_id
+        label_fact = batch['labels'][:, 1] != self.nofact_token_id # In label, nofact-token would be at position 1, after the <bos>-token
         fact_correct = label_fact.eq(pred_fact)
         fact_acc = fact_correct.sum().item() / batch['labels'].shape[0]
 
@@ -169,7 +170,6 @@ class PrefixBart(BartExtractor):
         group.add_argument("--dec_prefix_size", type=int, default=0, help="Insert prefix in BART decoder")
         group.add_argument("--lm_loss_factor", type=float, default=0.5, help="Relative weight of lm_loss in combined loss")
         group.add_argument("--prefix_aggr", type=str, default="concat", choices=["concat", "max", "avg"], help="How to aggregate prefix hidden states")
-        group.add_argument("--teacher_forcing", default=False, action='store_true', help="Use teacher forcing")
         group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
         return parser
 
@@ -271,52 +271,82 @@ class PrefixBart(BartExtractor):
         return gen_out
 
 if __name__ == "__main__":
+    import argparse
+    import random
     from transformers import AutoTokenizer
     from dataset.msc_summary_turns import MSC_Turns
 
-    logging.set_log_level(logging.SPAM)
-    logging.set_only_message(True)
+    parser = argparse.ArgumentParser(description="Test MSC_Summary", conflict_handler="resolve")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
+    parser.add_argument("--log_interval", type=int, default=10, help="report interval")
+    parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
+    parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
+    parser.add_argument("--load", type=str, default="", help="filename of model to load")
+    parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
+    parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
+    parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
+    parser.add_argument("--savedir", type=str, default="./output/", help="directory for output files")
+
+    parser = MSC_Turns.add_cmdline_args(parser)
+    parser = BartExtractor.add_cmdline_args(parser)
+    args = parser.parse_args()
+
+    # set seed
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    # prepare logging
+    logging.set_log_level("SPAM")
+    logging.info("Unit test {}".format(__file__))
 
     # Settings for test
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
-    sessions = [1]
+    args.sessions = [1]
     subset = 'train'
-    len_context = 2
-    speaker_prefixes = None #["<me>", "<you>"]
-    nofact_token = '' #'<nofact>'
-    add_tokens = None #speaker_prefixes + [nofact_token]
+    args.device="cpu"
+    args.load="trained_bart"
+
+    args.speaker_prefixes = ["<you>", "<me>"]
+    args.nofact_token = '<nofact>'
+    args.add_tokens = args.speaker_prefixes + [args.nofact_token]
     model_class = "bart"
-    lm_loss_factor = 0.5
-    freeze=None
-    enc_prefix_size=0
-    dec_prefix_size=0
-    prefix_aggr="concat"
+    args.lm_loss_factor = 0.5
+    # args.freeze=None
+    # args.enc_prefix_size=0
+    # args.dec_prefix_size=0
+    # args.prefix_aggr="concat"
 
     # Setup
-    tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
-    if add_tokens is not None:
-        num_added_toks = tokenizer.add_tokens(add_tokens)
-    nofact_token_id = tokenizer.convert_tokens_to_ids(nofact_token) if nofact_token != '' else tokenizer.eos_token_id
-    assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(nofact_token)
+    tokenizer = AutoTokenizer.from_pretrained(args.bart_base)
+    if args.add_tokens is not None:
+        num_added_toks = tokenizer.add_tokens(args.add_tokens)
+    nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
+    assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
 
     if model_class == "bart":
-        model = BartExtractor(bart_base="facebook/bart-base", nofact_token_id=nofact_token_id)
+        model = BartExtractor(bart_base=args.bart_base, nofact_token_id=nofact_token_id)
     else:
         model = PrefixBart(
-            bart_base="facebook/bart-base", 
+            bart_base=args.bart_base, 
             nofact_token_id=nofact_token_id, 
-            freeze=freeze, 
-            enc_prefix_size=enc_prefix_size,
-            dec_prefix_size=dec_prefix_size,
-            prefix_aggr=prefix_aggr
+            freeze=args.freeze, 
+            enc_prefix_size=args.enc_prefix_size,
+            dec_prefix_size=args.dec_prefix_size,
+            prefix_aggr=args.prefix_aggr
         )
     model.bart.resize_token_embeddings(len(tokenizer))
-    criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=lm_loss_factor)
+    criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=-100, lm_weight=args.lm_loss_factor)
 
-    MSC_Turns.set(tokenizer=tokenizer, len_context=len_context, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
-    msc_turns = MSC_Turns(basedir=basedir, sessions=sessions, subset=subset)
+    MSC_Turns.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
+    msc_turns = MSC_Turns(basedir=basedir, sessions=args.sessions, subset=subset)
     data = [msc_turns[i] for i in range(10)]
     batch = msc_turns.batchify(data, batch_format=model.batch_format)
+
+    if args.load != "":
+        loadpath = args.checkpoint_dir + args.load
+        logging.info("Loading model from {}".format(loadpath))
+        model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
 
     # Test forward
     fact_logprobs, lm_logprobs = model(batch['input_ids'], batch['attention_mask'], batch['labels'])
@@ -328,15 +358,22 @@ if __name__ == "__main__":
         print('-' * 40)
         print(data[i][0])
         print(data[i][1])
-        print(response[i] if pred_fact[i] else nofact_token)
+        print(response[i] if pred_fact[i] else args.nofact_token)
 
     # Test loss function and valid_step
-    valid_stats = model.valid_step(batch, criterion, device="cpu")
+    valid_stats = model.valid_step(batch, criterion, device=args.device)
     logging.report("valid_stats = {}".format(valid_stats))
 
     # Test generate
     with torch.no_grad():
-        pred_tokens = model.generate(batch['input_ids'], max_new_tokens=20)
+        # pred_tokens = model.generate(batch['input_ids'], max_new_tokens=20)
+        pred_tokens = model.generate(
+            batch['input_ids'].to(args.device), 
+            # min_length=2,
+            max_new_tokens=20, 
+            # num_beams=1,
+            # do_sample=False,
+        )
     pred_persona = tokenizer.batch_decode(pred_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
     print("GENERATE")
