@@ -17,6 +17,7 @@ import random
 import itertools
 from collections import Counter
 
+from utils.general import prettydict
 import utils.logging as logging
 from utils.plotting import plot_heatmap
 
@@ -227,19 +228,18 @@ class MSC_Summaries(Dataset):
 
         return utterances, self.summaries[i]
 
-    @classmethod
-    def item_measurements(cls, item):
+    def item_measurements(self, i):
         stats = {
-            "inputwords": len(' '.join(item[0]).split()), 
-            "labelwords": len(item[1].split()), 
-            "labelsentences": len(item[1].split('\n'))
+            "inputwords": len(' '.join(self[i][0]).split()), 
+            "labelwords": len(self[i][1].split()), 
+            "labelsentences": len(self[i][1].split('\n'))
         }       
         return stats
 
     def measurements(self):
 
-        num_samples = self.__len__()
-        allitem_measurements = [self.item_measurements(self[i]) for i in range(len(self))]
+        num_samples = len(self)
+        allitem_measurements = [self.item_measurements(i) for i in range(len(self))]
         inputwords_per_sample = Counter([m["inputwords"] for m in allitem_measurements])
         labelwords_per_sample = Counter([m["labelwords"] for m in allitem_measurements])
         totalwords_per_sample = Counter([m["inputwords"] + m["labelwords"] for m in allitem_measurements])
@@ -311,7 +311,6 @@ class MSC_Summaries(Dataset):
                 pred_tokens = model.generate(
                     input_ids=encoded_utterances['input_ids'].to(device), 
                     attention_mask=encoded_utterances['attention_mask'].to(device),
-                    min_length=2,
                     max_new_tokens=decoder_max, 
                     num_beams=5,
                     do_sample=True,
@@ -351,7 +350,7 @@ class MSC_Summaries(Dataset):
                 pred_tokens = model.generate(
                     input_ids=encoded_utterances['input_ids'].to(device), 
                     attention_mask=encoded_utterances['attention_mask'].to(device),
-                    min_length=2,
+
                     max_new_tokens=decoder_max, 
                     num_beams=5,
                     do_sample=True,
@@ -418,9 +417,9 @@ if __name__ == "__main__":
         session=args.session, 
         subset="train",         
     )
-    m = MSC_Summaries.item_measurements(train_set[0])
+    m = train_set.item_measurements(0)
     train_measurements = train_set.measurements()
-    logging.report('Measurements for session_{args.session}/train\n' + '\n'.join(["{}:\t{}".format(k, v) for k, v in train_measurements.items()]))
+    logging.report(prettydict(train_measurements, title=f"Measurements for session_{args.session}/train"))
 
     msc_summaries = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
