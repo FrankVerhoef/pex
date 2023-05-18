@@ -123,7 +123,7 @@ def evaluate(model, testdata, args):
         if args.device == 'mps':
             args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
     elif args.task == "dialog":
         if args.device == 'mps':
             args.device = 'cpu'

@@ -98,20 +98,19 @@ class MSC_Turns(Dataset):
         return history, self.personas[i]
     
     def corpus(self):
-        return [' '.join([*self.__getitem__(i)]) for i in range(len(self.turns))]
+        return [' '.join([*self[i]]) for i in range(len(self.turns))]
 
-    @classmethod
-    def item_measurements(cls, item):
+    def item_measurements(self, i):
         stats = {
-            "inputwords": len(item[0].split()), 
-            "labelwords": len(item[1].split()), 
+            "inputwords": len(self[i][0].split()), 
+            "labelwords": len(self[i][1].split()), 
         }       
         return stats
 
     def measurements(self):
 
-        num_samples = self.__len__()
-        allitem_measurements = [self.item_measurements(self.__getitem__(i)) for i in range(self.__len__())]
+        num_samples = len(self)
+        allitem_measurements = [self.item_measurements(i) for i in range(len(self))]
         inputwords_per_sample = Counter([m["inputwords"] for m in allitem_measurements])
         labelwords_per_sample = Counter([m["labelwords"] for m in allitem_measurements])
         totalwords_per_sample = Counter([m["inputwords"] + m["labelwords"] for m in allitem_measurements])
@@ -172,15 +171,14 @@ class MSC_Turns(Dataset):
         return encoded
 
 
-    def evaluate(self, model, device="cpu", decoder_max=20, print_max=20, log_interval=100):
+    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
 
-        def print_predictions(text_in, text_out):
-
-            x, y = text_in
-            print('context:    ', x)
-            print('target:     ', y)
-            print('prediction: ', text_out)
-            print('-' * 40)
+        def print_predictions(data, predictions):
+            for (x, y), p in zip(data, predictions):
+                print('context:    ', x)
+                print('target:     ', y)
+                print('prediction: ', p)
+                print('-' * 40)
 
         model = model.to(device)
         model.eval()
@@ -188,11 +186,11 @@ class MSC_Turns(Dataset):
         pred_personas = []
         target_facts = []
         pred_facts = []
+        interval_counter = 0
 
-        for i in range(self.__len__()):
-
-            target_persona = self.__getitem__(i)[1]
-            batch = self.batchify([self.__getitem__(i)], with_labels=False, batch_format=model.batch_format)  # Batch with one sample
+        for start_index in range(0, len(self), batch_size):
+            data = [self[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
+            batch = self.batchify(data, with_labels=False, batch_format=model.batch_format)
 
             with torch.no_grad():
                 if model.batch_format == "huggingface":
@@ -201,32 +199,28 @@ class MSC_Turns(Dataset):
                         max_new_tokens=decoder_max, 
                         num_beams=1,
                         do_sample=False,
-                    )[0]
-                    pred_fact = pred_tokens[2] != model.nofact_token_id
+                    )
+                    pred_fact = model.fact_mask(pred_tokens).any(dim=1)
 
                 elif model.batch_format == "padded_sequences":
-                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)[0]              
-                    pred_fact = pred_tokens[0] != model.nofact_token_id
+                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)        
+                    pred_fact = pred_tokens[:, 0] != model.nofact_token_id
 
-            if pred_fact:
-                pred_persona = self.tokenizer.decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
-            else:
-                pred_persona = self.nofact_token
+            pred_persona = self.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
+
+            pred_personas.extend(pred_persona)
+            target_personas.extend([t for _, t in data])
+            pred_facts.extend(pred_fact.int().tolist())
+            target_facts.extend([int(t != self.nofact_token) for _, t in data])
 
             if print_max > 0:
-                print_predictions(self.__getitem__(i), pred_persona)
-                print_max -= 1
+                print_predictions(data, pred_persona)
+                print_max -= len(data)
 
-            if target_persona != self.nofact_token:
-                target_facts.append(1)
-                target_personas.append(target_persona)
-                pred_personas.append(pred_persona)
-            else:
-                target_facts.append(0)
-            pred_facts.append(pred_fact.int().item())
-
-            if (i + 1) % log_interval == 0:
-                logging.verbose(f"Evaluated {i + 1}/{self.__len__()} samples")
+            interval_counter += len(data)
+            if interval_counter >= log_interval:
+                logging.verbose(f"Evaluated {len(pred_facts)}/{len(self)} samples")
+                interval_counter =- log_interval
 
         target_facts = torch.tensor(target_facts)
         pred_facts =  torch.tensor(pred_facts)
@@ -252,7 +246,7 @@ class MSC_Turns(Dataset):
 
     @classmethod
     def predict_from_utterances(cls, utterances=[], model=None, device="cpu", decoder_max=20):
-        assert model is not None, "No model specefied to use for predictions"
+        assert model is not None, "No model specified to use for predictions"
         assert len(utterances) % 2 == 0, f"Received {len(utterances)} utterances, this should be an even number"
         dataset = cls()
         if len(utterances) > 0:
@@ -264,15 +258,15 @@ class MSC_Turns(Dataset):
 
 
     @classmethod
-    def predict(cls, data, model, device="cpu", decoder_max=20):
+    def predict(cls, input, model, device="cpu", decoder_max=20, batch_size=1):
 
         model = model.to(device)
         model.eval()
         pred_personas = []
 
-        for item in data:
-
-            batch = cls.batchify([item], with_labels=False, batch_format=model.batch_format)  # Batch with one sample
+        for start_index in range(0, len(input), batch_size):
+            data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
+            batch = cls.batchify(data, with_labels=False, batch_format=model.batch_format)
 
             with torch.no_grad():
                 if model.batch_format == "huggingface":
@@ -281,16 +275,13 @@ class MSC_Turns(Dataset):
                         max_new_tokens=decoder_max, 
                         num_beams=1,
                         do_sample=False,
-                    )[0]
-                    pred_fact = pred_tokens[2] != model.nofact_token_id
+                    )
 
                 elif model.batch_format == "padded_sequences":
-                    pred_tokens = model.generate(batch[0].to(device), batch[1], max=decoder_max)[0]              
-                    pred_fact = pred_tokens[0] != model.nofact_token_id
+                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)        
 
-            if pred_fact:
-                pred_persona = cls.tokenizer.decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
-                pred_personas.append(pred_persona)
+            pred_persona = cls.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
+            pred_personas.extend([p for p in pred_persona if p != cls.nofact_token])
 
         return pred_personas
 
@@ -326,7 +317,7 @@ if __name__ == "__main__":
         subset=subset
     )
 
-    m = MSC_Turns.item_measurements(msc_turns[0])
+    m = msc_turns.item_measurements(0)
     print(prettydict(msc_turns.measurements(), title="Measurements"))
 
     data = [msc_turns[i] for i in range(10)]
