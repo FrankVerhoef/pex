@@ -14,7 +14,7 @@ from filelock import FileLock
 import json
 import argparse
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, PretrainedConfig
+from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
@@ -27,6 +27,7 @@ from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
+from metrics.terp import TerpMetric
 from run.tune import do_grid_search
 from ray.air import session
 from utils.general import savename, prettydict, dict_with_key_prefix
@@ -120,6 +121,7 @@ def evaluate(model, testdata, args):
     if args.task == "classify":
         eval_kwargs = {'device': args.device}
     elif args.task == "generate":
+        TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
         if args.device == 'mps':
             args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
@@ -487,6 +489,7 @@ def get_parser():
     if args.task == "classify":
         parser = MSC_Turn_Facts.add_cmdline_args(parser)
     elif args.task == "generate":
+        parser = TerpMetric.add_cmdline_args(parser)
         parser = MSC_Turns.add_cmdline_args(parser)
     elif args.task == "dialog": 
         if args.model == "kg_gen":

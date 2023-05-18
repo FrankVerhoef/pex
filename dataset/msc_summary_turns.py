@@ -9,6 +9,7 @@ from torchmetrics.functional.classification import binary_confusion_matrix, bina
 from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
 from torchmetrics.functional.text.bert import bert_score
+from metrics.terp import TerpMetric
 
 import json
 import random
@@ -222,24 +223,8 @@ class MSC_Turns(Dataset):
                 logging.verbose(f"Evaluated {len(pred_facts)}/{len(self)} samples")
                 interval_counter =- log_interval
 
-        target_facts = torch.tensor(target_facts)
-        pred_facts =  torch.tensor(pred_facts)
-        bleu_2 = bleu_score(pred_personas, target_personas, n_gram=2, smooth=True).item()
-        bleu_4 = bleu_score(pred_personas, target_personas, n_gram=4, smooth=True).item()
-        rouge_scores = rouge_score(pred_personas, target_personas, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
-        bert_scores = bert_score(pred_personas, target_personas, model_name_or_path='bert-base-uncased')
-
-        stats = {
-            "acc": binary_accuracy(pred_facts, target_facts).item(),
-            "f1": binary_f1_score(pred_facts, target_facts).item(),
-            "precision": binary_precision(pred_facts, target_facts).item(),
-            "recall": binary_recall(pred_facts, target_facts).item(),
-            "cm": binary_confusion_matrix(pred_facts, target_facts).tolist(),
-            "bleu_2": bleu_2, 
-            "bleu_4": bleu_4, 
-            "bert_f1": sum(bert_scores['f1']) / len(bert_scores['f1']),
-        }
-        stats.update({k: v.item() for k, v in rouge_scores.items()})
+        stats = calc_stats_classification(pred_facts, target_facts)
+        stats.update(calc_stats_generation(pred_personas, target_personas, filter_fn=lambda x:x != self.nofact_token))
 
         return stats
 
@@ -284,6 +269,48 @@ class MSC_Turns(Dataset):
             pred_personas.extend([p for p in pred_persona if p != cls.nofact_token])
 
         return pred_personas
+
+
+def calc_stats_classification(pred_facts, target_facts):
+
+    # Classification stats    
+    target_facts = torch.tensor(target_facts)
+    pred_facts =  torch.tensor(pred_facts)
+    stats = {
+        "acc": binary_accuracy(pred_facts, target_facts).item(),
+        "f1": binary_f1_score(pred_facts, target_facts).item(),
+        "precision": binary_precision(pred_facts, target_facts).item(),
+        "recall": binary_recall(pred_facts, target_facts).item(),
+        "cm": binary_confusion_matrix(pred_facts, target_facts).tolist()
+    }
+    return stats
+
+def calc_stats_generation(pred_personas, target_personas, filter_fn):
+
+    # Text generation stats; only on samples where both target and prediction comply with the filter_fn
+    preds_withfact, targets_withfact = [], []
+    for p, t in zip(pred_personas, target_personas):
+        if filter_fn(p) and filter_fn(t):
+            preds_withfact.append(p)
+            targets_withfact.append(t)
+
+    bleu_2 = bleu_score(preds_withfact, targets_withfact, n_gram=2, smooth=True).item()
+    bleu_4 = bleu_score(preds_withfact, targets_withfact, n_gram=4, smooth=True).item()
+    rouge_scores = rouge_score(preds_withfact, targets_withfact, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
+    bert_scores = bert_score(preds_withfact, targets_withfact, model_name_or_path='bert-base-uncased')
+    terp_metric = TerpMetric()
+    terp_metric.update(0, preds_withfact, targets_withfact)
+    terp_scores = terp_metric.compute()[0]
+
+    stats = {
+        "bleu_2": bleu_2, 
+        "bleu_4": bleu_4, 
+        "bert_f1": sum(bert_scores['f1']) / max(len(bert_scores['f1']), 1),
+        "terp": terp_scores.mean().item() if torch.numel(terp_scores) != 0 else 0
+    }
+    stats.update({k: v.item() for k, v in rouge_scores.items()})
+
+    return stats
 
 if __name__ == "__main__":
 
