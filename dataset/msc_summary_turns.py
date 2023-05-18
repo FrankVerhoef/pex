@@ -14,6 +14,7 @@ import json
 import random
 from collections import Counter
 
+from utils.general import prettydict
 import utils.logging as logging
 
 
@@ -139,8 +140,9 @@ class MSC_Turns(Dataset):
         """
         Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
         """
-        assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
+        assert cls.tokenizer is not None, "Missing tokenizer to batchify dataset"
         assert batch_format is not None, f"batch_format should be specified"
+        assert batch_format in ["huggingface", "padded_sequences"], f"Unknown batch_format '{batch_format}' for dataset {cls.__class__.__name__}"
 
         history_batch, persona_batch = zip(*data)
 
@@ -196,7 +198,6 @@ class MSC_Turns(Dataset):
                 if model.batch_format == "huggingface":
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
-                        min_length=2,
                         max_new_tokens=decoder_max, 
                         num_beams=1,
                         do_sample=False,
@@ -235,7 +236,7 @@ class MSC_Turns(Dataset):
         bert_scores = bert_score(pred_personas, target_personas, model_name_or_path='bert-base-uncased')
 
         stats = {
-            "test_acc": binary_accuracy(pred_facts, target_facts).item(),
+            "acc": binary_accuracy(pred_facts, target_facts).item(),
             "f1": binary_f1_score(pred_facts, target_facts).item(),
             "precision": binary_precision(pred_facts, target_facts).item(),
             "recall": binary_recall(pred_facts, target_facts).item(),
@@ -277,7 +278,6 @@ class MSC_Turns(Dataset):
                 if model.batch_format == "huggingface":
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
-                        min_length=2,
                         max_new_tokens=decoder_max, 
                         num_beams=1,
                         do_sample=False,
@@ -304,9 +304,9 @@ if __name__ == "__main__":
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
     sessions = [2]
     subset = 'train'
-    speaker_prefixes = None #["<me>", "<you>"]
-    nofact_token = '' #'<nofact>'
-    add_tokens = None #speaker_prefixes + [nofact_token]
+    speaker_prefixes = ["<you>", "<me>"]
+    nofact_token = '<nofact>'
+    add_tokens = speaker_prefixes + [nofact_token]
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
@@ -327,8 +327,7 @@ if __name__ == "__main__":
     )
 
     m = MSC_Turns.item_measurements(msc_turns[0])
-    for k,v in msc_turns.measurements().items():
-        print(k, v)
+    print(prettydict(msc_turns.measurements(), title="Measurements"))
 
     data = [msc_turns[i] for i in range(10)]
 
