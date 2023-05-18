@@ -22,6 +22,9 @@ class TerpMetric(Metric):
     ref_file = "ref.trans"
     hyp_file = "hyp.trans"
     terpscores_file = ".seg.scr"
+    terp_dir = None
+    java_home = None
+    tmp_dir = None
 
     @classmethod
     def set(cls, terp_dir, java_home, tmp_dir):
@@ -51,6 +54,11 @@ class TerpMetric(Metric):
 
     def compute(self):
         
+        # Check if metric has been configured correctly
+        assert self.terp_dir is not None
+        assert self.tmp_dir is not None
+        assert self.java_home is not None
+
         # Define paths to input and output files
         ref_path = self.tmp_dir + self.ref_file
         hyp_path = self.tmp_dir + self.hyp_file
