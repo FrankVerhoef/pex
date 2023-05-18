@@ -90,6 +90,13 @@ class BartExtractor(nn.Module):
         
         return generation_args
     
+    def fact_mask(self, output_ids):
+        mask = output_ids != self.nofact_token_id
+        mask *= output_ids !=self.bart.config.bos_token_id
+        mask *= output_ids !=self.bart.config.eos_token_id
+        mask *= output_ids !=self.bart.config.pad_token_id
+        return mask
+
     def generate(self, input_ids, **kwargs):       
         """
         NOTE: Within generate, first the input is encoded; attention_mask is defined by filtering on token != pad_token
@@ -97,8 +104,7 @@ class BartExtractor(nn.Module):
         """
         kwargs = self._update_generation_args(**kwargs)
         gen_out = self.bart.generate(input_ids, **kwargs)
-        normal_token_mask = (gen_out != self.nofact_token_id) * (gen_out!=self.bart.config.bos_token_id) * (gen_out!=self.bart.config.eos_token_id) * (gen_out!=self.bart.config.pad_token_id)
-        pred_fact = torch.any(normal_token_mask, dim=1)
+        pred_fact = torch.any(self.fact_mask(gen_out), dim=1)
         # pred_fact = gen_out[:, 2] != self.nofact_token_id
 
         logging.spam("Generate: pred_fact={}".format(pred_fact))
