@@ -52,9 +52,6 @@ class BartExtractor(nn.Module):
             self.bart = BartForConditionalGeneration(config=BartConfig())
         else:
             self.bart = BartForConditionalGeneration.from_pretrained(bart_base)
-        self.nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id, self.bart.config.eos_token_id])
-        if self.nofact_token_id == self.bart.config.eos_token_id:
-            self.nofact_sequence = self.nofact_sequence[:-1]
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
     def _select_fact_logprobs(self, lm_logprobs):
@@ -81,7 +78,7 @@ class BartExtractor(nn.Module):
         """
         def allowed(batch_id, sent):
             if sent[-1] == self.nofact_token_id:
-                return [self.bart.config.eos_token_id]
+                return [self.bart.config.eos_token_id, self.bart.config.pad_token_id] # NOTE: pad token added here, to prevent crash n beamsample
             else:
                 return list(range(self.bart.config.vocab_size))
         
@@ -193,7 +190,9 @@ class PrefixBart(BartExtractor):
             self.dec_prefix = nn.Embedding(self.dec_prefix_size, self.bart.config.d_model)
         classifier_input_size = self.bart.config.d_model * (enc_prefix_size + 1 if prefix_aggr == "concat" else 1)
         self.classifier = nn.Linear(in_features=classifier_input_size, out_features=2)
-
+        self.nofact_sequence = torch.tensor([self.bart.config.decoder_start_token_id, self.bart.config.bos_token_id, self.nofact_token_id, self.bart.config.eos_token_id])
+        if self.nofact_token_id == self.bart.config.eos_token_id:
+            self.nofact_sequence = self.nofact_sequence[:-1]
         if freeze is None:
             modules = []
         else:
