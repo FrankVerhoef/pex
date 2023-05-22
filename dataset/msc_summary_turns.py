@@ -25,9 +25,11 @@ class MSC_Turns(Dataset):
     len_context = 2
     speaker_prefixes = None
     nofact_token = None
+    OTHER=0
+    SELF=1
     
     @classmethod
-    def set(cls, tokenizer, len_context, speaker_prefixes, nofact_token):
+    def set(cls, tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token=''):
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
         assert len_context > 1, f"len_context '{len_context}' is invalid; should be at least 1"
         cls.tokenizer = tokenizer
@@ -62,14 +64,14 @@ class MSC_Turns(Dataset):
         self.turns, self.personas = self.transform(dialogues, max_samples)
 
     def transform(self, dialogues, max_samples):
-        turns, personas = [], []
+        turns, personas, ids = [], [], []
         
-        for d in dialogues:
+        for dialog_id, d in enumerate(dialogues):
             for i in range(len(d["dialog"]) - self.len_context + 1):
                 
                 turn = []
                 for j in range(self.len_context):
-                    p = (self.len_context + 1 - j) % 2
+                    p = self.OTHER if (self.len_context - 1 - j) % 2 == 0  else self.SELF
                     t = d["dialog"][i+j].get("text","")
                     turn.append((p, t))
                 turns.append(turn)
@@ -79,12 +81,15 @@ class MSC_Turns(Dataset):
                 else:
                     persona = self.nofact_token
                 personas.append(persona)
+                ids.append({"dialog_id": dialog_id, "turn_id": i})
         
         if max_samples is not None:
             if max_samples < len(turns):
                 indices = random.sample(range(len(turns)), max_samples)
                 turns = [turns[i] for i in indices]
                 personas = [personas[i] for i in indices]
+                ids = [ids[i] for i in indices]
+        self.indices = ids
 
         return turns, personas
         
@@ -93,9 +98,9 @@ class MSC_Turns(Dataset):
     
     def __getitem__(self, i):
         if self.speaker_prefixes is not None:
-            history = ' '.join([self.speaker_prefixes[p] + t for p, t in self.turns[i]])
+            history = '\n'.join([self.speaker_prefixes[p] + t for p, t in self.turns[i]])
         else:
-            history = ' '.join([t for p, t in self.turns[i]])
+            history = '\n'.join([t for p, t in self.turns[i]])
         return history, self.personas[i]
     
     def corpus(self):
@@ -103,6 +108,8 @@ class MSC_Turns(Dataset):
 
     def item_measurements(self, i):
         stats = {
+            "dialog_id": self.indices[i]["dialog_id"],
+            "turn_id": self.indices[i]["turn_id"],
             "inputwords": len(self[i][0].split()), 
             "labelwords": len(self[i][1].split()), 
         }       
@@ -121,6 +128,7 @@ class MSC_Turns(Dataset):
         totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
 
         all_measurements = {
+            "allitem_measurements": allitem_measurements,
             "num_samples": num_samples,
             "inputwords": inputwords,
             "labelwords": labelwords,
@@ -336,7 +344,7 @@ if __name__ == "__main__":
     if add_tokens is not None:
         tokenizer.add_tokens(add_tokens)
 
-    MSC_Turns.set(tokenizer=tokenizer, len_context=2, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    MSC_Turns.set(tokenizer=tokenizer, len_context=3, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
 
     msc_turns = MSC_Turns(
         basedir=basedir, 
@@ -345,7 +353,9 @@ if __name__ == "__main__":
     )
 
     m = msc_turns.item_measurements(0)
-    print(prettydict(msc_turns.measurements(), title="Measurements"))
+    m = msc_turns.measurements()
+    del m["allitem_measurements"]
+    print(prettydict(m, title="Measurements"))
 
     data = [msc_turns[i] for i in range(10)]
 
