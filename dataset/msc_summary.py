@@ -149,13 +149,18 @@ def plot_heatmaps(results_dict, session, subset, savedir):
 class MSC_Summaries(Dataset):
 
     tokenizer = None
+    len_context = 2
     speaker_prefixes = None
     nofact_token = None
+    OTHER = 0
+    SELF = 1
         
     @classmethod
-    def set(cls, tokenizer, speaker_prefixes, nofact_token):
+    def set(cls, tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token=''):
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
+        assert len_context == 2, f"Invalid setting for len_context '{len_context}'; currently only works with len_context=2"
         cls.tokenizer = tokenizer
+        cls.len_context = len_context
         cls.speaker_prefixes = speaker_prefixes
         cls.nofact_token = nofact_token
 
@@ -164,7 +169,8 @@ class MSC_Summaries(Dataset):
         group = parser.add_argument_group('MSC_Summary')
         group.add_argument("--speaker_prefixes", default=None, nargs=2, help="prefixes for 'self' and 'other'")
         group.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
-        group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")   
+        group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
+        group.add_argument("--len_context", default=2, type=int, help="Number of utterances to include in context")
         group.add_argument("--session", default=1, type=int, help="MSC session to include in dataset")
         return parser
 
@@ -183,18 +189,51 @@ class MSC_Summaries(Dataset):
         self.turns, self.summaries = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
+        """
+        Format of a dialogue: Dict
+            - "dialog": List with Dicts, each Dict is an utterance
+                - "id": String
+                - "text": String
+                - "convai_id": String
+                - "persona_text": String
+                - "problem_data": Dict; 
+                    NOTE: In all utterances, except the last in the list, this contains element "persona". In last utterance, the dict contains:
+                    - "persona": String
+                    - "prompt_time": String with indication of duration
+                    - "task_duration": Float
+                    - "followup": String
+                    - "newfacts": String
+                    - "task_time": String with time
+                    - "hit_id": String with alphanumeric characters
+                    - "worker_id": String with alphanumeric characters
+                    - "initial_data_id": String with id
+                - "agg_persona_list": List with Strings
+            - "followup": String (Sentence)
+            - "newfact": String (Sentence)
+            - "initial_data_id": String (id)
+            - "init_personachat": Dict with the initial persona sentences
+                - "init_personas": List with two lists with Strings
+                    - 0: persona sentences Speaker 1
+                    - 1: persona sentances Speaker 2
+        """
         turns, summaries = [], []
         
         for d in dialogues:
-            start_index = len(d["dialog"]) % 2
+            # Start with utterance that is len_context from the last utterance
+            start_index = len(d["dialog"]) % self.len_context
             utterances = []
-            for i in range(start_index, len(d["dialog"]), 2):
-                t = d["dialog"][i].get("text","")
-                utterances.append((d["dialog"][i].get("text",""), d["dialog"][i+1].get("text","")))
 
+            # Collect turns that end with the 'other' speaker (so step size is 2)
+            for i in range(start_index, len(d["dialog"]), 2):
+                # Combine 'len_context' consecutive utterances in a turn, and collect all turns in a list with turns
+                turn = [d["dialog"][i+j].get("text","") for j in range(self.len_context) if i + j < len(d["dialog"])]
+                utterances.append(turn)
             turns.append(utterances)
+
+            # The 'agg_persona_list" in the last utterance is the summary for the whole dialogue
             summaries.append('\n'.join(d['dialog'][-1]['agg_persona_list']))
         
+        # If max_samples is set, and lower than total number of summaries, then take a random sample
         self.indices = list(range(len(dialogues)))
         if max_samples is not None:
             if max_samples < len(turns):
@@ -217,7 +256,7 @@ class MSC_Summaries(Dataset):
 
         if self.speaker_prefixes is not None:
             utterances = [
-                self.speaker_prefixes[0] + ' ' + t[0] + ' ' + self.speaker_prefixes[1] + ' ' + t[1]
+                self.speaker_prefixes[self.SELF] + ' ' + t[0] + ' ' + self.speaker_prefixes[self.OTHER] + ' ' + t[1]
                 for t in self.turns[i]
             ]
         else:
@@ -230,6 +269,8 @@ class MSC_Summaries(Dataset):
 
     def item_measurements(self, i):
         stats = {
+            "dialog_id": self.indices[i],
+            "inputsentences": len(self[i][0]),
             "inputwords": len(' '.join(self[i][0]).split()), 
             "labelwords": len(self[i][1].split()), 
             "labelsentences": len(self[i][1].split('\n'))
@@ -243,18 +284,22 @@ class MSC_Summaries(Dataset):
         inputwords_per_sample = Counter([m["inputwords"] for m in allitem_measurements])
         labelwords_per_sample = Counter([m["labelwords"] for m in allitem_measurements])
         totalwords_per_sample = Counter([m["inputwords"] + m["labelwords"] for m in allitem_measurements])
+        inputsentences_per_sample = Counter([m["inputsentences"] for m in allitem_measurements])
         labelsentences_per_sample = Counter([m["labelsentences"] for m in allitem_measurements])
 
         inputwords = sum([length * freq for length, freq in inputwords_per_sample.items()])
         labelwords = sum([length * freq for length, freq in labelwords_per_sample.items()])
         totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
+        inputsentences = sum([length * freq for length, freq in inputsentences_per_sample.items()])
         labelsentences = sum([length * freq for length, freq in labelsentences_per_sample.items()])
 
         all_measurements = {
+            "allitem_measurements": allitem_measurements,
             "num_samples": num_samples,
             "inputwords": inputwords,
             "labelwords": labelwords,
             "totalwords": totalwords,
+            "inputsentences": inputsentences,
             "labelsentences": labelsentences,
             "avg_inputwords": inputwords / num_samples,
             "avg_labelwords": labelwords / num_samples,
@@ -350,7 +395,6 @@ class MSC_Summaries(Dataset):
                 pred_tokens = model.generate(
                     input_ids=encoded_utterances['input_ids'].to(device), 
                     attention_mask=encoded_utterances['attention_mask'].to(device),
-
                     max_new_tokens=decoder_max, 
                     num_beams=5,
                     do_sample=True,
