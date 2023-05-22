@@ -14,12 +14,15 @@ from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import json
 import random
+import textwrap
 from collections import Counter
 
 from transformers import GenerationConfig
 from dataset.convai2 import ConvAI2
 
 import utils.logging as logging
+from utils.general import prettydict
+from utils.plotting import save_dialogue_fig
 
 class MSC_Metrics:
 
@@ -75,12 +78,18 @@ class MSC_Session(Dataset):
     
     tokenizer = None
     speaker_prefixes = None
+    sessionbreak_token = None
     
     @classmethod
-    def set(cls, tokenizer, speaker_prefixes):
+    def set(cls, tokenizer=None, speaker_prefixes=None, sessionbreak_token=None):
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
         cls.tokenizer = tokenizer
-        cls.speaker_prefixes = {"you": speaker_prefixes[0], "me": speaker_prefixes[1]}
+        cls.sessionbreak_token = sessionbreak_token
+        if speaker_prefixes is not None:
+            cls.speaker_prefixes = {"you": speaker_prefixes[0], "me": speaker_prefixes[1]}
+            if sessionbreak_token is not None:
+                cls.speaker_prefixes["sessionbreak"] = sessionbreak_token
+
 
     @classmethod
     def add_cmdline_args(cls, parser):
@@ -89,6 +98,7 @@ class MSC_Session(Dataset):
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--include_persona", default=False, action='store_true')
         group.add_argument("--include_history", default=False, action='store_true')
+        group.add_argument("--sessionbreak_token", default=None, action='store_true')
         group.add_argument("--session", default=2, type=int, help="MSC session to include in dataset")
         group.add_argument("--augmented", default=False, action='store_true', help='add all shorter versions of the dialogue to training set')
         group.add_argument("--persona_selector", type=str, default=None, help="Model to select relevant persona sentences")
@@ -112,7 +122,7 @@ class MSC_Session(Dataset):
         self.dialogues = []
         if str(session).split(":")[0] == 'preprocessed':
             filepath = basedir + session
-            self.history, self.next_utterance = self.load_preprocessed(filepath)
+            self.indices, self.history, self.next_utterance = self.load_preprocessed(filepath)
         else:
             if str(session)[0] == '1':
                 version = str(session).split('-')[1:]
@@ -142,9 +152,10 @@ class MSC_Session(Dataset):
     def load_preprocessed(self, filepath):
         logging.info("Loading preprocessed dataset from: " + filepath)
         with open(filepath, 'r') as f:
+            all_indices = json.loads(f.readline())
             all_history = json.loads(f.readline())
             all_next_utterance = json.loads(f.readline())
-        return all_history, all_next_utterance
+        return all_indices, all_history, all_next_utterance
 
     def save_preprocessed(self):
         filepath = self.basedir + "preprocessed:" + f"session_{self.session}_{self.subset}"
@@ -153,19 +164,22 @@ class MSC_Session(Dataset):
         filepath += "_{}history".format("with" if self.include_history else "no")
         logging.info("Saving preprocessed dataset to: " + filepath)
         with open(filepath, "w") as f:
+            f.write(json.dumps(self.indices) + '\n')
             f.write(json.dumps(self.history) + '\n')
             f.write(json.dumps(self.next_utterance) + '\n') 
 
     def transform_dialogues(self, max_samples):
-        all_history, all_next_utterance = [], []
+        all_history, all_next_utterance, all_indices = [], [], []
 
-        selected_dialogues = self.dialogues 
+        selected_dialogues = self.dialogues
+        selected_dialogue_ids = list(range(len(self.dialogues)))
         if max_samples is not None:
             if max_samples < len(selected_dialogues):
-                indices = random.sample(range(len(selected_dialogues)), max_samples)
-                selected_dialogues = [selected_dialogues[i] for i in indices]
+                selected_dialogue_ids = random.sample(range(len(selected_dialogues)), max_samples)
+                selected_dialogues = [selected_dialogues[i] for i in selected_dialogue_ids]
 
-        for d in selected_dialogues:
+        for dialog_nr, d in enumerate(selected_dialogues):
+            dialog_id = selected_dialogue_ids[dialog_nr]
             turns = d.get("dialog", [])
             personas = d.get("personas", None)  # The persona sentences ('facts') that were infered from the dialogue
             init_personas = d.get("init_personas", None)  # The initial persona sentences from ConvAI2 dataset
@@ -181,6 +195,8 @@ class MSC_Session(Dataset):
                             text = prev_d['dialog'][i].get("text", "")
                             speaker = "Speaker 1" if i % 2 == 0 else "Speaker 2"
                             previous_utterances.append((speaker, text))
+                        if self.sessionbreak_token is not None:
+                            previous_utterances.append(("Nobody", str(prev_d['time_num']) + ' ' + prev_d['time_unit']))
 
             if self.include_persona:
 
@@ -208,43 +224,64 @@ class MSC_Session(Dataset):
             if not self.include_history: 
                 previous_utterances = []
 
+            # Mark start of dialogue with <sessionbreak> after persona sentences, if token is provided
+            dialogue_start = [] if self.sessionbreak_token is None else [("Nobody", "dialogue start")]
             current_utterances = [("Speaker 1" if i % 2 == 0 else "Speaker 2", turns[i]["text"]) for i in range(len(turns))]
 
             start_range = 0 if self.augmented else max(len(turns) - 1, 0)
-            for len_window in range(start_range, len(turns)):
-                lastspeaker = "Speaker 2" if len_window < 1 else current_utterances[len_window - 1][0]
-                nextspeaker = "Speaker 1" if lastspeaker == "Speaker 2" else "Speaker 2"
-                history = self_info[nextspeaker] + other_info[lastspeaker] + previous_utterances + current_utterances[:len_window]
+            for len_history in range(start_range, len(turns)):
+                nextspeaker = current_utterances[len_history][0]
+                lastspeaker = "Speaker 1" if nextspeaker == "Speaker 2" else "Speaker 2"
+                history = self_info[nextspeaker] + other_info[lastspeaker] + dialogue_start + previous_utterances + current_utterances[:len_history]
                 all_history.append(history)
 
-                next_utterance = current_utterances[len_window][1]
+                next_utterance = current_utterances[len_history]
                 all_next_utterance.append(next_utterance)
+                all_indices.append((dialog_id, len_history))
 
+        self.indices = all_indices
         return all_history, all_next_utterance
         
     def __len__(self):
         return len(self.history)
     
     def __getitem__(self, i):
-        """
-        #TODO: decide whether to include space between persona token and utterance
-        """
-        # other = "Speaker 2" if len(self.history[i]) < 1 else self.history[i][-1][0]
-        # if other == "Speaker 2":
-        if len(self.history[i]) < 1 or self.history[i][-1][0] == "Speaker 2":
-            mapping = {"Speaker 1": "me", "Speaker 2": "you"}
-        else:
-            mapping = {"Speaker 1": "you", "Speaker 2": "me"}
+        # Determine who is the next speaker
+        speakers = [speaker for speaker, _ in self.history[i] if speaker != "Nobody"]
+        mapping = {"Speaker 1": "me", "Speaker 2": "you", "Nobody": "sessionbreak"}
+        if len(speakers) > 0 and speakers[-1] == 'Speaker 1':
+            mapping = {"Speaker 1": "you", "Speaker 2": "me", "Nobody": "sessionbreak"}
 
-
+        # Compose history and next utterance
         if self.speaker_prefixes is not None:
-            history = ' '.join([self.speaker_prefixes[mapping[p]] + t for p, t in self.history[i]])
-            next_utterance = self.next_utterance[i] # Do not include speaker prefix for target
+            history = '\n'.join([self.speaker_prefixes[mapping[p]] + t for p, t in self.history[i]])
+            next_utterance = self.next_utterance[i][1] # Do not include speaker prefix for target
         else:
-            history = ' '.join([t for _, t in self.history[i]])
-            next_utterance = self.next_utterance[i]
+            history = '\n'.join([t for _, t in self.history[i]])
+            next_utterance = self.next_utterance[i][1]
         return history, next_utterance
     
+
+    def save_dialogue_fig(self, i, savedir='./'):
+
+        def split_speaker_and_text(turn):
+            for speaker_id, speaker_prefix in self.speaker_prefixes.items():
+                prefix_len = len(speaker_prefix)
+                if turn[:prefix_len] == speaker_prefix:
+                    return speaker_id, textwrap.wrap(turn[prefix_len:], width=45)
+            assert False, f"None of the speaker prefixes {self.speaker_prefixes.values()} found in turn: {turn}"
+
+        history, next_utterance = self[i]
+        dialog_id = self.indices[i]
+
+        variant = f"{'no' if not self.include_persona else ''}persona" + f"_{'and_' if self.include_history and self.include_persona else 'no'}history"
+        title=f"Dataset: session_{self.session}/{self.subset}, dialog_id: {dialog_id[0]}\nvariant: {variant}"
+
+        turns = history.split('\n')
+        wrapped_turns = [split_speaker_and_text(t) for t in turns + [self.speaker_prefixes["me"] + next_utterance]]
+        savepath = savedir + f"dialogfig_session_{self.session}_{self.subset}_{dialog_id[0]:06d}:{dialog_id[1]:02d}_{variant}" + ".jpg"
+        save_dialogue_fig(wrapped_turns, title, savepath)
+
     def corpus(self):
         corpus = []
         for dialog in self.dialogues:
@@ -256,7 +293,10 @@ class MSC_Session(Dataset):
 
     def item_measurements(self, i):
         stats = {
+            "dialog_id": self.indices[i][0],
+            "len_window": self.indices[i][1],
             "inputwords": len(self[i][0].split()), 
+            "inputsentences": len(self.history[i]),
             "labelwords": len(self[i][1].split()), 
         }       
         return stats
@@ -268,22 +308,25 @@ class MSC_Session(Dataset):
         inputwords_per_sample = Counter([m["inputwords"] for m in allitem_measurements])
         labelwords_per_sample = Counter([m["labelwords"] for m in allitem_measurements])
         totalwords_per_sample = Counter([m["inputwords"] + m["labelwords"] for m in allitem_measurements])
+        inputsentences_per_sample = Counter([m["inputsentences"] for m in allitem_measurements])
 
         inputwords = sum([length * freq for length, freq in inputwords_per_sample.items()])
         labelwords = sum([length * freq for length, freq in labelwords_per_sample.items()])
         totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
 
         all_measurements = {
+            "allitem_measurements": allitem_measurements,
             "num_samples": num_samples,
             "inputwords": inputwords,
             "labelwords": labelwords,
             "totalwords": totalwords,
-            "avg_inputwords": inputwords / num_samples,
-            "avg_labelwords": labelwords / num_samples,
-            "avg_totalwords": totalwords / num_samples,
+            "avg_inputwords": inputwords / max(num_samples, 1),
+            "avg_labelwords": labelwords / max(num_samples, 1),
+            "avg_totalwords": totalwords / max(num_samples, 1),
             "inputwords_per_sample": sorted(inputwords_per_sample.items(), key=lambda x:x[0]),
             "labelwords_per_sample": sorted(labelwords_per_sample.items(), key=lambda x:x[0]),
             "totalwords_per_sample": sorted(totalwords_per_sample.items(), key=lambda x:x[0]),
+            "inputsentences_per_sample": sorted(inputsentences_per_sample.items(), key=lambda x:x[0])
         }
 
         return all_measurements
@@ -496,15 +539,17 @@ if __name__ == "__main__":
     basedir = 'msc/msc_dialogue/'
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     subset = 'train'
-    session = 4 #"preprocessed:session_2_train_withprefixes_selectedpersona_nohistory"
+    session = 2 #"preprocessed:session_2_train_withprefixes_selectedpersona_nohistory"
     if session == 1:
         version = ['both', 'revised']
         session = '-'.join(['1'] + version)
     speaker_prefixes = ['<you>', '<me>']
-    add_tokens = speaker_prefixes
+    sessionbreak_token = '<sessionbreak>'
+    add_tokens = speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
     include_persona = True
     include_history = True
-    augmented = True
+
+    augmented = False
     persona_selector = None #'test_bart'
 
     # Test extraction of dialogue turns and persona sentences
@@ -552,25 +597,29 @@ if __name__ == "__main__":
         )
         persona_selector = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
 
-    MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes)
+    MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, sessionbreak_token=sessionbreak_token)
     msc_turns = MSC_Session(
         basedir=datadir+basedir, 
         session=session, 
         subset=subset, 
-        max_samples=2,
+        max_samples=10,
         include_persona=include_persona,
         include_history=include_history,
         augmented=augmented,
         persona_selector=persona_selector
     )
     
-    for k,v in msc_turns.measurements().items():
-        print(k, v)
+    m = msc_turns.item_measurements(0)
+    m = msc_turns.measurements()
+    del m["allitem_measurements"]
+    print(prettydict(m, title="Measurements"))
 
     for sentence in msc_turns.corpus()[10:30]:
         logging.verbose(sentence)
     logging.verbose('-'*40)
 
+    for i in range(10):
+        msc_turns.save_dialogue_fig(i, './output/')
 
     data = [msc_turns[i] for i in range(10)]
 

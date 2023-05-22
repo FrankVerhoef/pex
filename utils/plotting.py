@@ -208,11 +208,76 @@ def plot_heatmap(scores, threshold, criterion, targets, predictions, title):
     fig.tight_layout()
     return im_heatmap
 
-# matches = torch.rand((4,6))
-# targets = ["A" * 35, "b"*20, 'c' * 40, 'd'* 15]
-# predictions = [str(i) * 25 for i in range(6)]
-# threshold = 0.8
-# criterion = lambda x, threshold: x >= threshold
-# im = plot_heatmap(matches, threshold, criterion, targets, predictions, title="this is a title")
-# plt.show()
-# im.figure.savefig("test.jpg")
+##
+##  Plotting a dialogue
+##
+
+# Constants for the vertical space per line and turn. Shloud be adjusted depending on fontstyle
+PER_LINE = 0.22 # inch
+PER_TURN = 0.15 # inch
+
+def save_dialogue_fig(wrapped_turns, title, savepath):
+
+    # Setup figure
+    total_lines = sum([len(t[1]) for t in wrapped_turns])
+    fig_height = 0.5 + len(wrapped_turns) * PER_TURN + total_lines * PER_LINE
+    fig, ax = plt.subplots(figsize=(6, fig_height))
+    fig.patch.set_facecolor('ghostwhite')
+
+    # Determine triangle coordinates based on figure size
+    triangle = np.array([[0.02, -0.05/fig_height], [0.05, -0.25/fig_height], [0.12, -0.25/fig_height]])
+
+    ypos = 0.2 / fig_height 
+    for i, (speaker, wrapped_turn) in enumerate(wrapped_turns):
+
+        # Set alignment alternating left or right
+        alignment = {"you": 'left', "me": 'right', "sessionbreak": 'center'}[speaker]
+        xpos = {"you": 0.05, "me": 0.95, "sessionbreak": 0.5}[speaker]
+        bbox_style = dict(
+            boxstyle="round", 
+            fc={"you": 'antiquewhite', "me": 'antiquewhite', "sessionbreak": 'lightsteelblue'}[speaker], 
+            ec='tab:blue'
+        )
+
+        # Different style for last utterance
+        if i == len(wrapped_turns) - 1:
+            bbox_style['fc'] = 'floralwhite'
+            bbox_style['linestyle'] = '--'
+
+        # Plot the text
+        text = ax.text(xpos, ypos, '\n'.join(wrapped_turn), 
+            horizontalalignment=alignment,
+            verticalalignment='top',
+            wrap=True, 
+            multialignment=alignment,
+            bbox=bbox_style
+        )
+
+        # Increase ypos, for next utterance, depending on number of lines in current turn
+        ypos += PER_TURN / fig_height + PER_LINE / fig_height * len(wrapped_turn)
+
+        # Plot triangle below utterance, pointing left or right depending on speaker
+        if speaker == "you":
+            ax.add_patch(matplotlib.patches.Polygon(np.array([[0, ypos]]) + triangle))
+        elif speaker == "me":
+            ax.add_patch(matplotlib.patches.Polygon(np.array([[1, ypos]]) + triangle * np.array([[-1, 1]])))
+
+    # Final formatting
+    ax.invert_yaxis()
+    ax.set_title(title)
+    plt.axis('off')
+    plt.savefig(savepath, pad_inches=0.2, bbox_inches='tight')
+    plt.close(fig)
+
+    return fig
+
+if __name__ == "__main__":
+    # matches = torch.rand((4,6))
+    # targets = ["A" * 35, "b"*20, 'c' * 40, 'd'* 15]
+    # predictions = [str(i) * 25 for i in range(6)]
+    # threshold = 0.8
+    # criterion = lambda x, threshold: x >= threshold
+    # im = plot_heatmap(matches, threshold, criterion, targets, predictions, title="this is a title")
+    # plt.show()
+    # im.figure.savefig("test.jpg")
+    pass
