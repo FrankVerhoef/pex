@@ -42,11 +42,13 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
     result_dict = {}
 
-    for dialog_nr, prediction, target in zip(indices, predicted_summaries, target_summaries):
+    for index, prediction, target in zip(indices, predicted_summaries, target_summaries):
+        dialog_id = index["dialog_id"]
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
         target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
         combinations = list(itertools.product(pred_sentences, target_sentences))
-        result_dict[dialog_nr] = {
+        result_dict[dialog_id] = {
+            "convai_id": index["convai_id"],
             "pred_sentences": pred_sentences,
             "target_sentences": target_sentences,
             "num_combinations": len(combinations)
@@ -56,13 +58,13 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         if "bert" in metrics:
             metric["bert"].update(*zip(*combinations))
         if "terp" in metrics:
-            metric["terp"].update(dialog_nr, *zip(*combinations))
+            metric["terp"].update(dialog_id, *zip(*combinations))
 
     all_scores = {m: metric[m].compute() for m in metrics}
     
     i_start = 0
-    for dialog_nr in result_dict.keys():
-        r = result_dict[dialog_nr]
+    for dialog_id in result_dict.keys():
+        r = result_dict[dialog_id]
         i_end = i_start + r["num_combinations"]
 
         if "ter" in metrics:
@@ -94,7 +96,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             stats_dict["bert"]["recalls"].append(recall)
 
         if "terp" in metrics:
-            scores = all_scores["terp"][dialog_nr]
+            scores = all_scores["terp"][dialog_id]
             scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
             matching_predictions = scores <= TERP_MAXIMUM
             precision = torch.any(matching_predictions, dim=0).float().mean().item()
@@ -113,8 +115,8 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
 def plot_heatmaps(results_dict, session, subset, savedir):
     
-    for dialog_nr in results_dict.keys():
-        r = results_dict[dialog_nr]
+    for dialog_id in results_dict.keys():
+        r = results_dict[dialog_id]
 
         if "ter" in r.keys():
             plot_heatmap(
@@ -123,8 +125,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 criterion = lambda x, threshold: x <= threshold,
                 targets=r["target_sentences"], 
                 predictions=r["pred_sentences"], 
-                title=f"TER heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={TER_MAXIMUM:.2f})"
-            ).figure.savefig(f"{savedir}ter_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
+                title=f"TER heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TER_MAXIMUM:.2f})"
+            ).figure.savefig(f"{savedir}ter_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
 
         if "bert" in r.keys():
             plot_heatmap(
@@ -133,8 +135,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 criterion = lambda x, threshold: x >= threshold,
                 targets=r["target_sentences"], 
                 predictions=r["pred_sentences"], 
-                title=f"BERT heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={BERT_MINIMUM:.2f})"
-            ).figure.savefig(f"{savedir}bert_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
+                title=f"BERT heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={BERT_MINIMUM:.2f})"
+            ).figure.savefig(f"{savedir}bert_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
 
         if "terp" in r.keys():
             plot_heatmap(
@@ -143,8 +145,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 criterion = lambda x, threshold: x <= threshold,
                 targets=r["target_sentences"], 
                 predictions=r["pred_sentences"], 
-                title=f"TERp heatmap MSC_Summary session_{session}/{subset}, dialog {dialog_nr}\n(threshold={TERP_MAXIMUM:.2f})"
-            ).figure.savefig(f"{savedir}terp_heatmap_session_{session}_{subset}_{dialog_nr:06d}.jpg")
+                title=f"TERp heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TERP_MAXIMUM:.2f})"
+            ).figure.savefig(f"{savedir}terp_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
 
 class MSC_Summaries(Dataset):
 
@@ -186,7 +188,7 @@ class MSC_Summaries(Dataset):
                     dialogues.append(json.loads(line))
         except FileNotFoundError:
             logging.warning(f"File '{filepath}' not found -> skipped")
-        self.turns, self.summaries = self.transform(dialogues, max_samples)
+        self.indices, self.turns, self.summaries = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
         """
@@ -210,16 +212,24 @@ class MSC_Summaries(Dataset):
                 - "agg_persona_list": List with Strings
             - "followup": String (Sentence)
             - "newfact": String (Sentence)
-            - "initial_data_id": String (id)
+            - "initial_data_id": String (id) ==> refers to ID in the original ConvAI2 dataset
             - "init_personachat": Dict with the initial persona sentences
                 - "init_personas": List with two lists with Strings
                     - 0: persona sentences Speaker 1
                     - 1: persona sentances Speaker 2
         """
-        turns, summaries = [], []
-        
-        for d in dialogues:
-            # Start with utterance that is len_context from the last utterance
+        turns, summaries, ids = [], [], []
+
+        # If max_samples is set, and lower than total number of summaries, then take a random sample
+        selection is list(range(len(dialogues)))
+        if max_samples is not None:
+            if max_samples < len(turns):
+                selection = random.sample(range(len(turns)), max_samples)
+
+        for dialog_id in selection:
+            d = dialogues[dialog_id]
+
+            # Start with utterance that is a multiple of len_context from the last utterance
             start_index = len(d["dialog"]) % self.len_context
             utterances = []
 
@@ -232,17 +242,9 @@ class MSC_Summaries(Dataset):
 
             # The 'agg_persona_list" in the last utterance is the summary for the whole dialogue
             summaries.append('\n'.join(d['dialog'][-1]['agg_persona_list']))
-        
-        # If max_samples is set, and lower than total number of summaries, then take a random sample
-        self.indices = list(range(len(dialogues)))
-        if max_samples is not None:
-            if max_samples < len(turns):
-                indices = random.sample(range(len(turns)), max_samples)
-                turns = [turns[i] for i in indices]
-                summaries = [summaries[i] for i in indices]
-                self.indices = indices
+            ids.append({"dialog_id": dialog_id, "convai_id": d["initial_data_id"]})
 
-        return turns, summaries
+        return ids, turns, summaries
         
     def __len__(self):
         return len(self.summaries)
@@ -256,12 +258,12 @@ class MSC_Summaries(Dataset):
 
         if self.speaker_prefixes is not None:
             utterances = [
-                self.speaker_prefixes[self.SELF] + ' ' + t[0] + ' ' + self.speaker_prefixes[self.OTHER] + ' ' + t[1]
+                self.speaker_prefixes[self.SELF] + t[0] + '\n' + self.speaker_prefixes[self.OTHER] + t[1]
                 for t in self.turns[i]
             ]
         else:
             utterances = [
-                t[0] + ' ' + t[1]
+                t[0] + '\n' + t[1]
                 for t in self.turns[i]                
             ]
 
@@ -269,7 +271,8 @@ class MSC_Summaries(Dataset):
 
     def item_measurements(self, i):
         stats = {
-            "dialog_id": self.indices[i],
+            "dialog_id": self.indices[i]["dialog_id"],
+            "convai_id": self.indices[i]["convai_id"],
             "inputsentences": len(self[i][0]),
             "inputwords": len(' '.join(self[i][0]).split()), 
             "labelwords": len(self[i][1].split()), 
