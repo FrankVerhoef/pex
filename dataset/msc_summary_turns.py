@@ -61,9 +61,36 @@ class MSC_Turns(Dataset):
                             dialogues.append(json.loads(line))
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
-        self.turns, self.personas = self.transform(dialogues, max_samples)
+        self.indices, self.turns, self.personas = self.transform(dialogues, max_samples)
 
     def transform(self, dialogues, max_samples):
+        """
+        Format of a summary: Dict, each dict covers one dialogue.
+            - "dialog": List with Dicts, each Dict is an utterance, with corresponding information:
+                - "id": String, representing the speaker
+                - "text": String
+                - "convai_id": String
+                - "persona_text": String
+                - "problem_data": Dict; 
+                    NOTE: In all utterances, except the last in the list, this contains element "persona". In last utterance, the dict contains:
+                    - "persona": String
+                    - "prompt_time": String with indication of duration
+                    - "task_duration": Float
+                    - "followup": String
+                    - "newfacts": String
+                    - "task_time": String with time
+                    - "hit_id": String with alphanumeric characters
+                    - "worker_id": String with alphanumeric characters
+                    - "initial_data_id": String with id
+                - "agg_persona_list": List with Strings ==> THIS IS THE 'RUNNING' SUMMARY OF THE DIALOGUE
+            - "followup": String (Sentence)
+            - "newfact": String (Sentence)
+            - "initial_data_id": String (id)
+            - "init_personachat": Dict with the initial persona sentences
+                - "init_personas": List with two lists with Strings
+                    - 0: persona sentences Speaker 1
+                    - 1: persona sentances Speaker 2
+        """
         turns, personas, ids = [], [], []
         
         for dialog_id, d in enumerate(dialogues):
@@ -81,17 +108,16 @@ class MSC_Turns(Dataset):
                 else:
                     persona = self.nofact_token
                 personas.append(persona)
-                ids.append({"dialog_id": dialog_id, "turn_id": i})
+                ids.append({"dialog_id": dialog_id, "turn_id": i, "convai_id": d["convai_id"]})
         
         if max_samples is not None:
             if max_samples < len(turns):
-                indices = random.sample(range(len(turns)), max_samples)
-                turns = [turns[i] for i in indices]
-                personas = [personas[i] for i in indices]
-                ids = [ids[i] for i in indices]
-        self.indices = ids
+                selection = random.sample(range(len(turns)), max_samples)
+                turns = [turns[i] for i in selection]
+                personas = [personas[i] for i in selection]
+                ids = [ids[i] for i in selection]
 
-        return turns, personas
+        return ids, turns, personas
         
     def __len__(self):
         return len(self.turns)
@@ -102,7 +128,7 @@ class MSC_Turns(Dataset):
         else:
             history = '\n'.join([t for p, t in self.turns[i]])
         return history, self.personas[i]
-    
+
     def corpus(self):
         return [' '.join([*self[i]]) for i in range(len(self.turns))]
 
@@ -110,6 +136,7 @@ class MSC_Turns(Dataset):
         stats = {
             "dialog_id": self.indices[i]["dialog_id"],
             "turn_id": self.indices[i]["turn_id"],
+            "convai_id": self.indices[i]["convai_id"],
             "inputwords": len(self[i][0].split()), 
             "labelwords": len(self[i][1].split()), 
         }       
