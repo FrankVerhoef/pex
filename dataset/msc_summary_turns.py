@@ -108,7 +108,7 @@ class MSC_Turns(Dataset):
                 else:
                     persona = self.nofact_token
                 personas.append(persona)
-                ids.append({"dialog_id": dialog_id, "turn_id": i, "convai_id": d["convai_id"]})
+                ids.append({"dialog_id": dialog_id, "turn_id": i, "convai_id": d["initial_data_id"]})
         
         if max_samples is not None:
             if max_samples < len(turns):
