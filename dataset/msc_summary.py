@@ -221,7 +221,7 @@ class MSC_Summaries(Dataset):
         turns, summaries, ids = [], [], []
 
         # If max_samples is set, and lower than total number of summaries, then take a random sample
-        selection is list(range(len(dialogues)))
+        selection = list(range(len(dialogues)))
         if max_samples is not None:
             if max_samples < len(turns):
                 selection = random.sample(range(len(turns)), max_samples)
@@ -252,7 +252,7 @@ class MSC_Summaries(Dataset):
     def __getitem__(self, i):
         """
         Each item is a tuple with two elements:
-        0) a list of turns (each turn has two utterances)
+        0) a list of turns (each turn has two utterances, joined by '\n')
         1) a summary (which is a string of persona sentences joined by '\n')
         """
 
@@ -320,7 +320,11 @@ class MSC_Summaries(Dataset):
     @classmethod
     def batchify(cls, data):
         """
-        Transforms a list of dataset elements to batch of consisting of dialogue turns and persona sentences.
+        Transforms a list of dataset elements to list of encoded dialogue turns and the encoded persona sentences.
+        Parameters:
+            - data: tuple(list(string with utterance), string with summary)
+        Returns:
+            - tuple(list(tensor with encodes utterances)), tensor with encoded summaries
         """
         assert cls.tokenizer is not None, "Need to specify function to vectorize dataset"
 
