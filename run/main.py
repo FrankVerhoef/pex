@@ -409,7 +409,7 @@ def train_with_args(config, args):
             logging.info("Saving model to {}".format(savepath))
             torch.save(model.state_dict(), savepath)
             with open(savepath + '.config', 'w') as f:
-                f.write(json.dumps(vars(args)))
+                f.write(json.dumps({k:v for k, v in vars(args).items() if k != "configfile"}, indent=4))
 
         if args.do_eval:
 
@@ -430,11 +430,12 @@ def train_with_args(config, args):
     return stats
 
 
-def get_parser():
+def get_args():
 
-    parser = argparse.ArgumentParser(description="Train a model", conflict_handler="resolve")
+    parser = argparse.ArgumentParser(description="Persona extractor", conflict_handler="resolve")
 
     # General, loading, saving, logging
+    parser.add_argument("--configfile", type=str, help="configfile with default value (will be overridden by cmdline arguments)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
     parser.add_argument("--log_interval", type=int, default=10, help="report interval")
@@ -449,31 +450,37 @@ def get_parser():
     parser.add_argument("--use_wandb", default=False, action='store_true')
     
     # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="seq2seq", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="Model")
+    parser.add_argument("--model", type=str, default="bart", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="Model")
 
     # Task and Dataset
-    parser.add_argument("--task", type=str, default="classify", choices=["generate", "classify", "dialog"])
+    parser.add_argument("--task", type=str, default="generate", choices=["generate", "classify", "dialog"])
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
     parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
     parser.add_argument("--valid_samples", type=int, default=None, help="Max number of test samples")
     parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
 
-    args = parser.parse_known_args()[0]
+    # args = parser.parse_known_args()[0]
     
-    if args.do_train:
+    # if args.do_train:
+    traingroup = parser.add_argument_group("train")
+    traingroup.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
+    traingroup.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
+    traingroup.add_argument("--valid_interval", type=int, default=None, help="validation interval")
+    traingroup.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
+    traingroup.add_argument("--batch_size", type=int, default=32, help="Batch size")
 
-        parser.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
-        parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
-        parser.add_argument("--valid_interval", type=int, default=None, help="validation interval")
-        parser.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
-
-    if args.do_eval:
-        parser.add_argument("--print_max", type=int, default=20, help="Max number of test examples to print")
+    # if args.do_eval:
+    evalgroup = parser.add_argument_group("eval")
+    evalgroup.add_argument("--print_max", type=int, default=20, help="Max number of test examples to print")
 
     # Add cmdline arguments for model
-    parser = {
+    args = parser.parse_known_args()[0]
+    # if args.model in ["bart", "bert", "dialogpt"]:
+    #     BartExtractor.add_cmdline_args(parser)
+    #     PrefixBert.add_cmdline_args(parser)
+    #     DialoGPT.add_cmdline_args(parser)
+    {
         "seq2seq": PersonaExtractor,
         "bert": PrefixBert,
         "bart": BartExtractor,
@@ -489,7 +496,8 @@ def get_parser():
     if args.task == "classify":
         parser = MSC_Turn_Facts.add_cmdline_args(parser)
     elif args.task == "generate":
-        parser = TerpMetric.add_cmdline_args(parser)
+        if args.do_eval and (not args.do_grid_search):
+            parser = TerpMetric.add_cmdline_args(parser)
         parser = MSC_Turns.add_cmdline_args(parser)
     elif args.task == "dialog": 
         if args.model == "kg_gen":
@@ -500,13 +508,21 @@ def get_parser():
         if args.session == 1:
             parser = ConvAI2.add_cmdline_args(parser)
 
-    return parser
+    # Read defaults from configfile.
+    # NOTE: configfile may contain arguments that are not valid (anymore)! 
+    if args.configfile is not None:
+        with open(args.configfile, "r") as f:
+            loaded_args = json.loads(f.read())
+            parser.set_defaults(**loaded_args)
+
+    args = parser.parse_args()
+
+    return args
 
 
 if __name__ == "__main__":
 
-    parser = get_parser()
-    args = parser.parse_args()
+    args = get_args()
 
     # Check availability of requested device
     if args.device == "mps":
