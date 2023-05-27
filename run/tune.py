@@ -1,16 +1,17 @@
 import ray
-from ray import air, tune
+from ray import tune
 from ray.tune.schedulers import ASHAScheduler, HyperBandScheduler
 import random
 import utils.logging as logging
+from utils.general import prettydict
 
-def do_grid_search(train_fn):
+def do_tune(train_fn, run_config):
     ray.init(
         configure_logging=True,
         logging_level="warning",
         )
     search_space = {
-        "seed": tune.grid_search([42, 123, 1968, 2206]),
+        "seed": tune.grid_search([42]),
         "lm_loss_factor": tune.sample_from(lambda spec: random.random()),
         # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
         # "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
@@ -35,24 +36,22 @@ def do_grid_search(train_fn):
         #         if spec.config.prefix_size == 0 else 12
         #     ),
     }
-    trainable_with_resources = tune.with_resources(train_fn, {"gpu": 1})
+
     tuner = tune.Tuner(
-        trainable=trainable_with_resources,
+        trainable=train_fn, 
         param_space=search_space,
         tune_config=tune.TuneConfig(
             scheduler=HyperBandScheduler(),
             metric="valid_loss", 
             mode="min",
-            num_samples=5,
+            num_samples=2,
             max_concurrent_trials=8
         ),
-        run_config = air.RunConfig(
-            verbose=3,
-        )
+        run_config = run_config
     )
     results = tuner.fit()
     best_result = results.get_best_result() 
-    logging.success("BEST RESULTS: {}".format(best_result.config))
-    logging.success("BEST METRICS: {:.2%}".format(best_result.metrics["valid_acc"]))
+    logging.success(prettydict(best_result.config, "Best config"))
+    logging.success(prettydict(best_result.metrics, "Best metrics"))
     return results
 

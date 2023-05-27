@@ -12,7 +12,7 @@ import os
 from functools import partial
 from filelock import FileLock
 import json
-import argparse
+import configargparse as argparse
 
 from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
@@ -28,16 +28,17 @@ from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from metrics.terp import TerpMetric
-from run.tune import do_grid_search
-from ray.air import session
-from utils.general import savename, prettydict, dict_with_key_prefix
+from run.tune import do_tune
+from ray.air import session, RunConfig
+from ray.tune import with_resources
+from utils.general import savename, prettydict, dict_with_key_prefix, save_config, save_dict
 from utils.listdict import ListDict
 import utils.logging as logging
 
 
 def train(model, trainloader, validloader, optimizer, criterion, 
     device, epochs, log_interval, valid_interval, patience,
-    do_grid_search, use_wandb):
+    do_tune, use_wandb):
 
     train_losses = []
     saved_stats = {"valid_loss": float('inf')}
@@ -82,7 +83,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
                     valid_stats["epoch"] = epoch
                     wandb.log(valid_stats, step=step)
 
-                if do_grid_search:
+                if do_tune:
                     session.report(valid_stats)
 
                 if valid_stats["valid_loss"] < saved_stats["valid_loss"]:
@@ -169,10 +170,10 @@ def prepare_model_and_data(args):
             'sessions': args.sessions
         }
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
-            if args.do_train:
+            if args.action in ['tune', 'train']:
                 traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
                 validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
-            if args.do_eval:
+            if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
                 testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
         collate_fn = MSC_Turn_Facts.batchify
 
@@ -251,10 +252,10 @@ def prepare_model_and_data(args):
             'sessions': args.sessions
         } 
         with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            if args.do_train:
+            if args.action in ['tune', 'train']:
                 traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
                 validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
-            if args.do_eval:
+            if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
                 testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
         collate_fn = partial(MSC_Turns.batchify, with_labels=True, batch_format=model.batch_format, batch_pad_id=pad_token_id)
 
@@ -290,10 +291,10 @@ def prepare_model_and_data(args):
             }
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-                if args.do_train:
+                if args.action in ['tune', 'train']:
                     traindata = KG_enriched_MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
                     validdata = KG_enriched_MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
-                if args.do_eval:
+                if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
                     testdata = KG_enriched_MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
             collate_fn = partial(KG_enriched_MSC_Session.batchify, batch_format=KnowledgeGroundedDecoder.batch_format)
 
@@ -348,10 +349,10 @@ def prepare_model_and_data(args):
                 dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-                if args.do_train:
+                if args.action in ['tune', 'train']:
                     traindata = MSC_Session(subset='train', max_samples=args.train_samples, augmented=args.augmented, **dataset_config)
                     validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, augmented=args.augmented, **dataset_config)
-                if args.do_eval:
+                if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
                     testdata = MSC_Session(subset='test', max_samples=args.test_samples, augmented=True, **dataset_config)
             collate_fn = partial(MSC_Session.batchify, with_labels=True, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id, buffer=0)
 
@@ -385,7 +386,7 @@ def train_with_args(config, args):
         model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
 
     stats = {}
-    if args.do_train:        
+    if args.action in ['tune', 'train']: 
         train_loader = torch.utils.data.DataLoader(dataset=traindata, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
         valid_loader = torch.utils.data.DataLoader(dataset=validdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
         optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -398,33 +399,30 @@ def train_with_args(config, args):
         model, valid_stats = train(
             model, train_loader, valid_loader, optimizer, criterion, 
             device=args.device, epochs=args.epochs, log_interval=args.log_interval, valid_interval=args.valid_interval, patience=args.patience,
-            do_grid_search=args.do_grid_search, use_wandb=args.use_wandb
+            do_tune=args.action == 'tune', use_wandb=args.use_wandb
         )
         stats = valid_stats
 
-    if not args.do_grid_search:
-
-        if args.save != "":
+        if args.action == 'train' and args.save != "":
             savepath = args.checkpoint_dir + savename(args)
             logging.info("Saving model to {}".format(savepath))
             torch.save(model.state_dict(), savepath)
-            with open(savepath + '.config', 'w') as f:
-                f.write(json.dumps({k:v for k, v in vars(args).items() if k != "configfile"}, indent=4))
+            save_config(savepath + '.config', args)
 
-        if args.do_eval:
+    if args.action in ['train', 'eval'] and not args.skip_eval:
 
-            logging.info("Start testing")
-            test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
-            test_stats = valid(model, test_loader, criterion, device=args.device)
+        logging.info("Start testing")
+        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
+        test_stats = valid(model, test_loader, criterion, device=args.device)
 
-            logging.report("Test stats: {}".format(test_stats))
-            stats.update(dict_with_key_prefix(test_stats, prefix="test_"))
+        logging.report("Test stats: {}".format(test_stats))
+        stats.update(dict_with_key_prefix(test_stats, prefix="test_"))
 
-            if args.use_wandb:
-                wandb.run.summary["test_accuracy"] = stats["test_acc"]  
-    
-            eval_stats = evaluate(model, testdata, args)
-            stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
+        if args.use_wandb:
+            wandb.run.summary["test_accuracy"] = stats["test_acc"]  
+
+        eval_stats = evaluate(model, testdata, args)
+        stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
 
     return stats
@@ -432,54 +430,46 @@ def train_with_args(config, args):
 
 def get_args():
 
-    parser = argparse.ArgumentParser(description="Persona extractor", conflict_handler="resolve")
+    parser = argparse.ArgumentParser(description="PERSONA EXTRACTOR (note: models and tasks have additional options, please consult the documentation)", conflict_handler="resolve")
 
     # General, loading, saving, logging
-    parser.add_argument("--configfile", type=str, help="configfile with default value (will be overridden by cmdline arguments)")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
-    parser.add_argument("--log_interval", type=int, default=10, help="report interval")
-    parser.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
-    parser.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
-    parser.add_argument("--load", type=str, default="", help="filename of model to load")
-    parser.add_argument("--save", type=str, default="", help="filename to save the model")
-    parser.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
-    parser.add_argument("--do_train", type=bool, default=True, action=argparse.BooleanOptionalAction)
-    parser.add_argument("--do_eval", type=bool, default=True, action=argparse.BooleanOptionalAction)
-    parser.add_argument("--do_grid_search", default=False, action='store_true')
-    parser.add_argument("--use_wandb", default=False, action='store_true')
-    
-    # Encoder and decoder model
-    parser.add_argument("--model", type=str, default="bart", choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="Model")
+    generalgroup = parser.add_argument_group("general options and setting for loading, saving, monitoring")
+    generalgroup.add_argument("--configfile", is_config_file=True, help="configfile with default value (will be overridden by cmdline arguments)")
+    generalgroup.add_argument("--seed", type=int, default=42, help="random seed")
+    generalgroup.add_argument("--checkpoint_dir", type=str, default="./checkpoints/")
+    generalgroup.add_argument("--output_dir", type=str, default="./output/")
+    generalgroup.add_argument("--log_interval", type=int, default=10, help="report interval")
+    generalgroup.add_argument("--loglevel", type=str, default="INFO", choices=logging.get_all_levels())    
+    generalgroup.add_argument("--logdir", type=str, default=None, help="directory for logfiles; None means no logfile")
+    generalgroup.add_argument("--load", type=str, default="", help="filename of model to load")
+    generalgroup.add_argument("--save", type=str, default="", help="filename to save the model")
+    generalgroup.add_argument("--device", type=str, default="mps", choices=["cpu", "mps", "cuda"])
+    generalgroup.add_argument("--use_wandb", default=False, action='store_true')
 
-    # Task and Dataset
-    parser.add_argument("--task", type=str, default="generate", choices=["generate", "classify", "dialog"])
-    parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
-    parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
-    parser.add_argument("--train_samples", type=int, default=None, help="Max number of training samples")
-    parser.add_argument("--valid_samples", type=int, default=None, help="Max number of test samples")
-    parser.add_argument("--test_samples", type=int, default=None, help="Max number of test samples")
+    # Main arguments
+    parser.add_argument("action", type=str, choices=['tune', 'train', 'eval'], help="choose an action")
+    parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="choose one of the available models")
+    parser.add_argument("task", type=str, choices=["generate", "classify", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
 
-    # args = parser.parse_known_args()[0]
+    tune_group = parser.add_argument_group("options for tuning")
+    tune_group.add_argument("--experiment_name", type=str, default="trainpex", help="experiment name for Ray Tune")
     
-    # if args.do_train:
-    traingroup = parser.add_argument_group("train")
-    traingroup.add_argument("--epochs", type=int, default=1, help="Number of epochs for training")
-    traingroup.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
+    traingroup = parser.add_argument_group("options for training")
+    traingroup.add_argument("--epochs", type=int, default=1, help="number of epochs for training")
+    traingroup.add_argument("--learning_rate", type=float, default=0.001, help="learning rate")
     traingroup.add_argument("--valid_interval", type=int, default=None, help="validation interval")
-    traingroup.add_argument("--patience", type=int, default=None, help="Number of validation intervals without improvement after which training will be terminated")
-    traingroup.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    traingroup.add_argument("--patience", type=int, default=None, help="number of validation intervals without improvement after which training will be terminated")
+    traingroup.add_argument("--batch_size", type=int, default=32, help="batch size")
+    traingroup.add_argument("--skip_eval", default=False, action='store_true', help="just train")
 
-    # if args.do_eval:
-    evalgroup = parser.add_argument_group("eval")
-    evalgroup.add_argument("--print_max", type=int, default=20, help="Max number of test examples to print")
+    evalgroup = parser.add_argument_group("options for evaluation")
+    evalgroup.add_argument("--metrics", nargs='*', help="only report listed metrics")
+    evalgroup.add_argument("--print_max", type=int, default=20, help="max number of test examples to print")
+
+    args = parser.parse_known_args()[0]
 
     # Add cmdline arguments for model
-    args = parser.parse_known_args()[0]
-    # if args.model in ["bart", "bert", "dialogpt"]:
-    #     BartExtractor.add_cmdline_args(parser)
-    #     PrefixBert.add_cmdline_args(parser)
-    #     DialoGPT.add_cmdline_args(parser)
+    modelgroup = parser.add_argument_group("Options for the chosen model")
     {
         "seq2seq": PersonaExtractor,
         "bert": PrefixBert,
@@ -487,16 +477,23 @@ def get_args():
         "prefixbart": PrefixBart,
         "kg_gen": KnowledgeGroundedDecoder,
         "dialogpt": DialoGPT,
-    }[args.model].add_cmdline_args(parser)
+    }[args.model].add_cmdline_args(modelgroup)
 
     if args.model == "seq2seq":
-        parser.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
+        modelgroup.add_argument("--vocab_size", type=int, default=None, help="Max number of unique token (excluding special tokens)")
 
-    # Add cmdline arguments for task/dataset
+    # Add cmdline arguments for Task/Dataset
+    parser.add_argument("--datadir", type=str, default="./data/", help="root directory for the dataset files")
+    parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="base directory for dataset")
+    parser.add_argument("--train_samples", type=int, default=None, help="max number of training samples")
+    parser.add_argument("--valid_samples", type=int, default=None, help="max number of test samples")
+    parser.add_argument("--test_samples", type=int, default=None, help="max number of test samples")
+
     if args.task == "classify":
         parser = MSC_Turn_Facts.add_cmdline_args(parser)
     elif args.task == "generate":
-        if args.do_eval and (not args.do_grid_search):
+        if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
+            print("CHECK: ", vars(args))
             parser = TerpMetric.add_cmdline_args(parser)
         parser = MSC_Turns.add_cmdline_args(parser)
     elif args.task == "dialog": 
@@ -507,13 +504,6 @@ def get_args():
         args = parser.parse_known_args()[0]
         if args.session == 1:
             parser = ConvAI2.add_cmdline_args(parser)
-
-    # Read defaults from configfile.
-    # NOTE: configfile may contain arguments that are not valid (anymore)! 
-    if args.configfile is not None:
-        with open(args.configfile, "r") as f:
-            loaded_args = json.loads(f.read())
-            parser.set_defaults(**loaded_args)
 
     args = parser.parse_args()
 
@@ -537,10 +527,22 @@ if __name__ == "__main__":
         logging.add_file_handler(logdir=args.logdir)
     logging.info(prettydict(vars(args), title="Args"))
 
-    if args.do_grid_search:
-        results = do_grid_search(partial(train_with_args, args=args))
+    if args.action == 'tune':
+        ray_dir = args.output_dir + "ray_results"
+        trainable = partial(train_with_args, args=args)
+        if args.device == 'cuda':
+            trainable = with_resources(trainable, {"gpu": 1})
+        run_config = RunConfig(
+            local_dir=ray_dir,
+            name=args.experiment_name 
+        )
+        results = do_tune(train_fn=trainable, run_config=run_config)
+        save_config(f"{ray_dir}/{args.experiment_name}/base.config", args)
+        logging.info(f"Ray results saved in {ray_dir}/{args.experiment_name}")
     else:
         stats = train_with_args(config=None, args=args)
         logging.success(prettydict(stats, title="Overview of stats"))
+        save_dict(args.output_dir + savename(args) + "_stats.json", stats)
+        logging.info(f"Stats saved in {args.output_dir + savename(args)}_stats.json")
 
 
