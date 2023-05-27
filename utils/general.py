@@ -3,6 +3,7 @@
 ###
 
 import torch
+import json
 
 def savename(args):
     name = args.save
@@ -64,3 +65,15 @@ def dict_with_key_prefix(d, prefix=None):
         return d
     else:
         return {prefix + str(k): v for k, v in d.items()}
+    
+def save_config(savepath, args):
+    with open(savepath, 'w') as f:
+        f.write(f"# Configfile action={args.action}, model={args.model}, task={args.task}")
+        for k, v in vars(args).items():
+            if k not in ['action', 'model', 'task', 'configfile']:
+                if v is not None:
+                    f.write(f"{k} = {v}\n")
+
+def save_dict(savepath, dict):
+    with open(savepath, 'w') as f:
+        f.write(json.dumps(dict, indent=4))
