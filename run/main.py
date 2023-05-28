@@ -18,7 +18,7 @@ from transformers import AutoTokenizer, PretrainedConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
-from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss
+from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, ExtractedFactLoss
 from models.dialogpt import DialoGPT
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
@@ -241,7 +241,7 @@ def prepare_model_and_data(args):
                     prefix_aggr=args.prefix_aggr
                 )
             model.bart.resize_token_embeddings(len(tokenizer))
-            criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=args.lm_loss_factor)
+            criterion = ExtractedFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=args.lm_loss_factor, clf_loss=args.clf_loss)
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)

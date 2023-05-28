@@ -16,19 +16,65 @@ class ConditionalFactLoss(nn.Module):
         self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
         self.lm_weight = lm_weight
 
-    def forward(self, fact_logprobs, lm_logprobs, target):
+    def reweighted_fact_loss(self, lm_logprobs, target):
+        logprob_nofact = lm_logprobs[:, self.nofact_token_id]
+        all_tokens_ids = torch.arange(lm_logprobs.shape[1])
+        all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
+        logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
+        fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -logprob_fact)
+        return fact_loss
 
-        assert (lm_logprobs.shape[2] > 0) and (target.shape[1] > 0), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
+    def forward(self, lm_logprobs, target):
+
+        assert (lm_logprobs.shape[2] > 1) and (target.shape[1] > 1), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
 
         # Classification loss: whether facts are recognized correctly
-        target_fact = (target[:, 1] != self.nofact_token_id).int()
-        classification_loss = -fact_logprobs[:, 0] * (1 - target_fact) - fact_logprobs[:, 1]  * target_fact
+        # Token directly after <bos> token signals whether sequence is a fact
+        classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
 
         # LM loss: whether the tokens of the facts are predicted correctly
         lm_loss = self.nllloss(lm_logprobs, target).mean(dim=1)
 
         # Weighted combination of classification loss and LM loss
+        target_fact = (target[:, 1] != self.nofact_token_id).int()
         combined_loss = (1 - target_fact) * classification_loss + target_fact * (self.lm_weight * lm_loss + (1 - self.lm_weight) * classification_loss)
+        
+        return combined_loss.mean(), classification_loss.mean(), lm_loss.mean()
+
+class ExtractedFactLoss(nn.Module):
+
+    def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5, clf_loss=None):
+        super().__init__()
+        assert True if clf_loss is None else clf_loss == 'reweighted', f"Invalid value for clf_loss '{clf_loss}'"
+        self.nofact_token_id = nofact_token_id
+        self.clf_loss = clf_loss
+        self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
+        self.lm_weight = lm_weight
+
+    def reweighted_fact_loss(self, lm_logprobs, target):
+        logprob_nofact = lm_logprobs[:, self.nofact_token_id]
+        all_tokens_ids = torch.arange(lm_logprobs.shape[1])
+        all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
+        logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
+        fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -logprob_fact)
+        return fact_loss
+
+    def forward(self, lm_logprobs, target):
+
+        assert (lm_logprobs.shape[2] > 1) and (target.shape[1] > 1), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
+
+        # Classification loss: whether facts are recognized correctly
+        # Token directly after <bos> token signals whether sequence is a fact
+        if self.clf_loss is None:
+            classification_loss = self.nllloss(lm_logprobs[:, :, 1], target[:, 1])
+        elif self.clf_loss == 'reweighted':
+            classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
+
+        # LM loss: whether the tokens of the facts are predicted correctly
+        lm_loss = self.nllloss(lm_logprobs, target).mean(dim=1)
+
+        # Weighted combination of classification loss and LM loss
+        combined_loss =  (1 - self.lm_weight) * classification_loss + self.lm_weight * lm_loss
         
         return combined_loss.mean(), classification_loss.mean(), lm_loss.mean()
 
@@ -39,9 +85,10 @@ class BartExtractor(nn.Module):
     @classmethod
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('BartExtractor')
-        group.add_argument("--lm_loss_factor", type=float, default=0.5, help="Relative weight of lm_loss in combined loss")
-        group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
-        group.add_argument("--bart_base", type=str, default='facebook/bart-large-cnn', help="Name of pretrained BART model")
+        group.add_argument("--lm_loss_factor", type=float, default=1.0, help="relative weight of lm_loss in combined loss")
+        group.add_argument("--clf_loss", default=None, choices=['reweighted'], help="variant for classification loss")
+        group.add_argument("--decoder_max", type=int, default=50, help="max number of tokens to generate")
+        group.add_argument("--bart_base", type=str, default='facebook/bart-large-cnn', help="name of pretrained BART model")
         return parser
 
     def __init__(self, bart_base=None, nofact_token_id=None):
@@ -54,22 +101,13 @@ class BartExtractor(nn.Module):
             self.bart = BartForConditionalGeneration.from_pretrained(bart_base)
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
-    def _select_fact_logprobs(self, lm_logprobs):
-        logprob_nofact = lm_logprobs[:, self.nofact_token_id]
-        all_tokens_ids = torch.arange(lm_logprobs.shape[1])
-        all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
-        logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
-        fact_logprobs = torch.stack([logprob_nofact, logprob_fact], dim=1)
-        return fact_logprobs
-    
     def forward(self, input_ids, attention_mask, labels):
         # NOTE: within bart.forward(), a decoder_start_token </s> is inserted (--> label shifted right)
         output = self.bart(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
         lm_logits = output.logits
         lm_logprobs = self.logsoftmax(lm_logits)
-        fact_logprobs = self._select_fact_logprobs(lm_logprobs[:, 1, :])  # Token directly after <bos> token signals whether sequence is a fact
-        return fact_logprobs, lm_logprobs
-    
+        return lm_logprobs
+        
     def _update_generation_args(self, **generation_args):
         """
         Override the standard generation args for bart model:
@@ -116,9 +154,9 @@ class BartExtractor(nn.Module):
         y = batch['labels'].to(device)
 
         optimizer.zero_grad()
-        fact_logprobs, lm_logprobs = self.forward(input_ids, attention_mask, y)
-        loss, classification_loss, lm_loss = criterion(fact_logprobs, lm_logprobs.transpose(1,2), y)
-        logging.debug("Train: loss {:.4f}, cls_loss {:.4f}, lm_loss {:.4f}".format(loss, classification_loss, lm_loss))
+        lm_logprobs = self.forward(input_ids, attention_mask, y)
+        loss, classification_loss, lm_loss = criterion(lm_logprobs.transpose(1,2), y)
+        logging.debug(f"Train: loss {loss:.4f}, clf_loss {classification_loss:.4f}, lm_loss {lm_loss:.4f}")
         loss.backward()
         optimizer.step()
         
@@ -131,8 +169,8 @@ class BartExtractor(nn.Module):
         y = batch['labels'].to(device)
 
         with torch.no_grad():
-            fact_logprobs, lm_logprobs = self.forward(input_ids, attention_mask, y)
-            loss, classification_loss, lm_loss = criterion(fact_logprobs, lm_logprobs.transpose(1,2), y)
+            lm_logprobs = self.forward(input_ids, attention_mask, y)
+            loss, classification_loss, lm_loss = criterion(lm_logprobs.transpose(1,2), y)
 
         pred = lm_logprobs.cpu().argmax(dim=-1)
         ignore_mask = batch['labels'].ne(self.bart.config.pad_token_id)
@@ -158,7 +196,7 @@ class BartExtractor(nn.Module):
             "perplexity": ppl, 
             "token_prediction_acc": token_acc
         }
-        logging.debug("Valid: loss {:.4f}, cls_loss {:.4f}, lm_loss {:.4f}, cls_acc {:.4f}, lm_acc {:.4f}, ppl {:.4f}".format(loss, classification_loss, lm_loss, fact_acc, token_acc, ppl))
+        logging.debug(f"Valid: loss {loss:.4f}, clf_loss {classification_loss:.4f}, lm_loss {lm_loss:.4f}, cls_acc {fact_acc:.4f}, lm_acc {token_acc:.4f}, ppl {ppl:.4f}")
 
         return stats
 
