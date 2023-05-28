@@ -4,6 +4,7 @@
 
 import torch
 import json
+from ast import literal_eval
 
 def savename(args):
     name = args.save
@@ -68,11 +69,34 @@ def dict_with_key_prefix(d, prefix=None):
     
 def save_config(savepath, args):
     with open(savepath, 'w') as f:
-        f.write(f"# Configfile action={args.action}, model={args.model}, task={args.task}")
+        f.write(f"# Configfile action={args.action}, model={args.model}, task={args.task}\n")
         for k, v in vars(args).items():
             if k not in ['action', 'model', 'task', 'configfile']:
-                if v is not None:
-                    f.write(f"{k} = {v}\n")
+                f.write(f"{k} = {v}\n")
+
+def load_config(savepath):
+    config = {}
+    with open(savepath, 'r') as f:
+
+        # Read first line with main args; format = "# Configfile action={args.action}, model={args.model}, task={args.task}\n"
+        lines = f.readlines()
+        assert len(lines) > 0, "Missing header in configfile"
+        assert lines[0][:12] == '# Configfile', f"Invalid header for configfile: '{lines[0]}'"
+        mainargs = lines[0][:-1].replace(',', '').split()[-3:]
+        for arg in mainargs:
+            assert arg.find('=') >= 0, f"Invalid format: '{arg}'"
+            k, v = arg.replace(' ', '').split('=')
+            config[k] = v
+        
+        # Read the remaining lines; format = "{k} = {v}\n"
+        for arg in lines[1:]:
+            k, v = arg[:-1].replace(' ', '').split('=')
+            try:
+                config[k] = literal_eval(v)
+            except:
+                config[k] = v
+
+    return config
 
 def save_dict(savepath, dict):
     with open(savepath, 'w') as f:
