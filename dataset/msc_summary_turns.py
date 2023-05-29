@@ -31,7 +31,7 @@ class MSC_Turns(Dataset):
     @classmethod
     def set(cls, tokenizer=None, len_context=2, speaker_prefixes=None, nofact_token=''):
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
-        assert len_context > 1, f"len_context '{len_context}' is invalid; should be at least 1"
+        # assert len_context > 1, f"len_context '{len_context}' is invalid; should be at least 1"
         cls.tokenizer = tokenizer
         cls.len_context = len_context
         cls.speaker_prefixes = speaker_prefixes
@@ -371,7 +371,7 @@ if __name__ == "__main__":
     if add_tokens is not None:
         tokenizer.add_tokens(add_tokens)
 
-    MSC_Turns.set(tokenizer=tokenizer, len_context=3, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    MSC_Turns.set(tokenizer=tokenizer, len_context=1, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
 
     msc_turns = MSC_Turns(
         basedir=basedir, 
