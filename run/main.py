@@ -44,6 +44,7 @@ def train(model, trainloader, validloader, optimizer, criterion,
     saved_stats = {"valid_loss": float('inf')}
     step = 0
     model.to(device)
+    criterion.to(device)
     best_model = model
     num_batches = len(trainloader)
     if patience is None:
@@ -106,6 +107,7 @@ def valid(model, dataloader, criterion, device):
 
     valid_stats = ListDict()
     model.to(device)
+    criterion.to(device)
     model.eval()
 
     for batch in iter(dataloader):
@@ -241,7 +243,14 @@ def prepare_model_and_data(args):
                     prefix_aggr=args.prefix_aggr
                 )
             model.bart.resize_token_embeddings(len(tokenizer))
-            criterion = ExtractedFactLoss(nofact_token_id=nofact_token_id, ignore_index=tokenizer.pad_token_id, lm_weight=args.lm_loss_factor, clf_loss=args.clf_loss)
+            criterion = ExtractedFactLoss(
+                nofact_token_id=nofact_token_id, 
+                ignore_index=tokenizer.pad_token_id, 
+                lm_weight=args.lm_loss_factor, 
+                nofact_weight=args.nofact_weight, 
+                num_tokens=len(tokenizer), 
+                clf_loss=args.clf_loss
+            )
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)

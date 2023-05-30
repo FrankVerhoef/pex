@@ -43,12 +43,19 @@ class ConditionalFactLoss(nn.Module):
 
 class ExtractedFactLoss(nn.Module):
 
-    def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5, clf_loss=None):
+    def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5, nofact_weight=None, num_tokens=None, clf_loss=None):
         super().__init__()
+        assert True if nofact_weight is None else (False if num_tokens is None else num_tokens > nofact_token_id), \
+            f"Invalid combination of nofact_weight '{nofact_weight}', num_tokens '{num_tokens}' and nofact_token_id '{nofact_token_id}'"
         assert True if clf_loss is None else clf_loss == 'reweighted', f"Invalid value for clf_loss '{clf_loss}'"
         self.nofact_token_id = nofact_token_id
         self.clf_loss = clf_loss
-        self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
+        if nofact_weight is not None:
+            weight = torch.ones(num_tokens)
+            weight[nofact_token_id] = nofact_weight
+            self.nllloss = nn.NLLLoss(ignore_index=ignore_index, weight=weight, reduction='none')
+        else:
+            self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
         self.lm_weight = lm_weight
 
     def reweighted_fact_loss(self, lm_logprobs, target):
@@ -86,6 +93,7 @@ class BartExtractor(nn.Module):
     def add_cmdline_args(cls, parser):
         group = parser.add_argument_group('BartExtractor')
         group.add_argument("--lm_loss_factor", type=float, default=1.0, help="relative weight of lm_loss in combined loss")
+        group.add_argument("--nofact_weight", type=float, default=None, help="weight for nofact token in loss function")
         group.add_argument("--clf_loss", default=None, choices=['reweighted'], help="variant for classification loss")
         group.add_argument("--decoder_max", type=int, default=50, help="max number of tokens to generate")
         group.add_argument("--bart_base", type=str, default='facebook/bart-large-cnn', help="name of pretrained BART model")
