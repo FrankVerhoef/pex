@@ -321,7 +321,7 @@ class KG_enriched_MSC_Session(MSC_Session):
         }
         stats.update({k: v.item() for k, v in rouge_scores.items()})
 
-        return stats
+        return stats, {} # need to add result_dict
 
 
 if __name__ == "__main__":

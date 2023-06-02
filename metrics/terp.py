@@ -306,3 +306,17 @@ def _get_stats_and_save_heatmaps(eval_file, terp_results_file, session, subset, 
         "terp_recall": terp_recalls,
     }
     return stats 
+
+
+def terp_summary(scores, threshold, num_pred, num_tgt):
+    """
+    Calculate F1, precision and recall for a series of prediction sentences and target sentences
+    """
+        
+    scores = scores.view(num_pred, num_tgt).permute(1,0)
+    matching_predictions = scores <= threshold
+    precision = torch.any(matching_predictions, dim=0).float().mean().item()
+    recall = torch.any(matching_predictions, dim=1).float().mean().item()
+    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
+
+    return {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}

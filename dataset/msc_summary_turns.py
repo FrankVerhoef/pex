@@ -9,22 +9,26 @@ from torchmetrics.functional.classification import binary_confusion_matrix, bina
 from torchmetrics.functional import bleu_score
 from torchmetrics.functional.text.rouge import rouge_score
 from torchmetrics.functional.text.bert import bert_score
-from metrics.terp import TerpMetric
+from metrics.terp import TerpMetric, terp_summary
+from metrics.nli import NLIMetric
 
 import json
 import random
+import itertools
+from ast import literal_eval
 from collections import Counter
 
-from utils.general import prettydict
+from utils.general import prettydict, dict_with_key_prefix
 import utils.logging as logging
 
+TERP_MAXIMUM = 0.6
 
 class MSC_Turns(Dataset):
 
     tokenizer = None
     len_context = 2
     speaker_prefixes = None
-    nofact_token = None
+    nofact_token = ''
     OTHER=0
     SELF=1
     
@@ -258,10 +262,20 @@ class MSC_Turns(Dataset):
                 logging.verbose(f"Evaluated {len(pred_facts)}/{len(self)} samples")
                 interval_counter =- log_interval
 
-        stats = calc_stats_classification(pred_facts, target_facts)
-        stats.update(calc_stats_generation(pred_personas, target_personas, filter_fn=lambda x:x != self.nofact_token))
+        clf_stats, clf_result_dict = calc_stats_classification(pred_facts, target_facts, self.indices)
+        nli_stats, nli_result_dict = calc_stats_nli([self[i][0] for i in range(len(self))], pred_personas, target_personas, self.indices)
+        gen_stats, gen_result_dict = calc_stats_generation(pred_personas, target_personas, self.indices, filter_fn=lambda x:x != self.nofact_token)
+        stats = {**clf_stats, **nli_stats, **gen_stats}
+        result_dict = {
+            (id["dialog_id"], id["turn_id"]): {
+                **clf_result_dict.get((id["dialog_id"], id["turn_id"]), {}),
+                **nli_result_dict.get((id["dialog_id"], id["turn_id"]), {}),
+                **gen_result_dict.get((id["dialog_id"], id["turn_id"]), {}),
+                }
+            for id in self.indices
+        }
 
-        return stats
+        return stats, result_dict
 
 
     @classmethod
@@ -306,9 +320,19 @@ class MSC_Turns(Dataset):
         return pred_personas
 
 
-def calc_stats_classification(pred_facts, target_facts):
+def calc_stats_classification(pred_facts, target_facts, indices):
 
-    # Classification stats    
+    # Collect all individual results
+    result_dict = {}
+    for index, prediction, target in zip(indices, pred_facts, target_facts):
+        turn_id = index['dialog_id'], index['turn_id']
+        result_dict[turn_id] = {
+            "convai_id": index["convai_id"],
+            "pred_fact": prediction,
+            "target_fact": target
+        }
+
+    # Calculate summary lassification stats
     target_facts = torch.tensor(target_facts)
     pred_facts =  torch.tensor(pred_facts)
     stats = {
@@ -318,34 +342,84 @@ def calc_stats_classification(pred_facts, target_facts):
         "recall": binary_recall(pred_facts, target_facts).item(),
         "cm": binary_confusion_matrix(pred_facts, target_facts).tolist()
     }
-    return stats
+    return stats, result_dict
 
-def calc_stats_generation(pred_personas, target_personas, filter_fn):
+def calc_stats_nli(turns, preds, targets, indices):
+    
+    def turn_id(id):
+        return id['dialog_id'], id['turn_id']
+    
+    result_dict = {}
+    nli_pred = NLIMetric()
+    nli_target = NLIMetric()
+    for id, turn, pred, target in zip (indices, turns, preds, targets):
+        nli_pred.update(turn_id(id), turn, pred)
+        nli_target.update(turn_id(id), turn, target)
+    nli_preds = nli_pred.compute()
+    nli_targets = nli_target.compute()
+    result_dict = {
+        turn_id(id): {
+            "nli_pred": nli_preds[turn_id(id)],
+            "nli_target": nli_targets[turn_id(id)]
+        } for id in indices
+    }
+    stats = {
+        "nli_predictions": sum(nli_preds.values()) / max(len(indices) , 1),
+        "nli_targets": sum(nli_targets.values()) / max(len(indices) , 1)
+    }
 
-    # Text generation stats; only on samples where both target and prediction comply with the filter_fn
+    return stats, result_dict
+
+def calc_stats_generation(pred_personas, target_personas, indices, filter_fn):
+
+     # Text generation stats; only on samples where both target and prediction comply with the filter_fn
+    terp_metric = TerpMetric()
+    terp_split_metric = TerpMetric()
+    result_dict = {}
     preds_withfact, targets_withfact = [], []
-    for p, t in zip(pred_personas, target_personas):
+    for index, p, t in zip(indices, pred_personas, target_personas):
+        turn_id = (index['dialog_id'], index['turn_id'])
+        result_dict[turn_id] = {
+            "convai_id": index["convai_id"],
+            "pred_persona": p,
+            "target_persona": t                
+        }
         if filter_fn(p) and filter_fn(t):
             preds_withfact.append(p)
             targets_withfact.append(t)
+            terp_metric.update(str(turn_id), [p], [t])
+            p_split = [part.lower() for part in p.replace('. ', '\n').replace('.', '').split('\n') if part != '']
+            t_split = [part.lower() for part in t.replace('. ', '\n').replace('.', '').split('\n') if part != '']
+            result_dict[turn_id]["len_p_split"] = len(p_split)
+            result_dict[turn_id]["len_t_split"] = len(t_split)
+            combinations = list(itertools.product(p_split, t_split))
+            terp_split_metric.update(str(turn_id), *zip(*combinations))
 
     bleu_2 = bleu_score(preds_withfact, targets_withfact, n_gram=2, smooth=True).item()
     bleu_4 = bleu_score(preds_withfact, targets_withfact, n_gram=4, smooth=True).item()
     rouge_scores = rouge_score(preds_withfact, targets_withfact, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
     bert_scores = bert_score(preds_withfact, targets_withfact, model_name_or_path='bert-base-uncased')
-    terp_metric = TerpMetric()
-    terp_metric.update(0, preds_withfact, targets_withfact)
-    terp_scores = terp_metric.compute()[0]
+    terp_scores = terp_metric.compute()
+    terp_split_scores = terp_split_metric.compute()
+    for turn_id, terp_score in terp_scores.items():
+        result_dict[literal_eval(turn_id)].update({"terp": terp_score.item()})
+        terp_split_summary = terp_summary(
+            terp_split_scores[turn_id], 
+            TERP_MAXIMUM, 
+            result_dict[literal_eval(turn_id)]["len_p_split"], 
+            result_dict[literal_eval(turn_id)]["len_t_split"]
+        )
+        result_dict[literal_eval(turn_id)].update({**dict_with_key_prefix(terp_split_summary, prefix="terp")})
 
     stats = {
         "bleu_2": bleu_2, 
         "bleu_4": bleu_4, 
         "bert_f1": sum(bert_scores['f1']) / max(len(bert_scores['f1']), 1),
-        "terp": terp_scores.mean().item() if torch.numel(terp_scores) != 0 else 0
+        "terp": sum(terp_scores.values()).item() / len(terp_scores) if len(terp_scores) != 0 else None
     }
     stats.update({k: v.item() for k, v in rouge_scores.items()})
 
-    return stats
+    return stats, result_dict
 
 if __name__ == "__main__":
 

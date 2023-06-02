@@ -28,6 +28,7 @@ from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from metrics.terp import TerpMetric
+from metrics.nli import NLIMetric
 from run.tune import do_tune
 from ray.air import session, RunConfig
 from ray.tune import with_resources
@@ -124,11 +125,12 @@ def evaluate(model, testdata, args):
     if args.task == "classify":
         eval_kwargs = {'device': args.device}
     elif args.task == "generate":
-        TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
         if args.device == 'mps':
             args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
+        TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
+        NLIMetric.set(nli_model=args.nli_model, device=args.device)
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': args.batch_size}
     elif args.task == "dialog":
         if args.device == 'mps':
             args.device = 'cpu'
@@ -138,10 +140,10 @@ def evaluate(model, testdata, args):
             testdata.batch_format = "huggingface_x"
 
     logging.info("Evaluating model on {} samples of testdata in {} with arguments {}".format(len(testdata), args.basedir, eval_kwargs))
-    eval_stats = testdata.evaluate(model, **eval_kwargs)
+    eval_stats, result_dict = testdata.evaluate(model, **eval_kwargs)
     logging.report(prettydict(eval_stats, title="Eval_stats"))
 
-    return eval_stats 
+    return eval_stats, result_dict 
 
 
 def prepare_model_and_data(args):
@@ -430,7 +432,8 @@ def train_with_args(config, args):
         if args.use_wandb:
             wandb.run.summary["test_accuracy"] = stats["test_acc"]  
 
-        eval_stats = evaluate(model, testdata, args)
+        eval_stats, result_dict = evaluate(model, testdata, args)
+        save_dict(args.output_dir + savename(args) + '_evalresults.json', result_dict)
         stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
 
@@ -504,6 +507,7 @@ def get_args():
         if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
             print("CHECK: ", vars(args))
             parser = TerpMetric.add_cmdline_args(parser)
+            parser = NLIMetric.add_cmdline_args(parser)
         parser = MSC_Turns.add_cmdline_args(parser)
     elif args.task == "dialog": 
         if args.model == "kg_gen":

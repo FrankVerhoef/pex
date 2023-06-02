@@ -4,7 +4,7 @@ import torch.nn as nn
 import utils.logging as logging
 from utils.general import padded_tensor
 
-from transformers import BartForConditionalGeneration, BartModel, BartConfig, GenerationConfig
+from transformers import BartForConditionalGeneration, BartConfig
 from torchmetrics.functional.text.perplexity import perplexity
 
 

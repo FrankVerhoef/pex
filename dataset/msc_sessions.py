@@ -500,7 +500,7 @@ class MSC_Session(Dataset):
 
         stats = msc_metrics.compute()
 
-        return stats
+        return stats, {} # Need to generate result_dict
 
 if __name__ == "__main__":
     import argparse

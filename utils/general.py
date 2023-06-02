@@ -98,6 +98,7 @@ def load_config(savepath):
 
     return config
 
-def save_dict(savepath, dict):
+def save_dict(savepath, d):
+    d = {str(k): v for k, v in d.items()}
     with open(savepath, 'w') as f:
-        f.write(json.dumps(dict, indent=4))
+        f.write(json.dumps(d, indent=4))

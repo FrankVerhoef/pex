@@ -114,7 +114,7 @@ class MSC_Turn_Facts(MSC_Turns):
             "cm": binary_confusion_matrix(all_preds, all_labels).tolist()
         }
 
-        return stats
+        return stats, {} # need to add result_dict
 
 if __name__ == "__main__":
 
