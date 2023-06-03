@@ -55,14 +55,15 @@ class MSC_Turns(Dataset):
         super(MSC_Turns, self).__init__()
         self.sessions = sessions
         self.subset = subset
-        dialogues = []
+        dialogues = {}
         if sessions is not None:
             for s in self.sessions:
+                dialogues[s] = []
                 filepath = f"{basedir}session_{s}/{subset}.txt"
                 try:
                     with open(filepath, "r") as f:
                         for line in f:
-                            dialogues.append(json.loads(line))
+                            dialogues[s].append(json.loads(line))
                 except FileNotFoundError:
                     logging.warning(f"File '{filepath}' not found -> skipped")
         self.indices, self.turns, self.personas = self.transform(dialogues, max_samples)
@@ -96,23 +97,23 @@ class MSC_Turns(Dataset):
                     - 1: persona sentances Speaker 2
         """
         turns, personas, ids = [], [], []
-        
-        for dialog_id, d in enumerate(dialogues):
-            for i in range(len(d["dialog"]) - self.len_context + 1):
-                
-                turn = []
-                for j in range(self.len_context):
-                    p = self.OTHER if (self.len_context - 1 - j) % 2 == 0  else self.SELF
-                    t = d["dialog"][i+j].get("text","")
-                    turn.append((p, t))
-                turns.append(turn)
+        for s in dialogues.keys():
+            for dialog_id, d in enumerate(dialogues[s]):
+                for i in range(len(d["dialog"]) - self.len_context + 1):
+                    
+                    turn = []
+                    for j in range(self.len_context):
+                        p = self.OTHER if (self.len_context - 1 - j) % 2 == 0  else self.SELF
+                        t = d["dialog"][i+j].get("text","")
+                        turn.append((p, t))
+                    turns.append(turn)
 
-                if "persona_text" in d["dialog"][i+self.len_context-1].keys():
-                    persona = d["dialog"][i+self.len_context-1]["persona_text"]
-                else:
-                    persona = self.nofact_token
-                personas.append(persona)
-                ids.append({"dialog_id": dialog_id, "turn_id": i, "convai_id": d["initial_data_id"]})
+                    if "persona_text" in d["dialog"][i+self.len_context-1].keys():
+                        persona = d["dialog"][i+self.len_context-1]["persona_text"]
+                    else:
+                        persona = self.nofact_token
+                    personas.append(persona)
+                    ids.append({"session": s, "dialog_id": dialog_id, "turn_id": i, "convai_id": d["initial_data_id"]})
         
         if max_samples is not None:
             if max_samples < len(turns):
@@ -133,11 +134,24 @@ class MSC_Turns(Dataset):
             history = '\n'.join([t for p, t in self.turns[i]])
         return history, self.personas[i]
 
+    def find_item(self, turn_id):
+        for i, id in enumerate(self.indices):
+            if turn_id == (id["session"], id["dialog_id"], id["turn_id"]):
+                return self[i]
+        return None
+
+    def find_index(self, turn_id):
+        for i, id in enumerate(self.indices):
+            if turn_id == (id["session"], id["dialog_id"], id["turn_id"]):
+                return i
+        return None
+
     def corpus(self):
         return [' '.join([*self[i]]) for i in range(len(self.turns))]
 
     def item_measurements(self, i):
         stats = {
+            "session": self.indices[i]["session"],
             "dialog_id": self.indices[i]["dialog_id"],
             "turn_id": self.indices[i]["turn_id"],
             "convai_id": self.indices[i]["convai_id"],
@@ -267,10 +281,10 @@ class MSC_Turns(Dataset):
         gen_stats, gen_result_dict = calc_stats_generation(pred_personas, target_personas, self.indices, filter_fn=lambda x:x != self.nofact_token)
         stats = {**clf_stats, **nli_stats, **gen_stats}
         result_dict = {
-            (id["dialog_id"], id["turn_id"]): {
-                **clf_result_dict.get((id["dialog_id"], id["turn_id"]), {}),
-                **nli_result_dict.get((id["dialog_id"], id["turn_id"]), {}),
-                **gen_result_dict.get((id["dialog_id"], id["turn_id"]), {}),
+            (id["session"], id["dialog_id"], id["turn_id"]): {
+                **clf_result_dict.get((id["session"], id["dialog_id"], id["turn_id"]), {}),
+                **nli_result_dict.get((id["session"], id["dialog_id"], id["turn_id"]), {}),
+                **gen_result_dict.get((id["session"], id["dialog_id"], id["turn_id"]), {}),
                 }
             for id in self.indices
         }
@@ -325,7 +339,7 @@ def calc_stats_classification(pred_facts, target_facts, indices):
     # Collect all individual results
     result_dict = {}
     for index, prediction, target in zip(indices, pred_facts, target_facts):
-        turn_id = index['dialog_id'], index['turn_id']
+        turn_id = index["session"], index['dialog_id'], index['turn_id']
         result_dict[turn_id] = {
             "convai_id": index["convai_id"],
             "pred_fact": prediction,
@@ -347,7 +361,7 @@ def calc_stats_classification(pred_facts, target_facts, indices):
 def calc_stats_nli(turns, preds, targets, indices):
     
     def turn_id(id):
-        return id['dialog_id'], id['turn_id']
+        return id["session"], id['dialog_id'], id['turn_id']
     
     result_dict = {}
     nli_pred = NLIMetric()
@@ -378,7 +392,7 @@ def calc_stats_generation(pred_personas, target_personas, indices, filter_fn):
     result_dict = {}
     preds_withfact, targets_withfact = [], []
     for index, p, t in zip(indices, pred_personas, target_personas):
-        turn_id = (index['dialog_id'], index['turn_id'])
+        turn_id = (index["session"], index['dialog_id'], index['turn_id'])
         result_dict[turn_id] = {
             "convai_id": index["convai_id"],
             "pred_persona": p,
