@@ -129,7 +129,7 @@ def evaluate(model, testdata, args):
             args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
         TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
-        NLIMetric.set(nli_model=args.nli_model, device=args.device)
+        NLIMetric.set(nli_model=args.nli_model, device=args.device, batch_size=args.batch_size)
         eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': args.batch_size}
     elif args.task == "dialog":
         if args.device == 'mps':
