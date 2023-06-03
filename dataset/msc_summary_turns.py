@@ -48,7 +48,7 @@ class MSC_Turns(Dataset):
         group.add_argument("--nofact_token", default='', type=str, help="Token to identify no_fact, default=''")
         group.add_argument("--add_tokens", default=None, nargs='*', help="Tokens to add to tokenizer")
         group.add_argument("--len_context", default=2, type=int, help="Number of utterances to include in context")
-        group.add_argument("--sessions", default=[1], nargs='+', help="MSC sessions to include in dataset")
+        group.add_argument("--sessions", default=[1], type=int, nargs='+', help="MSC sessions to include in dataset")
         return parser
 
     def __init__(self, basedir='./', sessions=None, subset='train', max_samples=None):
@@ -412,7 +412,7 @@ def calc_stats_generation(pred_personas, target_personas, indices, filter_fn):
     bleu_2 = bleu_score(preds_withfact, targets_withfact, n_gram=2, smooth=True).item()
     bleu_4 = bleu_score(preds_withfact, targets_withfact, n_gram=4, smooth=True).item()
     rouge_scores = rouge_score(preds_withfact, targets_withfact, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
-    bert_scores = bert_score(preds_withfact, targets_withfact, model_name_or_path='bert-base-uncased')
+    # bert_scores = bert_score(preds_withfact, targets_withfact, model_name_or_path='bert-base-uncased')
     terp_scores = terp_metric.compute()
     terp_split_scores = terp_split_metric.compute()
     for turn_id, terp_score in terp_scores.items():
@@ -428,7 +428,7 @@ def calc_stats_generation(pred_personas, target_personas, indices, filter_fn):
     stats = {
         "bleu_2": bleu_2, 
         "bleu_4": bleu_4, 
-        "bert_f1": sum(bert_scores['f1']) / max(len(bert_scores['f1']), 1),
+        # "bert_f1": sum(bert_scores['f1']) / max(len(bert_scores['f1']), 1),
         "terp": sum(terp_scores.values()).item() / len(terp_scores) if len(terp_scores) != 0 else None
     }
     stats.update({k: v.item() for k, v in rouge_scores.items()})
