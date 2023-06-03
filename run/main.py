@@ -433,7 +433,8 @@ def train_with_args(config, args):
             wandb.run.summary["test_accuracy"] = stats["test_acc"]  
 
         eval_stats, result_dict = evaluate(model, testdata, args)
-        save_dict(args.output_dir + savename(args) + '_evalresults.json', result_dict)
+
+        save_dict(args.output_dir + (args.load if args.load != "" else savename(args)) + '_evalresults.json', result_dict)
         stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
 
@@ -555,7 +556,8 @@ if __name__ == "__main__":
     else:
         stats = train_with_args(config=None, args=args)
         logging.success(prettydict(stats, title="Overview of stats"))
-        save_dict(args.output_dir + savename(args) + "_stats.json", stats)
-        logging.info(f"Stats saved in {args.output_dir + savename(args)}_stats.json")
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) +  "_stats.json"
+        save_dict(savepath, stats)
+        logging.info(f"Stats saved in {savepath}")
 
 
