@@ -303,7 +303,7 @@ class KG_enriched_MSC_Session(MSC_Session):
             interval_counter += len(pred_responses)
             if interval_counter >= log_interval:
                 logging.verbose(f"Evaluated {len(pred_responses)}/{self.__len__()} samples")
-                interval_counter =- log_interval
+                interval_counter -= log_interval
 
         logging.info(f"Completed evaluation of {len(pred_responses)} samples")
 

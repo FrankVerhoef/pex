@@ -494,7 +494,7 @@ class MSC_Session(Dataset):
             interval_counter += B
             if interval_counter >= log_interval:
                 logging.verbose(f"Evaluated {len(all_responses)}/{len(self)} samples")
-                interval_counter =- log_interval
+                interval_counter -= log_interval
 
         logging.info(f"Completed evaluation of {len(all_responses)} samples")
 
