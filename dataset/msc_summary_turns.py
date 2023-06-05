@@ -276,6 +276,7 @@ class MSC_Turns(Dataset):
                 logging.verbose(f"Evaluated {len(pred_facts)}/{len(self)} samples")
                 interval_counter -= log_interval
 
+        logging.info("Start calculating stats")
         clf_stats, clf_result_dict = calc_stats_classification(pred_facts, target_facts, self.indices)
         nli_stats, nli_result_dict = calc_stats_nli([self[i][0] for i in range(len(self))], pred_personas, target_personas, self.indices)
         gen_stats, gen_result_dict = calc_stats_generation(pred_personas, target_personas, self.indices, filter_fn=lambda x:x != self.nofact_token)
