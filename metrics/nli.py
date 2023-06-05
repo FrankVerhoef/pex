@@ -57,11 +57,9 @@ class NLIMetric(Metric):
             output = self.nli_model(**encoded)
 
             # Collect the statistics
-            # we throw away "neutral" (dim 1) and take the probability of
-            # "entailment" (2) as the probability of the label being true 
-            entail_contradiction_logits = output.logits[:,[0,2]]
+            entail_contradiction_logits = output.logits 
             probs = entail_contradiction_logits.softmax(dim=1)
-            stats.update({inf: prob[1].item() for inf, prob in zip(info, probs)})
+            stats.update({inf: prob[2].item() for inf, prob in zip(info, probs)})
 
         return stats
 
