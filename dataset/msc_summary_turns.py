@@ -294,7 +294,7 @@ class MSC_Turns(Dataset):
 
 
     @classmethod
-    def predict_from_utterances(cls, utterances=[], model=None, device="cpu", decoder_max=20):
+    def predict_from_utterances(cls, utterances=[], model=None, device="cpu", decoder_max=20, batch_size=1):
         assert model is not None, "No model specified to use for predictions"
         assert len(utterances) % 2 == 0, f"Received {len(utterances)} utterances, this should be an even number"
         dataset = cls()
@@ -302,7 +302,7 @@ class MSC_Turns(Dataset):
             dataset.turns = [[(0, utterances[i][1]), (1, utterances[i + 1][1])] for i in range(0, len(utterances), 2)]
             dataset.personas = [None for i in range(0, len(utterances), 2)]
         turns = [(dataset[i][0], "") for i in range(len(dataset))]
-        pred_personas = cls.predict(turns, model, device, decoder_max)
+        pred_personas = cls.predict(turns, model, device, decoder_max, batch_size)
         return pred_personas
 
 
