@@ -229,6 +229,7 @@ class MSC_Session(Dataset):
             personas = d.get("personas", None)  # The persona sentences ('facts') that were infered from the dialogue
             init_personas = d.get("init_personas", None)  # The initial persona sentences from ConvAI2 dataset
             previous_dialogs = d.get("previous_dialogs", None)
+            metadata = d.get("metadata", None)
 
             init_info = {"Speaker 1": [], "Speaker 2": []} # two sets, one for each speaker
             summary_info = {"Speaker 1": [], "Speaker 2": []}
@@ -290,7 +291,7 @@ class MSC_Session(Dataset):
 
                 next_utterance = current_utterances[len_history]
                 all_next_utterance.append(next_utterance)
-                all_indices.append({"session": int(str(self.session)[0]), "dialog_id": dialog_id, "turn_id": len_history, "convai_id": d["metadata"]["initial_data_id"]})
+                all_indices.append({"session": int(str(self.session)[0]), "dialog_id": dialog_id, "turn_id": len_history, "convai_id": "" if metadata is None else metadata.get("initial_data_id", "")})
 
         # In case of augmented dataset, check if we need to resample again
         if self.augmented and (max_samples is not None):
