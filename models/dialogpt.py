@@ -24,12 +24,6 @@ class DialoGPT(PreTrainedModel):
     def forward(self, **kwargs):
         return self.model(**kwargs)
 
-    def _shift_labels_right(self, labels):
-        B = labels.shape[0]
-        bos_tokens = torch.full((B, 1), fill_value=self.bos_token_id, dtype=torch.long, device=labels.device)
-        shifted_labels = torch.cat([bos_tokens, labels[:, :-1].view(B, -1)], dim=1)
-        return shifted_labels
-
     def train_step(self, batch, optimizer, criterion, device):
 
         inputs = batch.to(device)
