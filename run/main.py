@@ -32,7 +32,7 @@ from metrics.nli import NLIMetric
 from run.tune import do_tune
 from ray.air import session, RunConfig
 from ray.tune import with_resources
-from utils.general import savename, prettydict, dict_with_key_prefix, save_config, save_dict
+from utils.general import savename, prettydict, dict_with_key_prefix, save_config, load_config, save_dict
 from utils.listdict import ListDict
 import utils.logging as logging
 
@@ -322,8 +322,8 @@ def prepare_model_and_data(args):
             model.model.resize_token_embeddings(len(tokenizer))
             criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
-            MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes)
-
+            MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes, sessionbreak_token=args.sessionbreak_token)
+ 
             dataset_config = {
                 'basedir': args.datadir + args.basedir,
                 'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
@@ -336,8 +336,8 @@ def prepare_model_and_data(args):
                 # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
                 loadpath = args.checkpoint_dir + args.persona_selector
                 logging.info("Loading persona_selector from {}".format(loadpath))
-                with open(loadpath + '.config', 'r') as f:
-                    bart_config = json.loads(f.read())
+                bart_config = load_config(loadpath + '.config')
+                assert bart_config["speaker_prefixes"] == args.speaker_prefixes, f"persona selector was trained with speaker prefixes {bart_config['speaker_prefixes']}, current dataset has speaker prefixes {args.speaker_prefixes}"
                 bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
                 if bart_config['add_tokens'] is not None:
                     bart_tokenizer.add_tokens(bart_config['add_tokens'])
@@ -355,9 +355,9 @@ def prepare_model_and_data(args):
                     tokenizer=bart_tokenizer, 
                     len_context=2, 
                     speaker_prefixes=bart_config['speaker_prefixes'], 
-                    nofact_token=bart_nofact_token_id
+                    nofact_token=bart_config['nofact_token']
                 )
-                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device)
+                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device, batch_size=args.batch_size)
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 if args.action in ['tune', 'train']:
@@ -405,7 +405,7 @@ def train_with_args(config, args):
             args.valid_interval = len(train_loader)
 
         logging.info("Start training")
-        logging.info("Use train/valid dataset with {}/{} samples".format(len(traindata), len(validdata)))
+        logging.info(f"Use train/valid dataset with {len(traindata)}/{len(validdata)} samples")
  
         model, valid_stats = train(
             model, train_loader, valid_loader, optimizer, criterion, 
@@ -423,6 +423,7 @@ def train_with_args(config, args):
     if args.action in ['train', 'eval'] and not args.skip_eval:
 
         logging.info("Start testing")
+        logging.info(f"Use test dataset with {len(testdata)} samples")
         test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
         test_stats = valid(model, test_loader, criterion, device=args.device)
 

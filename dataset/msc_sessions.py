@@ -101,7 +101,7 @@ class MSC_Session(Dataset):
         group.add_argument("--include_persona", default=False, action='store_true')
         group.add_argument("--include_history", default=False, action='store_true')
         group.add_argument("--input_order", default='personas-history-current', choices=INPUT_ORDER_OPTIONS)
-        group.add_argument("--sessionbreak_token", default=None, action='store_true')
+        group.add_argument("--sessionbreak_token", type=str, default=None, help="Token to insert to mark separation between dialogue sessions")
         group.add_argument("--session", default=2, type=int, help="MSC session to include in dataset")
         group.add_argument("--augmented", default=False, action='store_true', help='add all shorter versions of the dialogue to training set')
         group.add_argument("--persona_selector", type=str, default=None, help="Model to select relevant persona sentences")
@@ -246,7 +246,7 @@ class MSC_Session(Dataset):
 
             if self.include_persona:
 
-                if self.sessionbreak_token:
+                if self.sessionbreak_token is not None:
                     init_info = {"Speaker 1": [("Nobody", "personas")], "Speaker 2": [("Nobody", "personas")]}
                 if init_personas is not None:
                     init_info["Speaker 1"] += [("Speaker 1", t) for t in init_personas[0]]
@@ -292,6 +292,14 @@ class MSC_Session(Dataset):
                 all_next_utterance.append(next_utterance)
                 all_indices.append({"session": int(str(self.session)[0]), "dialog_id": dialog_id, "turn_id": len_history, "convai_id": d["metadata"]["initial_data_id"]})
 
+        # In case of augmented dataset, check if we need to resample again
+        if self.augmented and (max_samples is not None):
+            if max_samples < len(all_indices):
+                selected_sample_ids = random.sample(range(len(all_indices)), max_samples)
+                all_indices = [all_indices[i] for i in selected_sample_ids]
+                all_history = [all_history[i] for i in selected_sample_ids]
+                all_next_utterance = [all_next_utterance[i] for i in selected_sample_ids]
+
         return all_indices, all_history, all_next_utterance
         
     def __len__(self):
@@ -306,11 +314,11 @@ class MSC_Session(Dataset):
 
         # Compose history and next utterance
         if self.speaker_prefixes is not None:
-            history = '\n'.join([self.speaker_prefixes[mapping[p]] + t for p, t in self.history[i]])
-            next_utterance = self.next_utterance[i][1] # Do not include speaker prefix for target
+            history = '\n'.join([self.speaker_prefixes[mapping[p]] + t for p, t in self.history[i]]) + '\n'
+            next_utterance = self.speaker_prefixes["me"] + self.next_utterance[i][1] +'\n' # Also include speaker prefix for target
         else:
-            history = '\n'.join([t for _, t in self.history[i]])
-            next_utterance = self.next_utterance[i][1]
+            history = '\n'.join([t for _, t in self.history[i]]) + '\n'
+            next_utterance = self.next_utterance[i][1] +'\n'
         return history, next_utterance
     
 
@@ -400,12 +408,12 @@ class MSC_Session(Dataset):
 
             if with_labels:
 
-                # use right padding OR LEFT ????
-                # add <bos> token between context and target
-                # add <eos> token at end of all targets (necessary to make sure 'shift_right' of labels is possible )
+                # use left padding
+                # all utterances are separated by '\n', so no need to add <bos> token
+                # no <eos> token at end, because end of target is marked by '\n'
                 cls.tokenizer.padding_side = 'left'
                 encoded = cls.tokenizer(
-                    [history + cls.tokenizer.bos_token + next_utterance + cls.tokenizer.eos_token for history, next_utterance in data],
+                    [history + next_utterance for history, next_utterance in data],
                     padding=True,
                     return_attention_mask=True,
                     return_tensors='pt',
@@ -440,8 +448,6 @@ class MSC_Session(Dataset):
             encoded = cls.tokenizer(
                 history_batch, 
                 padding=True, 
-                # max_length=cls.tokenizer.model_max_length - buffer,
-                # truncation=True,
                 return_attention_mask=True,
                 return_tensors='pt'
             )
@@ -449,14 +455,10 @@ class MSC_Session(Dataset):
             if with_labels:
                 
                 # use right padding for labels
-                # do not add <bos> token between context and target
-                # add 'eos_token' at end of all labels (necessary to make sure 'shift_right' of labels is possible )
                 cls.tokenizer.padding_side = 'right'
                 labels = cls.tokenizer(
-                    [next_utterance + cls.tokenizer.eos_token for next_utterance in next_utterance_batch],
+                    next_utterance_batch,
                     padding=True, 
-                    # max_length=cls.tokenizer.model_max_length,
-                    # truncation=True,
                     return_attention_mask=True,
                     return_tensors='pt'            
                 )
@@ -515,12 +517,10 @@ class MSC_Session(Dataset):
             targets = [label for _, label in data]
             inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=decoder_max)
             B, L = inputs.input_ids.shape[:2]
-            bos_tokens = torch.full((B, 1), fill_value=model.bos_token_id, dtype=torch.long, device=inputs.input_ids.device)
 
             with torch.no_grad():
                 output = model.model.generate(
-                    # Add the bos_token to the input
-                    inputs=torch.cat([inputs.input_ids, bos_tokens], dim=1).to(device), 
+                    inputs = inputs.input_ids.to(device), 
                     generation_config=GenerationConfig(
                         pad_token_id=model.model.config.eos_token_id,
                         use_cache=True,
@@ -531,7 +531,7 @@ class MSC_Session(Dataset):
                         return_dict_in_generate=True
                     )
                 )
-            responses = self.tokenizer.batch_decode(output.sequences[:, L+1:].to("cpu")) # Do not include <bos> token in response
+            responses = self.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"))
             all_responses.extend(responses)
 
             if print_max > 0:
