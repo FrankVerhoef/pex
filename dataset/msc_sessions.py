@@ -29,7 +29,10 @@ INPUT_ORDER_OPTIONS = ['personas-history-current', 'history-personas-current']
 class MSC_Metrics:
 
     def __init__(self, ignore_index, device):
-        self.avg_truncated_tokens = MeanMetric()
+        self.indices = []
+        self.responses = []
+        self.targets = []
+        self.perc_truncated_tokens = torch.tensor([])
         self.perplexity = Perplexity(ignore_index=ignore_index).to(device)
         self.sacreblue4_score = SacreBLEUScore(n_gram=4)
         self.bleu2_score = BLEUScore(n_gram=2, smooth=True)
@@ -39,13 +42,17 @@ class MSC_Metrics:
         self.meteor = evaluate.load("meteor")
         self.google_bleu = evaluate.load("google_bleu")
 
-    def update(self, responses, targets, input_batch, label_batch, output_batch):
+    def update(self, responses, targets, input_batch, label_batch, output_batch, indices):
     
+        self.indices.extend(indices)
+        self.responses.extend(responses)
+        self.targets.extend(targets)
         if hasattr(input_batch, "num_truncated_tokens"):
-            self.avg_truncated_tokens.update(
-                value=input_batch.num_truncated_tokens / max(input_batch.num_original_tokens, 1), 
-                weight=input_batch.input_ids.shape[0]
+            avg_truncation = torch.div(
+                input_batch.num_truncated_tokens.float(), 
+                torch.maximum(input_batch.num_original_tokens, torch.ones_like(input_batch.num_original_tokens)),
             )
+            self.perc_truncated_tokens = torch.cat([self.perc_truncated_tokens, avg_truncation], dim=0)
         scores = torch.cat(output_batch.scores, dim=-1).view(label_batch.input_ids.shape + (-1,))
         self.perplexity.update(scores, label_batch.input_ids.to(scores.device))
         self.sacreblue4_score.update(responses, targets)
@@ -58,11 +65,26 @@ class MSC_Metrics:
 
     def compute(self):
 
+        def turn_id(id):
+            return id["session"], id['dialog_id'], id['turn_id']
+
         rouge_scores = self.rouge_score.compute()
         bert_scores = self.bert_score.compute()
 
+        result_dict = {
+            turn_id(id): {
+                'input_truncation': self.perc_truncated_tokens[i].item(),
+                'pred_response': self.responses[i],
+                'target_response': self.targets[i],
+                "bert_f1": bert_scores['f1'][i],
+                "bert_precision": bert_scores['precision'][i],
+                "bert_recall": bert_scores['recall'][i]
+            }
+            for i, id in enumerate(self.indices)
+        }
+
         stats = {
-            "truncation": self.avg_truncated_tokens.compute().item(),
+            "truncation": self.perc_truncated_tokens.mean().item() if len(self.perc_truncated_tokens) > 0 else 0,
             "perplexity": self.perplexity.compute().item(),
             "sacreblue_4": self.sacreblue4_score.compute().item(),
             "bleu_2": self.bleu2_score.compute().item(), 
@@ -73,8 +95,8 @@ class MSC_Metrics:
         stats.update(self.meteor.compute())
         stats.update(self.google_bleu.compute())
 
-        return stats
-        
+        return stats, result_dict
+    
 
 class MSC_Session(Dataset):
     
@@ -270,7 +292,7 @@ class MSC_Session(Dataset):
                     # Extract facts from the utterances, for Speaker 1 and Speaker 2
                     summary_info["Speaker 1"] = [("Speaker 1", t) for t in self.persona_selector(turns_speaker1)]
                     summary_info["Speaker 2"] = [("Speaker 2", t) for t in self.persona_selector(turns_speaker2)]
-                    logging.spam(f"Extracted {len(summary_info['Speaker 1'])}+{len(summary_info['Speaker 2'])} facts from selected dialog {dialog_nr}")
+                    logging.verbose(f"Extracted {len(summary_info['Speaker 1'])}+{len(summary_info['Speaker 2'])} facts from selected dialog {dialog_nr}")
 
             if not self.include_history: 
                 previous_utterances = []
@@ -307,14 +329,12 @@ class MSC_Session(Dataset):
         return len(self.history)
     
     def __getitem__(self, i):
-        # Determine who is the next speaker
-        speakers = [speaker for speaker, _ in self.history[i] if speaker != "Nobody"]
-        mapping = {"Speaker 1": "me", "Speaker 2": "you", "Nobody": "sessionbreak"}
-        if len(speakers) > 0 and speakers[-1] == 'Speaker 1':
-            mapping = {"Speaker 1": "you", "Speaker 2": "me", "Nobody": "sessionbreak"}
 
         # Compose history and next utterance
         if self.speaker_prefixes is not None:
+            # Determine who is Speaker 1 and Speaker 2
+            mapping = self._get_speaker_mapping(i)
+            # Put the right prefix before the utterance
             history = '\n'.join([self.speaker_prefixes[mapping[p]] + t for p, t in self.history[i]]) + '\n'
             next_utterance = self.speaker_prefixes["me"] + self.next_utterance[i][1] +'\n' # Also include speaker prefix for target
         else:
@@ -322,24 +342,23 @@ class MSC_Session(Dataset):
             next_utterance = self.next_utterance[i][1] +'\n'
         return history, next_utterance
     
+    def _get_speaker_mapping(self, i):
+        # Determine who is Speaker 1 and Speaker 2 (who is 'you', who is 'me')
+        speakers = [speaker for speaker, _ in self.history[i] if speaker != "Nobody"]
+        mapping = {"Speaker 1": "me", "Speaker 2": "you", "Nobody": "sessionbreak"}
+        if len(speakers) > 0 and speakers[-1] == 'Speaker 1':
+            mapping = {"Speaker 1": "you", "Speaker 2": "me", "Nobody": "sessionbreak"}
+        return mapping
 
     def save_dialogue_fig(self, i, savedir='./'):
 
-        def split_speaker_and_text(turn):
-            for speaker_id, speaker_prefix in self.speaker_prefixes.items():
-                prefix_len = len(speaker_prefix)
-                if turn[:prefix_len] == speaker_prefix:
-                    return speaker_id, textwrap.wrap(turn[prefix_len:], width=45)
-            assert False, f"None of the speaker prefixes {self.speaker_prefixes.values()} found in turn: {turn}"
-
-        history, next_utterance = self[i]
         dialog_id = self.indices[i]
+        mapping = self._get_speaker_mapping(i)
+        wrapped_turns = [(mapping[p], textwrap.wrap(t, width=45)) for p, t in self.history[i] + [self.next_utterance[i]]]
 
         variant = f"{'no' if not self.include_persona else ''}persona" + f"_{'and_' if self.include_history and self.include_persona else 'no'}history"
         title=f"Dataset: session_{self.session}/{self.subset}, dialog_id: {dialog_id['dialog_id']}\nvariant: {variant}"
 
-        turns = history.split('\n')
-        wrapped_turns = [split_speaker_and_text(t) for t in turns + [self.speaker_prefixes["me"] + next_utterance]]
         savepath = savedir + f"dialogfig_session_{self.session}_{self.subset}_{dialog_id['dialog_id']:06d}:{dialog_id['turn_id']:02d}_{variant}" + ".jpg"
         save_dialogue_fig(wrapped_turns, title, savepath)
 
@@ -432,15 +451,15 @@ class MSC_Session(Dataset):
                 )
 
             # Manual truncation, necessary to calculate truncation percentage
-            encoded.num_original_tokens = encoded.attention_mask.sum().item()
-            encoded.num_truncated_tokens = 0
+            encoded.num_original_tokens = encoded.attention_mask.sum(dim=1)
+            encoded.num_truncated_tokens = torch.zeros(len(data))
             truncated_size = encoded.input_ids.shape[1] + (buffer if not with_labels else 0) - cls.tokenizer.model_max_length
             if truncated_size > 0:
-                encoded.num_truncated_tokens = encoded.attention_mask[:, :truncated_size].sum().item()
+                encoded.num_truncated_tokens = encoded.attention_mask[:, :truncated_size].sum(dim=1)
                 encoded["input_ids"] = encoded.input_ids[:, truncated_size:]
                 encoded["attention_mask"] = encoded.attention_mask[:, truncated_size:]
-            encoded.num_tokens = encoded.attention_mask.sum().item()
-            logging.spam(f"Encoded shape={encoded.input_ids.shape}, num_truncated_tokens={encoded.num_truncated_tokens}, {(encoded.num_truncated_tokens / encoded.num_original_tokens):.2%}")
+            encoded.num_tokens = encoded.attention_mask.sum(dim=1)
+            logging.spam(f"Encoded shape={encoded.input_ids.shape}, num_truncated_tokens={encoded.num_truncated_tokens.sum().item()}, {torch.div(encoded.num_truncated_tokens, encoded.num_original_tokens).mean().item():.2%}")
 
         elif batch_format == "huggingface_xysplit":
 
@@ -464,16 +483,15 @@ class MSC_Session(Dataset):
                     return_tensors='pt'            
                 )
 
-            encoded.num_original_tokens = encoded.attention_mask.sum().item()
-            encoded.num_truncated_tokens = 0
+            encoded.num_original_tokens = encoded.attention_mask.sum(dim=1)
+            encoded.num_truncated_tokens = torch.zeros(len(data))
             truncated_size = encoded.input_ids.shape[1] + (buffer if not with_labels else labels.input_ids.shape[1]) - cls.tokenizer.model_max_length
             if truncated_size > 0:
-                encoded.num_truncated_tokens = encoded.attention_mask[:, :truncated_size].sum().item()
+                encoded.num_truncated_tokens = encoded.attention_mask[:, :truncated_size].sum(dim=1)
                 encoded["input_ids"] = encoded.input_ids[:, truncated_size:]
                 encoded["attention_mask"] = encoded.attention_mask[:, truncated_size:]
-            encoded.num_tokens = encoded.attention_mask.sum().item()
-            logging.spam(f"Encoded shape={encoded.input_ids.shape}, num_truncated_tokens={encoded.num_truncated_tokens}, {(encoded.num_truncated_tokens / encoded.num_original_tokens):.2%}")
-
+            encoded.num_tokens = encoded.attention_mask.sum(dim=1)
+            logging.spam(f"Encoded shape={encoded.input_ids.shape}, num_truncated_tokens={encoded.num_truncated_tokens.sum().item()}, {torch.div(encoded.num_truncated_tokens, encoded.num_original_tokens).mean().item():.2%}")
             if with_labels:
                 encoded = encoded, labels
 
@@ -515,6 +533,7 @@ class MSC_Session(Dataset):
 
         for start_index in range(0, len(self), batch_size):
             data = [self[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
+            indices = [self.indices[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
             targets = [label for _, label in data]
             inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=decoder_max)
             B, L = inputs.input_ids.shape[:2]
@@ -528,6 +547,7 @@ class MSC_Session(Dataset):
                         num_beams=1,
                         do_sample=False,
                         max_new_tokens=labels.input_ids.shape[1],
+                        # eos_token_id=[self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]],
                         output_scores=True,
                         return_dict_in_generate=True
                     )
@@ -539,7 +559,7 @@ class MSC_Session(Dataset):
                 print_responses(data, responses)
                 print_max -= len(data)
 
-            msc_metrics.update(responses, targets, inputs, labels, output)
+            msc_metrics.update(responses, targets, inputs, labels, output, indices)
 
             interval_counter += B
             if interval_counter >= log_interval:
@@ -548,9 +568,43 @@ class MSC_Session(Dataset):
 
         logging.info(f"Completed evaluation of {len(all_responses)} samples")
 
-        stats = msc_metrics.compute()
+        stats, result_dict = msc_metrics.compute()
 
-        return stats, {} # Need to generate result_dict
+        return stats, result_dict
+
+
+    @classmethod
+    def predict(cls, input, model, device="cpu", decoder_max=20, batch_size=1):
+
+        model = model.to(device)
+        model.eval()
+        all_responses = []
+
+        for start_index in range(0, len(input), batch_size):
+            data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
+            inputs = input.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=decoder_max)
+            B, L = inputs.input_ids.shape[:2]
+
+            with torch.no_grad():
+                output = model.model.generate(
+                    inputs = inputs.input_ids.to(device), 
+                    generation_config=GenerationConfig(
+                        pad_token_id=model.model.config.eos_token_id,
+                        use_cache=True,
+                        num_beams=1,
+                        do_sample=False,
+                        max_new_tokens=decoder_max,
+                        eos_token_id=[cls.tokenizer.eos_token_id, cls.tokenizer.encode('\n')[0]],
+                        output_scores=True,
+                        return_dict_in_generate=True
+                    )
+                )
+            responses = cls.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"))
+            responses = [r.split('\n')[0] for r in responses]  # use only the first utterance, up to '\n'
+            all_responses.extend(responses)
+
+        return all_responses
+
 
 if __name__ == "__main__":
     import argparse
@@ -590,16 +644,16 @@ if __name__ == "__main__":
     basedir = 'msc/msc_dialogue/'
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     subset = 'train'
-    session = 3
-    persona_selector = 'test_bart'
+    session = 4
+    persona_selector = None 
     # session = "preprocessed:session_3_train_withprefixes_selectedpersona_withhistory"
-    # persona_selector = None
+    # persona_selector = 'test_bart'
     if session == 1:
         version = ['both', 'revised']
         session = '-'.join(['1'] + version)
-    speaker_prefixes = ['<other>', '<self>']
-    sessionbreak_token = '<sessionbreak>'
-    add_tokens = speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
+    speaker_prefixes = None #['<other>', '<self>']
+    sessionbreak_token = None #'<sessionbreak>'
+    add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
     include_persona = True
     include_history = True
     input_order = INPUT_ORDER_OPTIONS[1]
