@@ -7,7 +7,6 @@ import torch
 from torchmetrics import SacreBLEUScore, BLEUScore,  MeanMetric
 from torchmetrics.text.rouge import ROUGEScore
 from torchmetrics.text.bert import BERTScore
-from torchmetrics.text.perplexity import Perplexity
 import evaluate
 
 from torch.utils.data import Dataset
@@ -33,7 +32,6 @@ class MSC_Metrics:
         self.responses = []
         self.targets = []
         self.perc_truncated_tokens = torch.tensor([])
-        self.perplexity = Perplexity(ignore_index=ignore_index).to(device)
         self.sacreblue4_score = SacreBLEUScore(n_gram=4)
         self.bleu2_score = BLEUScore(n_gram=2, smooth=True)
         self.bleu4_score = BLEUScore(n_gram=4, smooth=True)
@@ -53,9 +51,6 @@ class MSC_Metrics:
                 torch.maximum(input_batch.num_original_tokens, torch.ones_like(input_batch.num_original_tokens)),
             )
             self.perc_truncated_tokens = torch.cat([self.perc_truncated_tokens, avg_truncation], dim=0)
-        len_scores = len(output_batch.scores)
-        scores = torch.cat(output_batch.scores, dim=-1).view(label_batch.input_ids.shape[0], len_scores, -1)
-        self.perplexity.update(scores, label_batch.input_ids[:, :len_scores].to(scores.device))
         self.sacreblue4_score.update(responses, targets)
         self.bleu2_score.update(responses, targets)
         self.bleu4_score.update(responses, targets)
@@ -86,7 +81,6 @@ class MSC_Metrics:
 
         stats = {
             "truncation": self.perc_truncated_tokens.mean().item() if len(self.perc_truncated_tokens) > 0 else 0,
-            "perplexity": self.perplexity.compute().item(),
             "sacreblue_4": self.sacreblue4_score.compute().item(),
             "bleu_2": self.bleu2_score.compute().item(), 
             "bleu_4": self.bleu4_score.compute().item(),             
@@ -651,12 +645,12 @@ if __name__ == "__main__":
     if session == 1:
         version = ['both', 'revised']
         session = '-'.join(['1'] + version)
-    speaker_prefixes = None #['<other>', '<self>']
-    sessionbreak_token = None #'<sessionbreak>'
+    speaker_prefixes = ['<other>', '<self>']
+    sessionbreak_token = '<sessionbreak>'
     add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
     include_persona = True
     include_history = True
-    input_order = INPUT_ORDER_OPTIONS[1]
+    input_order = INPUT_ORDER_OPTIONS[0]
     max_samples = 5
 
     augmented = False

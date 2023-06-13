@@ -61,7 +61,7 @@ class DialoGPT(PreTrainedModel):
         token_acc = (token_correct.sum() / inputs.attention_mask[:, 1:].sum()).item() 
 
         # LM perplexity
-        ppl = perplexity(preds=logits, target=inputs.input_ids[:, 1:], ignore_index=self.model.config.pad_token_id).item()
+        ppl = perplexity(preds=logits, target=inputs.input_ids[:, 1:], ignore_index=criterion.ignore_index).item()
 
         stats = {
             "loss": loss.mean().item(),

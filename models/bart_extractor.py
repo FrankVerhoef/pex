@@ -13,6 +13,7 @@ class ConditionalFactLoss(nn.Module):
     def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5):
         super().__init__()
         self.nofact_token_id = nofact_token_id
+        self.ignore_index = ignore_index
         self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
         self.lm_weight = lm_weight
 
@@ -50,6 +51,7 @@ class ExtractedFactLoss(nn.Module):
         assert True if clf_loss is None else clf_loss == 'reweighted', f"Invalid value for clf_loss '{clf_loss}'"
         self.nofact_token_id = nofact_token_id
         self.clf_loss = clf_loss
+        self.ignore_index = ignore_index
         if nofact_weight is not None:
             weight = torch.ones(num_tokens)
             weight[nofact_token_id] = nofact_weight
@@ -194,7 +196,7 @@ class BartExtractor(nn.Module):
         token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
 
         # LM perplexity
-        ppl = perplexity(preds=lm_logprobs, target=y, ignore_index=self.bart.config.pad_token_id).item()
+        ppl = perplexity(preds=lm_logprobs, target=y, ignore_index=criterion.ignore_index).item()
 
         stats = {
             "loss": loss.item(),
@@ -400,8 +402,7 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
 
     # Test forward
-    fact_logprobs, lm_logprobs = model(batch['input_ids'], batch['attention_mask'], batch['labels'])
-    pred_fact = fact_logprobs.argmax(dim=-1) 
+    lm_logprobs = model(batch['input_ids'], batch['attention_mask'], batch['labels'])
     preds = lm_logprobs.argmax(dim=-1)
     response = tokenizer.batch_decode(preds)
 
@@ -409,7 +410,7 @@ if __name__ == "__main__":
         print('-' * 40)
         print(data[i][0])
         print(data[i][1])
-        print(response[i] if pred_fact[i] else args.nofact_token)
+        print(response[i])
 
     # Test loss function and valid_step
     valid_stats = model.valid_step(batch, criterion, device=args.device)
