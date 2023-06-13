@@ -53,8 +53,9 @@ class MSC_Metrics:
                 torch.maximum(input_batch.num_original_tokens, torch.ones_like(input_batch.num_original_tokens)),
             )
             self.perc_truncated_tokens = torch.cat([self.perc_truncated_tokens, avg_truncation], dim=0)
-        scores = torch.cat(output_batch.scores, dim=-1).view(label_batch.input_ids.shape + (-1,))
-        self.perplexity.update(scores, label_batch.input_ids.to(scores.device))
+        len_scores = len(output_batch.scores)
+        scores = torch.cat(output_batch.scores, dim=-1).view(label_batch.input_ids.shape[0], len_scores, -1)
+        self.perplexity.update(scores, label_batch.input_ids[:, :len_scores].to(scores.device))
         self.sacreblue4_score.update(responses, targets)
         self.bleu2_score.update(responses, targets)
         self.bleu4_score.update(responses, targets)
@@ -182,13 +183,13 @@ class MSC_Session(Dataset):
             with open(filepath, 'r') as f:
                 preprocessed = {int(k) : v for k, v in json.loads(f.read()).items()}
         except:
-            modelname = args.persona_selector.split(':')[1]
+            modelname = self.persona_selector.split(':')[1]
             logging.warning(f"Error opening file: {filepath}, using model {modelname} to extract persona sentences from dialogue history")
             preprocessed = {}
         return preprocessed
 
     def save_preprocessed(self, preprocessed):
-        modelname = args.persona_selector.split(':')[1]
+        modelname = self.persona_selector.split(':')[1]
         filepath = f"{self.basedir}preprocessed:{modelname}:session_{self.session}_{self.subset}"
         logging.info("Saving extracted persona sentences to: " + filepath)
         with open(filepath, "w") as f:
