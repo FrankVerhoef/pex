@@ -139,10 +139,10 @@ class MSC_Session(Dataset):
             input_order='personas-history-current',
             augmented=False,
             persona_selector=None,
+            persona_selector_fn=None,
             max_samples=None
         ):
         super(MSC_Session, self).__init__()
-        passed_args = locals()
         assert input_order in INPUT_ORDER_OPTIONS, f"input_order should be one of {INPUT_ORDER_OPTIONS}"
         self.basedir = basedir
         self.session = session
@@ -152,64 +152,48 @@ class MSC_Session(Dataset):
         self.input_order = input_order
         self.augmented = augmented
         self.persona_selector = persona_selector
+        self.persona_selector_fn = persona_selector_fn
         self.max_samples = max_samples
         self.dialogues = []
-        if str(session).split(":")[0] == 'preprocessed':
-            filepath = basedir + session
-            self.indices, self.history, self.next_utterance, loaded_config = self.load_preprocessed(filepath)
-            assert int(session.split(":")[1].split('_')[1]) == loaded_config['session']
-            assert self.subset == loaded_config['subset']
-            assert self.include_persona == loaded_config['include_persona']
-            assert self.include_history == loaded_config['include_history']
-            assert self.input_order == loaded_config['input_order']
-            assert self.augmented == loaded_config['augmented']
-            assert self.max_samples == loaded_config['max_samples']
-        else:
-            if str(session)[0] == '1':
-                version = str(session).split('-')[1:]
-                if len(version) > 0:
-                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
-                else:
-                    convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
-                logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
-                self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
+        if str(session)[0] == '1':
+            version = str(session).split('-')[1:]
+            if len(version) > 0:
+                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', version=version, subset=subset)
             else:
-                filepath = f"{basedir}session_{session}/{subset}.txt"
-                try:
-                    with open(filepath, "r") as f:
-                        msc_dialogues = [json.loads(line) for line in f]
-                    logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {session} for {subset} dataset")
-                    self.dialogues.extend(msc_dialogues)
-                except FileNotFoundError:
-                    logging.warning(f"File '{filepath}' not found -> skipped")
-            self.indices, self.history, self.next_utterance = self.transform_dialogues(max_samples)
-            if self.persona_selector is not None:
-                self.save_preprocessed(passed_args)
+                convai2_dataset = ConvAI2(basedir=basedir + 'ConvAI2/', subset=subset)
+            logging.info(f"Read {len(convai2_dataset)} dialogues from ConvAI2 for {subset} dataset")
+            self.dialogues.extend([convai2_dataset[i] for i in range(len(convai2_dataset))])
+        else:
+            filepath = f"{basedir}session_{session}/{subset}.txt"
+            try:
+                with open(filepath, "r") as f:
+                    msc_dialogues = [json.loads(line) for line in f]
+                logging.info(f"Read {len(msc_dialogues)} dialogues from MSC session {session} for {subset} dataset")
+                self.dialogues.extend(msc_dialogues)
+            except FileNotFoundError:
+                logging.warning(f"File '{filepath}' not found -> skipped")
+        self.indices, self.history, self.next_utterance = self.transform_dialogues(max_samples)
 
-    def load_preprocessed(self, filepath):
-        logging.info("Loading preprocessed dataset from: " + filepath)
-        with open(filepath, 'r') as f:
-            loaded_config = json.loads(f.readline())
-            all_indices = json.loads(f.readline())
-            all_history = json.loads(f.readline())
-            all_next_utterance = json.loads(f.readline())
-        return all_indices, all_history, all_next_utterance, loaded_config
 
-    def save_preprocessed(self, passed_args):
-        filepath = self.basedir + "preprocessed:" + f"session_{self.session}_{self.subset}"
-        filepath += "_{}prefixes".format("no" if self.speaker_prefixes is None else "with")
-        filepath += "_{}persona".format("selected" if self.persona_selector is not None else ("gold" if self.include_persona else "no"))
-        filepath += "_{}history".format("with" if self.include_history else "no")
-        logging.info("Saving preprocessed dataset to: " + filepath)
+    def load_preprocessed(self):
+        filepath = f"{self.basedir}{self.persona_selector}:session_{self.session}_{self.subset}"
+        logging.info("Loading preprocessed summaries from: " + filepath)
+        try:
+            with open(filepath, 'r') as f:
+                preprocessed = {int(k) : v for k, v in json.loads(f.read()).items()}
+        except:
+            modelname = args.persona_selector.split(':')[1]
+            logging.warning(f"Error opening file: {filepath}, using model {modelname} to extract persona sentences from dialogue history")
+            preprocessed = {}
+        return preprocessed
+
+    def save_preprocessed(self, preprocessed):
+        modelname = args.persona_selector.split(':')[1]
+        filepath = f"{self.basedir}preprocessed:{modelname}:session_{self.session}_{self.subset}"
+        logging.info("Saving extracted persona sentences to: " + filepath)
         with open(filepath, "w") as f:
-            f.write(json.dumps({
-                k:v 
-                for k, v in passed_args.items() 
-                if k != 'self' and k[0] != '_' and k != 'persona_selector'
-            }) + '\n')
-            f.write(json.dumps(self.indices) + '\n')
-            f.write(json.dumps(self.history) + '\n')
-            f.write(json.dumps(self.next_utterance) + '\n') 
+            f.write(json.dumps(preprocessed, indent=2))
+
 
     def transform_dialogues(self, max_samples):
         """
@@ -237,6 +221,12 @@ class MSC_Session(Dataset):
                 - 1: persona sentances Speaker 2        
         """
         all_history, all_next_utterance, all_indices = [], [], []
+
+        if self.persona_selector is not None:
+            preprocessed = {}
+            if self.persona_selector.split(":")[0] == 'preprocessed':
+                preprocessed = self.load_preprocessed()
+            num_preprocessed = len(preprocessed.keys())
 
         selected_dialogues = self.dialogues
         selected_dialogue_ids = list(range(len(self.dialogues)))
@@ -281,18 +271,23 @@ class MSC_Session(Dataset):
                         summary_info["Speaker 1"] = [("Speaker 1", t) for t in personas[0]]
                         summary_info["Speaker 2"] = [("Speaker 2", t) for t in personas[1]]
                 else:
-                    # Filter consecutive utterances from Speaker 1, Speaker 2 as summary for Speaker 2 and vice versa
-                    turns_speaker1, turns_speaker2 = [], []
-                    for i in range(len(previous_utterances) - 1):
-                        if previous_utterances[i][0] == 'Speaker 1' and previous_utterances[i+1][0] == 'Speaker 2':
-                            turns_speaker2.extend(previous_utterances[i:i+2])
-                        elif previous_utterances[i][0] == 'Speaker 2' and previous_utterances[i+1][0] == 'Speaker 1':
-                            turns_speaker1.extend(previous_utterances[i:i+2])
-                    
-                    # Extract facts from the utterances, for Speaker 1 and Speaker 2
-                    summary_info["Speaker 1"] = [("Speaker 1", t) for t in self.persona_selector(turns_speaker1)]
-                    summary_info["Speaker 2"] = [("Speaker 2", t) for t in self.persona_selector(turns_speaker2)]
-                    logging.verbose(f"Extracted {len(summary_info['Speaker 1'])}+{len(summary_info['Speaker 2'])} facts from selected dialog {dialog_nr}")
+                    if dialog_id in preprocessed.keys():
+                        summary_info = preprocessed[dialog_id]
+                        logging.spam(f"Use preprocessed summary for dialog {dialog_id}")
+                    else:
+                        # Filter consecutive utterances from Speaker 1, Speaker 2 as summary for Speaker 2 and vice versa
+                        turns_speaker1, turns_speaker2 = [], []
+                        for i in range(len(previous_utterances) - 1):
+                            if previous_utterances[i][0] == 'Speaker 1' and previous_utterances[i+1][0] == 'Speaker 2':
+                                turns_speaker2.extend(previous_utterances[i:i+2])
+                            elif previous_utterances[i][0] == 'Speaker 2' and previous_utterances[i+1][0] == 'Speaker 1':
+                                turns_speaker1.extend(previous_utterances[i:i+2])
+                        
+                        # Extract facts from the utterances, for Speaker 1 and Speaker 2
+                        summary_info["Speaker 1"] = [("Speaker 1", t) for t in self.persona_selector_fn(turns_speaker1)]
+                        summary_info["Speaker 2"] = [("Speaker 2", t) for t in self.persona_selector_fn(turns_speaker2)]
+                        preprocessed[dialog_id] = summary_info
+                        logging.verbose(f"Extracted {len(summary_info['Speaker 1'])}+{len(summary_info['Speaker 2'])} facts from dialog {dialog_id}")
 
             if not self.include_history: 
                 previous_utterances = []
@@ -314,6 +309,10 @@ class MSC_Session(Dataset):
                 next_utterance = current_utterances[len_history]
                 all_next_utterance.append(next_utterance)
                 all_indices.append({"session": int(str(self.session)[0]), "dialog_id": dialog_id, "turn_id": len_history, "convai_id": "" if metadata is None else metadata.get("initial_data_id", "")})
+
+        if self.persona_selector is not None:
+            if len(preprocessed.keys()) > num_preprocessed:
+                self.save_preprocessed(preprocessed)
 
         # In case of augmented dataset, check if we need to resample again
         if self.augmented and (max_samples is not None):

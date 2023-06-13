@@ -60,8 +60,8 @@ def train(model, trainloader, validloader, optimizer, criterion,
         for batch in iter(trainloader):
             step += 1
             if hasattr(batch, "num_truncated_tokens"):
-                total_original_tokens += batch.num_original_tokens
-                total_truncated_tokens += batch.num_truncated_tokens
+                total_original_tokens += batch.num_original_tokens.sum().item()
+                total_truncated_tokens += batch.num_truncated_tokens.sum().item()
 
             loss = model.train_step(batch, optimizer, criterion, device)
             train_losses.append(loss)
@@ -328,20 +328,25 @@ def prepare_model_and_data(args):
                 'basedir': args.datadir + args.basedir,
                 'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
                 'include_persona': args.include_persona,
-                'include_history': args.include_history
+                'include_history': args.include_history,
+                'persona_selector': args.persona_selector
             }
 
             if args.persona_selector is not None:
 
                 # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
-                loadpath = args.checkpoint_dir + args.persona_selector
+                if args.persona_selector.split(':')[0] == 'preprocessed':
+                    modelname = args.persona_selector.split(':')[1]
+                else:
+                    modelname = args.persona_selector
+                loadpath = args.checkpoint_dir + modelname
                 logging.info("Loading persona_selector from {}".format(loadpath))
                 bart_config = load_config(loadpath + '.config')
                 assert bart_config["speaker_prefixes"] == args.speaker_prefixes, f"persona selector was trained with speaker prefixes {bart_config['speaker_prefixes']}, current dataset has speaker prefixes {args.speaker_prefixes}"
                 bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
                 if bart_config['add_tokens'] is not None:
                     bart_tokenizer.add_tokens(bart_config['add_tokens'])
-                bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
+                bart_nofact_token_id = bart_tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
                 bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
                 bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
                 bart_device = args.device
@@ -357,7 +362,7 @@ def prepare_model_and_data(args):
                     speaker_prefixes=bart_config['speaker_prefixes'], 
                     nofact_token=bart_config['nofact_token']
                 )
-                dataset_config['persona_selector'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device, batch_size=args.batch_size)
+                dataset_config['persona_selector_fn'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device, batch_size=args.batch_size)
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 if args.action in ['tune', 'train']:
