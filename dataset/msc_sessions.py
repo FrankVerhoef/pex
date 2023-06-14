@@ -16,7 +16,7 @@ import random
 import textwrap
 from collections import Counter
 
-from transformers import GenerationConfig
+from transformers import GenerationConfig, LogitsProcessorList, NoRepeatNGramLogitsProcessor
 from dataset.convai2 import ConvAI2
 
 import utils.logging as logging
@@ -535,13 +535,16 @@ class MSC_Session(Dataset):
             with torch.no_grad():
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
+                    logits_processor=LogitsProcessorList([
+                        NoRepeatNGramLogitsProcessor(ngram_size=4),
+                    ]), 
                     generation_config=GenerationConfig(
-                        pad_token_id=model.model.config.eos_token_id,
+                        pad_token_id=self.tokenizer.pad_token_id,
                         use_cache=True,
                         num_beams=1,
                         do_sample=False,
                         max_new_tokens=labels.input_ids.shape[1],
-                        # eos_token_id=[self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]],
+                        eos_token_id=[self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]],
                         output_scores=True,
                         return_dict_in_generate=True
                     )
@@ -582,6 +585,9 @@ class MSC_Session(Dataset):
             with torch.no_grad():
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
+                    logits_processor=LogitsProcessorList([
+                        NoRepeatNGramLogitsProcessor(ngram_size=4),
+                    ]), 
                     generation_config=GenerationConfig(
                         pad_token_id=model.model.config.eos_token_id,
                         use_cache=True,
