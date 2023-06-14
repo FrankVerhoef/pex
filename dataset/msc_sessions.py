@@ -171,7 +171,7 @@ class MSC_Session(Dataset):
 
 
     def load_preprocessed(self):
-        filepath = f"{self.basedir}{self.persona_selector}:session_{self.session}_{self.subset}"
+        filepath = f"{self.basedir}{self.persona_selector}:session_{self.session}_{self.subset}.json"
         logging.info("Loading preprocessed summaries from: " + filepath)
         try:
             with open(filepath, 'r') as f:
@@ -183,8 +183,11 @@ class MSC_Session(Dataset):
         return preprocessed
 
     def save_preprocessed(self, preprocessed):
-        modelname = self.persona_selector.split(':')[1]
-        filepath = f"{self.basedir}preprocessed:{modelname}:session_{self.session}_{self.subset}"
+        if self.persona_selector.split(':')[0] == 'preprocessed':
+            modelname = self.persona_selector.split(':')[1]
+        else:
+            modelname = self.persona_selector
+        filepath = f"{self.basedir}preprocessed:{modelname}:session_{self.session}_{self.subset}.json"
         logging.info("Saving extracted persona sentences to: " + filepath)
         with open(filepath, "w") as f:
             f.write(json.dumps(preprocessed, indent=2))
