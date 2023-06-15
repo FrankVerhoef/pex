@@ -222,7 +222,7 @@ def save_dialogue_fig(wrapped_turns, title, savepath):
     total_lines = sum([len(t[1]) for t in wrapped_turns])
     fig_height = 0.5 + len(wrapped_turns) * PER_TURN + total_lines * PER_LINE
     fig, ax = plt.subplots(figsize=(6, fig_height))
-    fig.patch.set_facecolor('ghostwhite')
+    # fig.patch.set_facecolor('ghostwhite')
 
     # Determine triangle coordinates based on figure size
     triangle = np.array([[0.02, -0.05/fig_height], [0.05, -0.25/fig_height], [0.12, -0.25/fig_height]])
@@ -266,7 +266,7 @@ def save_dialogue_fig(wrapped_turns, title, savepath):
     ax.invert_yaxis()
     ax.set_title(title)
     plt.axis('off')
-    plt.savefig(savepath, pad_inches=0.2, bbox_inches='tight')
+    plt.savefig(savepath + ".png", pad_inches=0.2, bbox_inches='tight', transparent=True)
     plt.close(fig)
 
     return fig
