@@ -12,6 +12,7 @@ import os
 from functools import partial
 from filelock import FileLock
 import json
+from datetime import datetime
 import configargparse as argparse
 
 from transformers import AutoTokenizer, PretrainedConfig
@@ -440,7 +441,9 @@ def train_with_args(config, args):
 
         eval_stats, result_dict = evaluate(model, testdata, args)
 
-        save_dict(args.output_dir + (args.load if args.load != "" else savename(args)) + '_evalresults.json', result_dict)
+        result_dict['config'] = vars(args)
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M") + "_stats.json"
+        save_dict(savepath, result_dict)
         stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
 
@@ -562,7 +565,9 @@ if __name__ == "__main__":
     else:
         stats = train_with_args(config=None, args=args)
         logging.success(prettydict(stats, title="Overview of stats"))
-        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) +  "_stats.json"
+
+        stats["config"] = vars(args)
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M") + "_stats.json"
         save_dict(savepath, stats)
         logging.info(f"Stats saved in {savepath}")
 
