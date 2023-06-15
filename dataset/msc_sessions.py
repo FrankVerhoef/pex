@@ -555,7 +555,7 @@ class MSC_Session(Dataset):
                         return_dict_in_generate=True
                     )
                 )
-            responses = self.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"))
+            responses = self.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
             all_responses.extend(responses)
 
             if print_max > 0:
@@ -607,8 +607,7 @@ class MSC_Session(Dataset):
                         return_dict_in_generate=True
                     )
                 )
-            responses = cls.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"))
-            responses = [r.split('\n')[0] for r in responses]  # use only the first utterance, up to '\n'
+            responses = cls.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
             all_responses.extend(responses)
 
         return all_responses
