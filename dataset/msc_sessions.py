@@ -356,7 +356,7 @@ class MSC_Session(Dataset):
         variant = f"{'no' if not self.include_persona else ''}persona" + f"_{'and_' if self.include_history and self.include_persona else 'no'}history"
         title=f"Dataset: session_{self.session}/{self.subset}, dialog_id: {dialog_id['dialog_id']}\nvariant: {variant}"
 
-        savepath = savedir + f"dialogfig_session_{self.session}_{self.subset}_{dialog_id['dialog_id']:06d}:{dialog_id['turn_id']:02d}_{variant}" + ".jpg"
+        savepath = savedir + f"dialogfig_session_{self.session}_{self.subset}_{dialog_id['dialog_id']:06d}:{dialog_id['turn_id']:02d}_{variant}"
         save_dialogue_fig(wrapped_turns, title, savepath)
 
     def corpus(self):
@@ -513,8 +513,9 @@ class MSC_Session(Dataset):
 
     def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
 
-        def print_responses(data, responses):
-            for (x, y), p in zip(data, responses):
+        def print_responses(indices, data, responses):
+            for i, (x, y), p in zip(indices, data, responses):
+                print('index:      ', i)
                 print('context:    ', x)
                 print('target:     ', y)
                 print('prediction: ', p)
@@ -546,6 +547,8 @@ class MSC_Session(Dataset):
                         use_cache=True,
                         num_beams=1,
                         do_sample=False,
+                        top_p=0.90,
+                        top_k=5,
                         max_new_tokens=labels.input_ids.shape[1],
                         eos_token_id=[self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]],
                         output_scores=True,
@@ -556,7 +559,7 @@ class MSC_Session(Dataset):
             all_responses.extend(responses)
 
             if print_max > 0:
-                print_responses(data, responses)
+                print_responses(indices, data, responses)
                 print_max -= len(data)
 
             msc_metrics.update(responses, targets, inputs, labels, output, indices)
@@ -596,6 +599,8 @@ class MSC_Session(Dataset):
                         use_cache=True,
                         num_beams=1,
                         do_sample=False,
+                        top_p=0.9,
+                        top_k=5,
                         max_new_tokens=decoder_max,
                         eos_token_id=[cls.tokenizer.eos_token_id, cls.tokenizer.encode('\n')[0]],
                         output_scores=True,
@@ -646,7 +651,7 @@ if __name__ == "__main__":
     datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
     basedir = 'msc/msc_dialogue/'
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
-    subset = 'train'
+    subset = 'valid'
     session = 4
     persona_selector = None 
     # session = "preprocessed:session_3_train_withprefixes_selectedpersona_withhistory"
