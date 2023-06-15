@@ -441,9 +441,9 @@ def train_with_args(config, args):
 
         eval_stats, result_dict = evaluate(model, testdata, args)
 
-        result_dict['config'] = vars(args)
-        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M") + "_stats.json"
-        save_dict(savepath, result_dict)
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M") + "_evalresults"
+        save_dict(savepath, result_dict, config=vars(args))
+        logging.info(f"Saved evalresults in {savepath}")
         stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
 
@@ -566,9 +566,8 @@ if __name__ == "__main__":
         stats = train_with_args(config=None, args=args)
         logging.success(prettydict(stats, title="Overview of stats"))
 
-        stats["config"] = vars(args)
-        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M") + "_stats.json"
-        save_dict(savepath, stats)
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M") + "_stats"
+        save_dict(savepath, stats, config=vars(args))
         logging.info(f"Stats saved in {savepath}")
 
 
