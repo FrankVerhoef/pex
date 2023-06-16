@@ -13,6 +13,7 @@ from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import json
 import random
+from datetime import datetime
 import textwrap
 from collections import Counter
 
@@ -37,7 +38,7 @@ class MSC_Metrics:
         self.bleu4_score = BLEUScore(n_gram=4, smooth=True)
         self.rouge_score = ROUGEScore(rouge_keys='rougeL')
         self.bert_score = BERTScore(model_name_or_path='bert-base-uncased')
-        self.meteor = evaluate.load("meteor")
+        self.meteor = evaluate.load("meteor", experiment_id=datetime.now().strftime("%j%H%M%S"))
         self.google_bleu = evaluate.load("google_bleu")
 
     def update(self, responses, targets, input_batch, label_batch, output_batch, indices):
