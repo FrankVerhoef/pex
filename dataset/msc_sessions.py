@@ -4,7 +4,7 @@
 
 import torch
 
-from torchmetrics import SacreBLEUScore, BLEUScore,  MeanMetric
+from torchmetrics import SacreBLEUScore, BLEUScore
 from torchmetrics.text.rouge import ROUGEScore
 from torchmetrics.text.bert import BERTScore
 import evaluate
@@ -51,9 +51,9 @@ class MSC_Metrics:
                 torch.maximum(input_batch.num_original_tokens, torch.ones_like(input_batch.num_original_tokens)),
             )
             self.perc_truncated_tokens = torch.cat([self.perc_truncated_tokens, avg_truncation], dim=0)
-        self.sacreblue4_score.update(responses, targets)
-        self.bleu2_score.update(responses, targets)
-        self.bleu4_score.update(responses, targets)
+        self.sacreblue4_score.update(responses, [[t] for t in targets])
+        self.bleu2_score.update(responses, [[t] for t in targets])
+        self.bleu4_score.update(responses, [[t] for t in targets])
         self.rouge_score.update(responses, targets)
         self.bert_score.update(responses, targets)
         self.meteor.add_batch(predictions=responses, references=targets)
@@ -514,12 +514,14 @@ class MSC_Session(Dataset):
     def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
 
         def print_responses(indices, data, responses):
+            print_string = ""
             for i, (x, y), p in zip(indices, data, responses):
-                print('index:      ', i)
-                print('context:    ', x)
-                print('target:     ', y)
-                print('prediction: ', p)
-                print('-' * 40)
+                print_string += f'index:      {i}\n'
+                print_string += f'context:    {x}\n'
+                print_string += f'target:     {y}\n'
+                print_string += f'prediction: {p}\n'
+                print_string += '-' * 40 + '\n'
+            return print_string
 
         model = model.to(device)
         model.eval()
@@ -559,7 +561,7 @@ class MSC_Session(Dataset):
             all_responses.extend(responses)
 
             if print_max > 0:
-                print_responses(indices, data, responses)
+                logging.verbose(print_responses(indices, data, responses))
                 print_max -= len(data)
 
             msc_metrics.update(responses, targets, inputs, labels, output, indices)
