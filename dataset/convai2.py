@@ -125,7 +125,7 @@ class ConvAI2(Dataset):
                         line_split = lines[i].split(sep=' ', maxsplit=1)                
 
                     dialogues.append({
-                        'init_personas': [personas_2, personas_1], 
+                        'init_personas': [personas_1, personas_2], 
                         'dialog': turns
                     })
 
