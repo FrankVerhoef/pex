@@ -39,7 +39,7 @@ class MSC_Metrics:
         self.rouge_score = ROUGEScore(rouge_keys='rougeL')
         self.bert_score = BERTScore(model_name_or_path='bert-base-uncased')
         self.meteor = evaluate.load("meteor", experiment_id=datetime.now().strftime("%j%H%M%S"))
-        self.google_bleu = evaluate.load("google_bleu")
+        self.google_bleu = evaluate.load("google_bleu", experiment_id=datetime.now().strftime("%j%H%M%S"))
 
     def update(self, responses, targets, input_batch, label_batch, output_batch, indices):
     
