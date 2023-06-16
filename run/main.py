@@ -330,7 +330,8 @@ def prepare_model_and_data(args):
                 'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
                 'include_persona': args.include_persona,
                 'include_history': args.include_history,
-                'persona_selector': args.persona_selector
+                'persona_selector': args.persona_selector,
+                'input_order': args.input_order
             }
 
             if args.persona_selector is not None:
