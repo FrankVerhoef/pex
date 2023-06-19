@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 import configargparse as argparse
 
-from transformers import AutoTokenizer, PretrainedConfig
+from transformers import AutoTokenizer, PretrainedConfig, GenerationConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
@@ -136,7 +136,17 @@ def evaluate(model, testdata, args):
         if args.device == 'mps':
             args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': 4}
+        eval_kwargs = {
+            'generation_config': GenerationConfig(
+                num_beams=args.num_beams,
+                do_sample=args.do_sample,
+                top_p=args.top_p,
+                top_k=args.top_k,
+                max_new_tokens=args.decoder_max,
+            ),
+            'device': args.device, 
+            'batch_size': 4,
+        }
         if args.model == "dialogpt":
             testdata.batch_format = "huggingface_x"
 
@@ -330,6 +340,8 @@ def prepare_model_and_data(args):
                 'session': args.session if args.session != 1 else '-'.join(['1'] + args.convai2_version),
                 'include_persona': args.include_persona,
                 'include_history': args.include_history,
+                'augmented': args.augmented, 
+                'selected_turns': args.selected_turns,
                 'persona_selector': args.persona_selector,
                 'input_order': args.input_order
             }
@@ -368,10 +380,10 @@ def prepare_model_and_data(args):
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 if args.action in ['tune', 'train']:
-                    traindata = MSC_Session(subset='train', max_samples=args.train_samples, augmented=args.augmented, **dataset_config)
-                    validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, augmented=args.augmented, **dataset_config)
+                    traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
+                    validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
                 if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
-                    testdata = MSC_Session(subset='test', max_samples=args.test_samples, augmented=True, **dataset_config)
+                    testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
             collate_fn = partial(MSC_Session.batchify, with_labels=True, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id, buffer=0)
 
         else:
@@ -488,6 +500,12 @@ def get_args():
     evalgroup = parser.add_argument_group("options for evaluation")
     evalgroup.add_argument("--metrics", nargs='*', help="only report listed metrics")
     evalgroup.add_argument("--print_max", type=int, default=20, help="max number of test examples to print")
+    evalgroup.add_argument("--top_p", type=float, default=1.0, 
+        help="if set to float < 1, only the smallest set of most probable tokens with probabilities that add up to top_p or higher are kept for generation"
+    )
+    evalgroup.add_argument("--top_k", type=int, default=50, help="the number of highest probability vocabulary tokens to keep for top-k-filtering")
+    evalgroup.add_argument("--do_sample", default=False, action='store_true', help="whether or not to use sampling ; use greedy decoding otherwise")
+    evalgroup.add_argument("--num_beams", type=int, default=1, help="number of beams for beam search; 1 means no beam search")
 
     args = parser.parse_known_args()[0]
 

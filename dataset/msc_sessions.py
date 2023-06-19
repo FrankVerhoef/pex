@@ -122,6 +122,7 @@ class MSC_Session(Dataset):
         group.add_argument("--sessionbreak_token", type=str, default=None, help="Token to insert to mark separation between dialogue sessions")
         group.add_argument("--session", default=2, type=int, help="MSC session to include in dataset")
         group.add_argument("--augmented", default=False, action='store_true', help='add all shorter versions of the dialogue to training set')
+        group.add_argument("--selected_turns", default=None, type=int, nargs='*', help='include only selected turns')
         group.add_argument("--persona_selector", type=str, default=None, help="Model to select relevant persona sentences")
 
         return parser
@@ -134,6 +135,7 @@ class MSC_Session(Dataset):
             include_history=False,
             input_order='personas-history-current',
             augmented=False,
+            selected_turns=None,
             persona_selector=None,
             persona_selector_fn=None,
             max_samples=None
@@ -147,6 +149,7 @@ class MSC_Session(Dataset):
         self.include_history = include_history
         self.input_order = input_order
         self.augmented = augmented
+        self.selected_turns = selected_turns
         self.persona_selector = persona_selector
         self.persona_selector_fn = persona_selector_fn
         self.max_samples = max_samples
@@ -295,8 +298,13 @@ class MSC_Session(Dataset):
             start_of_session = [] if self.sessionbreak_token is None else [("Nobody", "new session")]
             current_utterances = [("Speaker 1" if i % 2 == 0 else "Speaker 2", turns[i]["text"]) for i in range(len(turns))]
 
-            start_range = 0 if self.augmented else max(len(turns) - 1, 0)
-            for len_history in range(start_range, len(turns)):
+            selected_turns = range(len(turns))
+            if self.selected_turns is not None:
+                selected_turns = set(selected_turns).intersection(self.selected_turns)
+            elif not self.augmented:
+                selected_turns = [len(turns) - 1] if len(turns) > 0 else []
+            # start_range = 0 if self.augmented else max(len(turns) - 1, 0)
+            for len_history in selected_turns: #range(start_range, len(turns)):
                 nextspeaker = current_utterances[len_history][0]
                 lastspeaker = "Speaker 1" if nextspeaker == "Speaker 2" else "Speaker 2"
                 if self.input_order == 'personas-history-current':
@@ -321,6 +329,11 @@ class MSC_Session(Dataset):
                 all_history = [all_history[i] for i in selected_sample_ids]
                 all_next_utterance = [all_next_utterance[i] for i in selected_sample_ids]
 
+        sorted_positions = [p for _, p in sorted(zip(all_indices, range(len(all_indices))), key=lambda x: x[0]["dialog_id"] * 100000 + x[0]["turn_id"])]
+        all_indices = [all_indices[p] for p in sorted_positions]
+        all_history = [all_history[p] for p in sorted_positions]
+        all_next_utterance = [all_next_utterance[p] for p in sorted_positions]
+
         return all_indices, all_history, all_next_utterance
         
     def __len__(self):
@@ -340,6 +353,25 @@ class MSC_Session(Dataset):
             next_utterance = self.next_utterance[i][1] +'\n'
         return history, next_utterance
     
+    def find(self, dialog_id, turn_id):
+        low = 0
+        high = len(self) - 1
+        i = high // 2
+        while False if (low > high) else (self.indices[i]["dialog_id"] != dialog_id):
+            if self.indices[i]["dialog_id"] < dialog_id:
+                low = i + 1
+            else:
+                high = i - 1
+            i = (low + high) // 2
+        if self.indices[i]["turn_id"] < turn_id:
+            while False if (i > high) else (self.indices[i]["dialog_id"] == dialog_id) and (self.indices[i]["turn_id"] != turn_id):
+                i += 1
+        elif self.indices[i]["turn_id"] > turn_id:
+            while False if (i < low) else (self.indices[i]["dialog_id"] == dialog_id) and (self.indices[i]["turn_id"] != turn_id):
+                i -= 1
+        found = False if (i < low) or (i > high) else (self.indices[i]["dialog_id"] == dialog_id) and (self.indices[i]["turn_id"] == turn_id)
+        return i if found else -1
+
     def _get_speaker_mapping(self, i):
         # Determine who is Speaker 1 and Speaker 2 (who is 'you', who is 'me')
         speakers = [speaker for speaker, _ in self.history[i] if speaker != "Nobody"]
@@ -512,7 +544,7 @@ class MSC_Session(Dataset):
         return encoded
 
 
-    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
+    def evaluate(self, model, generation_config, device="cpu", batch_size=1, print_max=20, log_interval=100):
 
         def print_responses(indices, data, responses):
             print_string = ""
@@ -529,6 +561,12 @@ class MSC_Session(Dataset):
         all_responses = []
         interval_counter = 0
 
+        generation_config.pad_token_id = self.tokenizer.pad_token_id
+        generation_config.use_cache = True
+        generation_config.eos_token_id = [self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]]
+        generation_config.output_scores = True
+        generation_config.return_dict_in_generate = True
+
         # Initialize metrics
         msc_metrics = MSC_Metrics(ignore_index=self.tokenizer.pad_token_id, device=device)
 
@@ -536,27 +574,14 @@ class MSC_Session(Dataset):
             data = [self[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
             indices = [self.indices[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
             targets = [label for _, label in data]
-            inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=decoder_max)
+            inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=generation_config.max_new_tokens)
             B, L = inputs.input_ids.shape[:2]
 
             with torch.no_grad():
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
-                    logits_processor=LogitsProcessorList([
-                        NoRepeatNGramLogitsProcessor(ngram_size=4),
-                    ]), 
-                    generation_config=GenerationConfig(
-                        pad_token_id=self.tokenizer.pad_token_id,
-                        use_cache=True,
-                        num_beams=1,
-                        do_sample=False,
-                        top_p=0.90,
-                        top_k=5,
-                        max_new_tokens=labels.input_ids.shape[1],
-                        eos_token_id=[self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]],
-                        output_scores=True,
-                        return_dict_in_generate=True
-                    )
+                    logits_processor=LogitsProcessorList([NoRepeatNGramLogitsProcessor(ngram_size=4)]), 
+                    generation_config=generation_config
                 )
             responses = self.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
             all_responses.extend(responses)
@@ -580,35 +605,28 @@ class MSC_Session(Dataset):
 
 
     @classmethod
-    def predict(cls, input, model, device="cpu", decoder_max=20, batch_size=1):
+    def predict(cls, input, model, generation_config, device="cpu", decoder_max=20, batch_size=1):
 
         model = model.to(device)
         model.eval()
-        all_responses = []
 
+        generation_config.pad_token_id = model.tokenizer.pad_token_id
+        generation_config.use_cache = True
+        generation_config.eos_token_id = [model.tokenizer.eos_token_id, model.tokenizer.encode('\n')[0]]
+        generation_config.output_scores = True
+        generation_config.return_dict_in_generate = True
+
+        all_responses = []
         for start_index in range(0, len(input), batch_size):
             data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
             inputs = input.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=decoder_max)
-            B, L = inputs.input_ids.shape[:2]
+            L = inputs.input_ids.shape[1]
 
             with torch.no_grad():
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
-                    logits_processor=LogitsProcessorList([
-                        NoRepeatNGramLogitsProcessor(ngram_size=4),
-                    ]), 
-                    generation_config=GenerationConfig(
-                        pad_token_id=model.model.config.eos_token_id,
-                        use_cache=True,
-                        num_beams=1,
-                        do_sample=False,
-                        top_p=0.9,
-                        top_k=5,
-                        max_new_tokens=decoder_max,
-                        eos_token_id=[cls.tokenizer.eos_token_id, cls.tokenizer.encode('\n')[0]],
-                        output_scores=True,
-                        return_dict_in_generate=True
-                    )
+                    logits_processor=LogitsProcessorList([NoRepeatNGramLogitsProcessor(ngram_size=4)]), 
+                    generation_config=generation_config
                 )
             responses = cls.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
             all_responses.extend(responses)
@@ -670,6 +688,7 @@ if __name__ == "__main__":
     max_samples = 5
 
     augmented = False
+    selected_turns = [0]
 
 
     # Test extraction of dialogue turns and persona sentences
@@ -725,6 +744,7 @@ if __name__ == "__main__":
         include_history=include_history,
         input_order=input_order,
         augmented=augmented,
+        selected_turns=selected_turns,
         persona_selector=persona_selector
     )
     
