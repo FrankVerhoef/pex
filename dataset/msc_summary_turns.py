@@ -367,20 +367,30 @@ def calc_stats_nli(turns, preds, targets, indices):
     result_dict = {}
     nli_pred = NLIMetric()
     nli_target = NLIMetric()
+    nli_pred_to_target = NLIMetric()
+    nli_target_to_pred = NLIMetric()
     for id, turn, pred, target in zip (indices, turns, preds, targets):
         nli_pred.update(turn_id(id), turn, pred)
         nli_target.update(turn_id(id), turn, target)
+        nli_pred_to_target.update(turn_id(id), pred, target)
+        nli_target_to_pred.update(turn_id(id), target, pred)
     nli_preds = nli_pred.compute()
     nli_targets = nli_target.compute()
+    nli_preds_to_targets = nli_pred_to_target.compute()
+    nli_targets_to_preds = nli_target_to_pred.compute()
     result_dict = {
         turn_id(id): {
             "nli_pred": nli_preds[turn_id(id)],
-            "nli_target": nli_targets[turn_id(id)]
+            "nli_target": nli_targets[turn_id(id)],
+            "nli_pred_to_target": nli_preds_to_targets[turn_id(id)],
+            "nli_target_to_pred": nli_targets_to_preds[turn_id(id)]
         } for id in indices
     }
     stats = {
         "nli_predictions": sum(nli_preds.values()) / max(len(indices) , 1),
-        "nli_targets": sum(nli_targets.values()) / max(len(indices) , 1)
+        "nli_targets": sum(nli_targets.values()) / max(len(indices) , 1),
+        "nli_preds_to_targets": sum(nli_preds_to_targets.values()) / max(len(indices) , 1),
+        "nli_targets_to_preds": sum(nli_targets_to_preds.values()) / max(len(indices) , 1),
     }
 
     return stats, result_dict
