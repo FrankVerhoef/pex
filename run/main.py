@@ -140,6 +140,7 @@ def evaluate(model, testdata, args):
             'generation_config': GenerationConfig(
                 num_beams=args.num_beams,
                 do_sample=args.do_sample,
+                temperature=args.temperature,
                 top_p=args.top_p,
                 top_k=args.top_k,
                 max_new_tokens=args.decoder_max,
@@ -500,6 +501,7 @@ def get_args():
     evalgroup = parser.add_argument_group("options for evaluation")
     evalgroup.add_argument("--metrics", nargs='*', help="only report listed metrics")
     evalgroup.add_argument("--print_max", type=int, default=20, help="max number of test examples to print")
+    evalgroup.add_argument("--temperature", type=float, default=1.0, help="value used to modulate the next token probabilities")
     evalgroup.add_argument("--top_p", type=float, default=1.0, 
         help="if set to float < 1, only the smallest set of most probable tokens with probabilities that add up to top_p or higher are kept for generation"
     )
