@@ -566,6 +566,8 @@ class MSC_Session(Dataset):
         generation_config.eos_token_id = [self.tokenizer.eos_token_id, self.tokenizer.encode('\n')[0]]
         generation_config.output_scores = True
         generation_config.return_dict_in_generate = True
+        if self.speaker_prefixes is not None:
+            prefix_tokens = self.tokenizer.encode(self.speaker_prefixes['me'])
 
         # Initialize metrics
         msc_metrics = MSC_Metrics(ignore_index=self.tokenizer.pad_token_id, device=device)
@@ -578,9 +580,11 @@ class MSC_Session(Dataset):
             B, L = inputs.input_ids.shape[:2]
 
             with torch.no_grad():
+                if self.speaker_prefixes is not None:
+                    generation_config.forced_decoder_ids = list(zip(range(L, L+len(prefix_tokens)), prefix_tokens))
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
-                    logits_processor=LogitsProcessorList([NoRepeatNGramLogitsProcessor(ngram_size=4)]), 
+                    # logits_processor=LogitsProcessorList([NoRepeatNGramLogitsProcessor(ngram_size=4)]), # Commented out, because also looks at input!! --> blocks \n<self>
                     generation_config=generation_config
                 )
             responses = self.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
@@ -615,7 +619,9 @@ class MSC_Session(Dataset):
         generation_config.eos_token_id = [model.tokenizer.eos_token_id, model.tokenizer.encode('\n')[0]]
         generation_config.output_scores = True
         generation_config.return_dict_in_generate = True
-
+        if model.speaker_prefixes is not None:
+            prefix_tokens = model.tokenizer.encode(model.speaker_prefixes['me'])
+            
         all_responses = []
         for start_index in range(0, len(input), batch_size):
             data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
@@ -623,9 +629,10 @@ class MSC_Session(Dataset):
             L = inputs.input_ids.shape[1]
 
             with torch.no_grad():
+                if model.speaker_prefixes is not None:
+                    generation_config.forced_decoder_ids = list(zip(range(L, L+len(prefix_tokens)), prefix_tokens))
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
-                    logits_processor=LogitsProcessorList([NoRepeatNGramLogitsProcessor(ngram_size=4)]), 
                     generation_config=generation_config
                 )
             responses = cls.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
