@@ -79,8 +79,8 @@ class ExtractedFactLoss(nn.Module):
         elif self.clf_loss == 'reweighted':
             classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
 
-        # LM loss: whether the tokens of the facts are predicted correctly
-        lm_loss = self.nllloss(lm_logprobs, target).sum(dim=1) / (target != self.ignore_index).sum(dim=1)
+        # LM loss: whether the tokens of the facts are predicted correctly; exclude <bos> from loss calculation
+        lm_loss = self.nllloss(lm_logprobs[:, :, 1:], target[:, 1:]).sum(dim=1) / (target[:, 1:] != self.ignore_index).sum(dim=1)
 
         # Weighted combination of classification loss and LM loss
         combined_loss =  (1 - self.lm_weight) * classification_loss + self.lm_weight * lm_loss
@@ -195,8 +195,8 @@ class BartExtractor(nn.Module):
         token_correct = batch['labels'].eq(pred) * ignore_mask
         token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
 
-        # LM perplexity
-        ppl = perplexity(preds=lm_logprobs, target=y, ignore_index=criterion.ignore_index).item()
+        # LM perplexity (excluding the <bos>-token)
+        ppl = perplexity(preds=lm_logprobs[:, 1:, :], target=y[:, 1:], ignore_index=criterion.ignore_index).item()
 
         stats = {
             "loss": loss.item(),
