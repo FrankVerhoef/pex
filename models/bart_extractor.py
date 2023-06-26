@@ -191,12 +191,12 @@ class BartExtractor(nn.Module):
         fact_correct = label_fact.eq(pred_fact)
         fact_acc = fact_correct.sum().item() / batch['labels'].shape[0]
 
-        # LM accuracy
+        # LM accuracy (only in case the target has a fact; calculated excluding the <bos>-token)
+        target_fact = y[:,1] != self.nofact_token_id
         token_correct = batch['labels'].eq(pred) * ignore_mask
-        token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
+        token_acc = (token_correct[target_fact, 1:].sum() / ignore_mask[target_fact, 1:].sum()).item() 
 
         # LM perplexity (only in case the target has a fact; calculated excluding the <bos>-token)
-        target_fact = y[:,1] != self.nofact_token_id
         ppl = perplexity(preds=lm_logprobs[target_fact, 1:, :], target=y[target_fact, 1:], ignore_index=criterion.ignore_index).item()
 
         stats = {
