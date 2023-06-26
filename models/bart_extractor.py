@@ -195,8 +195,9 @@ class BartExtractor(nn.Module):
         token_correct = batch['labels'].eq(pred) * ignore_mask
         token_acc = (token_correct.sum() / ignore_mask.sum()).item() 
 
-        # LM perplexity (excluding the <bos>-token)
-        ppl = perplexity(preds=lm_logprobs[:, 1:, :], target=y[:, 1:], ignore_index=criterion.ignore_index).item()
+        # LM perplexity (only in case the target has a fact; calculated excluding the <bos>-token)
+        target_fact = y[:,1] != self.nofact_token_id
+        ppl = perplexity(preds=lm_logprobs[target_fact, 1:, :], target=y[target_fact, 1:], ignore_index=criterion.ignore_index).item()
 
         stats = {
             "loss": loss.item(),
