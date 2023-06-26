@@ -80,7 +80,7 @@ class ExtractedFactLoss(nn.Module):
             classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
 
         # LM loss: whether the tokens of the facts are predicted correctly
-        lm_loss = self.nllloss(lm_logprobs, target).mean(dim=1)
+        lm_loss = self.nllloss(lm_logprobs, target).sum(dim=1) / (target != self.ignore_index).sum(dim=1)
 
         # Weighted combination of classification loss and LM loss
         combined_loss =  (1 - self.lm_weight) * classification_loss + self.lm_weight * lm_loss
