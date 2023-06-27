@@ -27,6 +27,7 @@ from dataset.msc_kg_sessions import KG_enriched_MSC_Session
 from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
+from dataset.msc_summary import MSC_Summaries
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from metrics.terp import TerpMetric
 from metrics.nli import NLIMetric
@@ -125,13 +126,17 @@ def evaluate(model, testdata, args):
 
     if args.task == "classify":
         eval_kwargs = {'device': args.device}
-    elif args.task == "generate":
+    elif args.task == "generate" or args.task == "summarize":
         if args.device == 'mps':
             args.device = 'cpu'
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
         TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
         NLIMetric.set(nli_model=args.nli_model, device=args.device, batch_size=args.batch_size)
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max, 'batch_size': args.batch_size}
+        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
+        if args.task == 'generate':
+            eval_kwargs.update({'batch_size': args.batch_size})
+        else:
+            eval_kwargs.update({'metrics': args.metrics})
     elif args.task == "dialog":
         if args.device == 'mps':
             args.device = 'cpu'
@@ -193,7 +198,7 @@ def prepare_model_and_data(args):
                 testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
         collate_fn = MSC_Turn_Facts.batchify
 
-    elif args.task == 'generate': 
+    elif args.task in ['generate', 'summarize']: 
 
         # Generate the fact(s) that are implied by the dialog turns (if any)
 
@@ -269,18 +274,28 @@ def prepare_model_and_data(args):
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        MSC_Turns.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
-        dataset_config = {
-            'basedir': args.datadir + args.basedir,
-            'sessions': args.sessions
-        } 
-        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
-            if args.action in ['tune', 'train']:
-                traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
-                validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
-            if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
-                testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
-        collate_fn = partial(MSC_Turns.batchify, with_labels=True, batch_format=model.batch_format, batch_pad_id=pad_token_id)
+        if args.task == 'generate':
+            MSC_Turns.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'sessions': args.sessions
+            } 
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
+                if args.action in ['tune', 'train']:
+                    traindata = MSC_Turns(subset='train', max_samples=args.train_samples, **dataset_config)
+                    validdata = MSC_Turns(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
+                    testdata = MSC_Turns(subset='test', max_samples=args.test_samples, **dataset_config)
+            collate_fn = partial(MSC_Turns.batchify, with_labels=True, batch_format=model.batch_format, batch_pad_id=pad_token_id)
+        else:
+            MSC_Summaries.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'session': args.session
+            } 
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
+                testdata = MSC_Summaries(subset='test', max_samples=args.test_samples, **dataset_config)
+            collate_fn = MSC_Summaries.batchify            
 
     elif args.task == "dialog": # Generate next utterance based on previous dialog turns
 
@@ -443,15 +458,16 @@ def train_with_args(config, args):
     if args.action in ['train', 'eval'] and not args.skip_eval:
 
         logging.info("Start testing")
-        logging.info(f"Use test dataset with {len(testdata)} samples")
-        test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
-        test_stats = valid(model, test_loader, criterion, device=args.device)
+        if args.task != 'summarize':
+            logging.info(f"Use test dataset with {len(testdata)} samples")
+            test_loader = torch.utils.data.DataLoader(dataset=testdata, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)  
+            test_stats = valid(model, test_loader, criterion, device=args.device)
 
-        logging.report("Test stats: {}".format(test_stats))
-        stats.update(dict_with_key_prefix(test_stats, prefix="test_"))
+            logging.report("Test stats: {}".format(test_stats))
+            stats.update(dict_with_key_prefix(test_stats, prefix="test_"))
 
-        if args.use_wandb:
-            wandb.run.summary["test_accuracy"] = stats["test_acc"]  
+            if args.use_wandb:
+                wandb.run.summary["test_accuracy"] = stats["test_acc"]  
 
         eval_stats, result_dict = evaluate(model, testdata, args)
 
@@ -485,7 +501,7 @@ def get_args():
     # Main arguments
     parser.add_argument("action", type=str, choices=['tune', 'train', 'eval'], help="choose an action")
     parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="choose one of the available models")
-    parser.add_argument("task", type=str, choices=["generate", "classify", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
+    parser.add_argument("task", type=str, choices=["generate", "summarize", "classify", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
 
     tune_group = parser.add_argument_group("options for tuning")
     tune_group.add_argument("--experiment_name", type=str, default="trainpex", help="experiment name for Ray Tune")
@@ -534,12 +550,15 @@ def get_args():
 
     if args.task == "classify":
         parser = MSC_Turn_Facts.add_cmdline_args(parser)
-    elif args.task == "generate":
+    elif args.task in ["generate", "summarize"]:
         if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
-            print("CHECK: ", vars(args))
             parser = TerpMetric.add_cmdline_args(parser)
             parser = NLIMetric.add_cmdline_args(parser)
-        parser = MSC_Turns.add_cmdline_args(parser)
+        if args.task == 'generate':
+            parser = MSC_Turns.add_cmdline_args(parser)
+        else:
+            parser = MSC_Summaries.add_cmdline_args(parser)
+            assert args.action == 'eval', f"Action {args.action} not implemented for task 'summarize'"
     elif args.task == "dialog": 
         if args.model == "kg_gen":
             parser = KG_enriched_MSC_Session.add_cmdline_args(parser)

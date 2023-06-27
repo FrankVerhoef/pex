@@ -27,15 +27,15 @@ TERP_MAXIMUM = 0.6
 
 def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
-    if metrics is None:
-        metrics = metric.keys()
-
     metric = {
         "ter": TranslationEditRate(return_sentence_level_score=True),
         "bert": BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli'),
         "terp": TerpMetric(),
         # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     }
+    if metrics is None:
+        metrics = metric.keys()
+
     stats_dict = {}
     for m in metrics:
         stats_dict[m] = {"f1s": [], "precisions": [], "recalls": []} 
@@ -223,20 +223,20 @@ class MSC_Summaries(Dataset):
         # If max_samples is set, and lower than total number of summaries, then take a random sample
         selection = list(range(len(dialogues)))
         if max_samples is not None:
-            if max_samples < len(turns):
-                selection = random.sample(range(len(turns)), max_samples)
+            if max_samples < len(dialogues):
+                selection = random.sample(range(len(dialogues)), max_samples)
 
         for dialog_id in selection:
             d = dialogues[dialog_id]
 
             # Start with utterance that is a multiple of len_context from the last utterance
-            start_index = len(d["dialog"]) % self.len_context
+            start_index = (len(d["dialog"]) - self.len_context) % 2
             utterances = []
 
             # Collect turns that end with the 'other' speaker (so step size is 2)
-            for i in range(start_index, len(d["dialog"]), 2):
+            for i in range(start_index, len(d["dialog"]) - self.len_context + 1, 2):
                 # Combine 'len_context' consecutive utterances in a turn, and collect all turns in a list with turns
-                turn = [d["dialog"][i+j].get("text","") for j in range(self.len_context) if i + j < len(d["dialog"])]
+                turn = [d["dialog"][i+j].get("text","") for j in range(self.len_context)]
                 utterances.append(turn)
             turns.append(utterances)
 
@@ -345,7 +345,7 @@ class MSC_Summaries(Dataset):
         output += 'Summary: ' + '\n\t' + summary.replace('\n', '\n\t')
         return output
 
-    def evaluate(self, model, metrics=None, nofact_token='', device="cpu", decoder_max=20, print_max=20, log_interval=100):
+    def evaluate(self, model, metrics=None, device="cpu", decoder_max=20, print_max=20, log_interval=100):
 
         model = model.to(device)
         model.eval()
@@ -365,11 +365,13 @@ class MSC_Summaries(Dataset):
                     attention_mask=encoded_utterances['attention_mask'].to(device),
                     max_new_tokens=decoder_max, 
                     num_beams=5,
+                    top_p=0.9,
+                    top_k=10,
                     do_sample=True,
                 )
 
             preds = self.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
-            pred_summary = '\n'.join([pred for pred in preds if pred != nofact_token])
+            pred_summary = '\n'.join([pred for pred in preds if pred != self.nofact_token])
 
             if print_max > 0:
                 print(self.formatted_item(self[i]))
