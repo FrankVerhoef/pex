@@ -53,6 +53,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             "target_sentences": target_sentences,
             "num_combinations": len(combinations)
         }
+        logging.debug(f"calc_stats {dialog_id}: update {len(combinations)} combinations")
         if "ter" in metrics:
             metric["ter"].update(*zip(*combinations))
         if "bert" in metrics:
@@ -65,6 +66,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
     i_start = 0
     for dialog_id in result_dict.keys():
         r = result_dict[dialog_id]
+        logging.debug(f"calc_stats {dialog_id}: compute {metrics}")
         i_end = i_start + r["num_combinations"]
 
         if "ter" in metrics:
