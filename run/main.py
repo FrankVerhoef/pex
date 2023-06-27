@@ -136,7 +136,7 @@ def evaluate(model, testdata, args):
         if args.task == 'generate':
             eval_kwargs.update({'batch_size': args.batch_size})
         else:
-            eval_kwargs.update({'metrics': args.metrics})
+            eval_kwargs.update({'metrics': args.metrics, 'log_interval': args.log_interval})
     elif args.task == "dialog":
         if args.device == 'mps':
             args.device = 'cpu'
