@@ -111,7 +111,7 @@ class MSC_Turn_Facts(MSC_Turns):
 
             interval_counter += len(data)
             if interval_counter >= log_interval:
-                logging.verbose(f"Evaluated {len(pred)}/{len(self)} samples")
+                logging.verbose(f"Evaluated {len(all_preds)}/{len(self)} samples")
                 interval_counter -= log_interval
 
         all_labels = torch.cat(all_labels)
