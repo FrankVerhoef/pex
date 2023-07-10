@@ -2,6 +2,7 @@ from dataset.msc_summary_turns import MSC_Turns
 import torch
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_f1_score, binary_precision, binary_recall
 from collections import Counter
+import utils.logging as logging
 
 class MSC_Turn_Facts(MSC_Turns):
 
@@ -75,7 +76,7 @@ class MSC_Turn_Facts(MSC_Turns):
         return X, y
 
 
-    def evaluate(self, model, device="cpu", batch_size=1):
+    def evaluate(self, model, device="cpu", batch_size=1, print_max=20, log_interval=100):
 
         def print_predictions(data, pred):
 
@@ -90,6 +91,7 @@ class MSC_Turn_Facts(MSC_Turns):
         model.eval()
         all_labels = []
         all_preds = []
+        interval_counter = 0
 
         for start_index in range(0, len(self.turns), batch_size):
             data = [self.__getitem__(start_index + i) for i in range(batch_size) if start_index + i < len(self.turns)]
@@ -102,7 +104,15 @@ class MSC_Turn_Facts(MSC_Turns):
                 
             all_labels.append(y)
             all_preds.append(pred)
-            print_predictions(data, pred)
+
+            if print_max > 0:
+                print_predictions(data, pred)
+                print_max -= len(data)
+
+            interval_counter += len(data)
+            if interval_counter >= log_interval:
+                logging.verbose(f"Evaluated {len(pred)}/{len(self)} samples")
+                interval_counter -= log_interval
 
         all_labels = torch.cat(all_labels)
         all_preds = torch.cat(all_preds)
