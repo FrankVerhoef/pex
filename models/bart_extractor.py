@@ -64,8 +64,9 @@ class ExtractedFactLoss(nn.Module):
         logprob_nofact = lm_logprobs[:, self.nofact_token_id]
         all_tokens_ids = torch.arange(lm_logprobs.shape[1])
         all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
-        logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
-        fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -logprob_fact)
+        maxlogprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
+        # fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -maxlogprob_fact)  # This is old version
+        fact_loss = torch.where(target == self.nofact_token_id, -1/maxlogprob_fact, -1/logprob_nofact)
         return fact_loss
 
     def forward(self, lm_logprobs, target):
