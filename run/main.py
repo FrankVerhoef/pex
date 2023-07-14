@@ -11,7 +11,6 @@ import copy
 import os
 from functools import partial
 from filelock import FileLock
-import json
 from datetime import datetime
 import configargparse as argparse
 
@@ -28,6 +27,7 @@ from dataset.msc_sessions import MSC_Session
 from dataset.convai2 import ConvAI2
 from dataset.msc_summary_turns import MSC_Turns
 from dataset.msc_summary import MSC_Summaries
+from dataset.msc_speechact import MSC_SpeechAct
 from dataset.tokenizer import train_tokenizer, Tokenizer, UNK_TOKEN, END_TOKEN, PAD_TOKEN
 from metrics.terp import TerpMetric
 from metrics.nli import NLIMetric
@@ -126,6 +126,8 @@ def evaluate(model, testdata, args):
 
     if args.task == "classify":
         eval_kwargs = {'device': args.device}
+    elif args.task == "clf_act":
+        eval_kwargs = {'device': args.device, 'batch_size': args.batch_size}
     elif args.task == "generate" or args.task == "summarize":
         if args.device == 'mps':
             args.device = 'cpu'
@@ -167,10 +169,11 @@ def prepare_model_and_data(args):
 
     model, traindata, validdata, testdata, collate_fn, criterion = None, None, None, None, None, None
 
-    if args.task == 'classify': 
+    if args.task == 'classify' or args.task == 'clf_act': 
         
-        # Classify whether dialog turns contain a fact
+        num_classes = {'classify': MSC_Turn_Facts.num_classes, 'clf_act': MSC_SpeechAct.num_classes}[args.task]
 
+        # Classify whether dialog turns contain a fact
         if args.model == "bert":
 
             tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
@@ -178,25 +181,38 @@ def prepare_model_and_data(args):
                 num_added_toks = tokenizer.add_tokens(args.add_tokens)
                 if (args.freeze is not None) and (num_added_toks > 0):
                     logging.warning("Added tokens {} are not trained, because part of model parameters is frozen (freeze={})".format(args.add_tokens, args.freeze))
-            model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr)
+            model = PrefixBert('bert-base-uncased', freeze=args.freeze, prefix_size=args.prefix_size, prefix_aggr=args.prefix_aggr, num_classes=num_classes)
             model.bert.resize_token_embeddings(len(tokenizer))
             criterion = nn.NLLLoss(reduction='mean')
 
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
-        MSC_Turn_Facts.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
-        dataset_config = {
-            'basedir': args.datadir + args.basedir,
-            'sessions': args.sessions
-        }
-        with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
-            if args.action in ['tune', 'train']:
-                traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
-                validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
-            if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
-                testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
-        collate_fn = MSC_Turn_Facts.batchify
+        if args.task == 'classify':
+            MSC_Turn_Facts.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+                'sessions': args.sessions
+            }
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
+                if args.action in ['tune', 'train']:
+                    traindata = MSC_Turn_Facts(subset='train', max_samples=args.train_samples, **dataset_config)
+                    validdata = MSC_Turn_Facts(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
+                    testdata = MSC_Turn_Facts(subset='test', max_samples=args.test_samples, **dataset_config)
+            collate_fn = MSC_Turn_Facts.batchify
+        elif args.task == 'clf_act':
+            MSC_SpeechAct.set(tokenizer=tokenizer)
+            dataset_config = {
+                'basedir': args.datadir + args.basedir,
+            }
+            with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")):
+                if args.action in ['tune', 'train']:
+                    traindata = MSC_SpeechAct(subset='train', max_samples=args.train_samples, **dataset_config)
+                    validdata = MSC_SpeechAct(subset='valid', max_samples=args.valid_samples, **dataset_config)
+                if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
+                    testdata = MSC_SpeechAct(subset='test', max_samples=args.test_samples, **dataset_config)
+            collate_fn = partial(MSC_SpeechAct.batchify, with_labels=True, batch_pad_id=tokenizer.pad_token_id)        
 
     elif args.task in ['generate', 'summarize']: 
 
@@ -501,7 +517,7 @@ def get_args():
     # Main arguments
     parser.add_argument("action", type=str, choices=['tune', 'train', 'eval'], help="choose an action")
     parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="choose one of the available models")
-    parser.add_argument("task", type=str, choices=["generate", "summarize", "classify", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
+    parser.add_argument("task", type=str, choices=["generate", "summarize", "classify", "clf_act", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
 
     tune_group = parser.add_argument_group("options for tuning")
     tune_group.add_argument("--experiment_name", type=str, default="trainpex", help="experiment name for Ray Tune")
@@ -550,6 +566,8 @@ def get_args():
 
     if args.task == "classify":
         parser = MSC_Turn_Facts.add_cmdline_args(parser)
+    elif args.task == "clf_act":
+        parser = MSC_SpeechAct.add_cmdline_args(parser)
     elif args.task in ["generate", "summarize"]:
         if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
             parser = TerpMetric.add_cmdline_args(parser)
