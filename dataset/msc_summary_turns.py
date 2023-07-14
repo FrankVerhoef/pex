@@ -22,6 +22,7 @@ from utils.general import prettydict, dict_with_key_prefix
 import utils.logging as logging
 
 TERP_MAXIMUM = 0.6
+NLI_MINIMUM = 0.8
 
 class MSC_Turns(Dataset):
 

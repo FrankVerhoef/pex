@@ -9,6 +9,7 @@ from torchmetrics import TranslationEditRate
 from torchmetrics.text.bert import BERTScore
 from torchmetrics.text.infolm import InfoLM
 from metrics.terp import TerpMetric, TERP_DIR, JAVA_HOME
+from metrics.nli import NLIMetric
  
 from torch.utils.data import Dataset
 
@@ -23,7 +24,8 @@ from utils.plotting import plot_heatmap
 
 TER_MAXIMUM = 0.6
 BERT_MINIMUM = 0.75
-TERP_MAXIMUM = 0.6
+TERP_MAXIMUM = 0.75
+NLI_MINIMUM = 0.5
 
 def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
@@ -31,6 +33,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         "ter": TranslationEditRate(return_sentence_level_score=True),
         "bert": BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli'),
         "terp": TerpMetric(),
+        "nli": NLIMetric(),
         # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     }
     if metrics is None:
@@ -38,7 +41,11 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
     stats_dict = {}
     for m in metrics:
-        stats_dict[m] = {"f1s": [], "precisions": [], "recalls": []} 
+        if m == "nli":
+            for key in ["_tp", "_pt", "_avg"]:
+                stats_dict[m + key] = {"f1s": [], "precisions": [], "recalls": []}
+        else:
+            stats_dict[m] = {"f1s": [], "precisions": [], "recalls": []} 
 
     result_dict = {}
 
@@ -46,6 +53,10 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         dialog_id = index["dialog_id"]
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
         target_sentences = [t.lower() for t in target.replace('. ', '\n').replace('.', '').split('\n') if t != '']
+        if len(pred_sentences) == 0:
+            pred_sentences = [' ']
+        if len(target_sentences) == 0:
+            target_sentences = [' ']
         combinations = list(itertools.product(pred_sentences, target_sentences))
         result_dict[dialog_id] = {
             "convai_id": index["convai_id"],
@@ -60,9 +71,28 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             metric["bert"].update(*zip(*combinations))
         if "terp" in metrics:
             metric["terp"].update(dialog_id, *zip(*combinations))
+        if "nli" in metrics:
+            for comb_id, (pred, target) in enumerate(combinations):
+                metric["nli"].update((dialog_id, "pt", comb_id), pred, target) # entailment score from prediction to target
+                metric["nli"].update((dialog_id, "tp", comb_id), target, pred) # entailment score from target to prediction
 
+    # Compute all the metrics
     all_scores = {m: metric[m].compute() for m in metrics}
-    
+
+    # Transform the resulting NLI-metrics to two lists: 'tp' is from target to prediction; 'pt' is from prediction to target
+    if "nli" in metrics:
+        nli_scores = {}
+        for (dialog_id, direction, _), score in all_scores["nli"].items():
+            if dialog_id in nli_scores.keys():
+                if direction in nli_scores[dialog_id].keys():
+                    nli_scores[dialog_id][direction].append(score)
+                else:
+                    nli_scores[dialog_id].update({direction: [score]})
+            else:
+                nli_scores[dialog_id] = {direction: [score]}
+        all_scores["nli"] = nli_scores
+
+    # Calculate the precision, recall and F1 scores for each of the metrics
     i_start = 0
     for dialog_id in result_dict.keys():
         r = result_dict[dialog_id]
@@ -111,6 +141,24 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             stats_dict["terp"]["precisions"].append(precision)
             stats_dict["terp"]["recalls"].append(recall)
 
+        if "nli" in metrics:
+            nli_scores = {}
+            nli_scores["tp"] = torch.tensor(all_scores["nli"][dialog_id]["tp"])
+            nli_scores["pt"] = torch.tensor(all_scores["nli"][dialog_id]["pt"])
+            nli_scores["avg"] = (nli_scores["tp"] + nli_scores["pt"]) / 2
+            r["nli"] = {}
+            for key in ["tp", "pt", "avg"]:
+                scores = nli_scores[key].view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+                matching_predictions = scores >= NLI_MINIMUM
+                precision = torch.any(matching_predictions, dim=0).float().mean().item()
+                recall = torch.any(matching_predictions, dim=1).float().mean().item()
+                f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
+                r["nli_" + key] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
+
+                stats_dict["nli_" + key]["f1s"].append(f1)
+                stats_dict["nli_" + key]["precisions"].append(precision)
+                stats_dict["nli_" + key]["recalls"].append(recall)
+
         i_start = i_end
 
     return stats_dict, result_dict
@@ -149,6 +197,17 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 predictions=r["pred_sentences"], 
                 title=f"TERp heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TERP_MAXIMUM:.2f})"
             ).figure.savefig(f"{savedir}terp_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
+
+        if len([m for m in r.keys() if m[:4] == "nli_"]):
+            for key in ["tp", "pt", "avg"]:
+                plot_heatmap(
+                    scores=r["nli_" + key]["scores"], 
+                    threshold=NLI_MINIMUM,
+                    criterion = lambda x, threshold: x >= threshold,
+                    targets=r["target_sentences"], 
+                    predictions=r["pred_sentences"], 
+                    title=f"NLI_{key} heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={NLI_MINIMUM:.2f})"
+                ).figure.savefig(f"{savedir}nli_{key}_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
 
 class MSC_Summaries(Dataset):
 
@@ -436,14 +495,16 @@ if __name__ == "__main__":
     parser.add_argument("--datadir", type=str, default="./data/", help="Datadir")
     parser.add_argument("--basedir", type=str, default="msc/msc_personasummary/", help="Base directory for dataset")
     parser.add_argument("--savedir", type=str, default="./output/", help="directory for output files")
+    parser.add_argument("--skip_eval", default=True, action='store_true', help="just train")
 
-    parser = TerpMetric.add_cmdline_args(parser)
+    # parser = TerpMetric.add_cmdline_args(parser)
+    parser = NLIMetric.add_cmdline_args(parser)
     parser = MSC_Summaries.add_cmdline_args(parser)
     parser = BartExtractor.add_cmdline_args(parser)
     args = parser.parse_args()
 
     # set seed
-    random.seed(args.seed)
+    random.seed(123)
     torch.manual_seed(args.seed)
 
     # prepare logging
@@ -451,8 +512,13 @@ if __name__ == "__main__":
     logging.info("Unit test {}".format(__file__))
 
     # Settings for this test
+    args.session = 3
+    args.batch_size = 8
     subset = 'test'
-    test_samples = 10
+    test_samples = 5
+    args.java_home = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
+    args.terpdir = "/Users/FrankVerhoef/Programming/terp/"
+    args.tmpdir = "/Users/FrankVerhoef/Programming/PEX/output/"
     args.load = "trained_bart"
     args.speaker_prefixes = ["<other>", "<self>"]
     args.nofact_token = "<nofact>"
@@ -502,18 +568,21 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device(args.device)))
 
     # Test predictions
-    pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
-    logging.report(('\n----------------------------------------\n').join(pred_summaries))
+    # pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
+    # logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
     # Run evaluation
-    TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
+
     eval_kwargs = {
-        'metrics': ["terp", "ter", "bert"], 
-        'nofact_token': args.nofact_token, 
+        'metrics': ["terp", "nli"], 
         'device': args.device, 
         'log_interval': args.log_interval, 
         'decoder_max': 30
     }
+    if "terp" in eval_kwargs['metrics']:
+        TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
+    if "nli" in eval_kwargs['metrics']:
+        NLIMetric.set(nli_model=args.nli_model, device=args.device, batch_size=args.batch_size)
     eval_stats, results_dict = msc_summaries.evaluate(model, **eval_kwargs)
     logging.info(eval_stats)
     logging.report('\n'.join([
