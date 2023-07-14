@@ -372,6 +372,26 @@ class MSC_Session(Dataset):
         found = False if (i < low) or (i > high) else (self.indices[i]["dialog_id"] == dialog_id) and (self.indices[i]["turn_id"] == turn_id)
         return i if found else -1
 
+    def personas(self, i, speaker):
+        if self.sessionbreak_token is None:
+            logging.warning("Can only filter persona sentences if sessionbreak_token is defined")
+            return []
+        history = self.history[i]
+        turn_id = 0
+        persona_sentences = []
+        while turn_id < len(history):
+            if history[turn_id][0] == 'Nobody' and history[turn_id][1] == 'personas':
+                break
+            turn_id += 1
+        turn_id += 1
+        while turn_id < len(history):
+            if history[turn_id][0] == speaker:
+                persona_sentences.append(history[turn_id][1])
+            elif history[turn_id][0] == 'Nobody':
+                break
+            turn_id += 1
+        return persona_sentences
+
     def _get_speaker_mapping(self, i):
         # Determine who is Speaker 1 and Speaker 2 (who is 'you', who is 'me')
         speakers = [speaker for speaker, _ in self.history[i] if speaker != "Nobody"]
