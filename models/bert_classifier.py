@@ -8,7 +8,7 @@ from transformers import BertForSequenceClassification, BertModel, BertConfig
 
 class BertClassifier(nn.Module):
 
-    def __init__(self, classifier_size_factor=1, bert_base=None):
+    def __init__(self, classifier_size_factor=1, bert_base=None, num_classes=2):
         super().__init__()
         if bert_base is None:
             self.bert = BertModel(config=BertConfig())
@@ -17,7 +17,7 @@ class BertClassifier(nn.Module):
         self.bert.pooler = None
 
         in_features = classifier_size_factor * self.bert.config.hidden_size
-        self.classifier = nn.Linear(in_features=in_features, out_features=2)
+        self.classifier = nn.Linear(in_features=in_features, out_features=num_classes)
         self.softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
@@ -75,13 +75,13 @@ class PrefixBert(BertClassifier):
         group.add_argument("--prefix_aggr", type=str, default="concat", choices=["concat", "max", "avg"], help="How to aggregate prefix hidden states")
         return parser
 
-    def __init__(self, bert_base=None, freeze=None, prefix_size=1, prefix_aggr="concat"):
+    def __init__(self, bert_base=None, freeze=None, prefix_size=1, prefix_aggr="concat", num_classes=2):
         
         self.freeze = freeze
         self.prefix_size = prefix_size
         self.prefix_aggr = prefix_aggr
         classifier_size_factor = prefix_size + 1 if prefix_aggr == "concat" else 1
-        super().__init__(classifier_size_factor, bert_base)
+        super().__init__(classifier_size_factor, bert_base, num_classes)
         if self.prefix_size > 0:
             self.prefix_ids = torch.arange(self.prefix_size)
             self.prefix = nn.Embedding(self.prefix_size, self.bert.config.hidden_size)

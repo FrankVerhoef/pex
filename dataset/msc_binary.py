@@ -10,7 +10,7 @@ class MSC_Turn_Facts(MSC_Turns):
     Variant of the MSC dataset that can be used to learn whether a series of utterances implies a new fact about the last speaker.
     Builds on the MSC_Turns dataset
     """
-
+    num_classes = 2
 
     def __init__(self, basedir='./', sessions=[1], subset='train', max_samples=None):
         super().__init__(
