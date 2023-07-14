@@ -161,6 +161,13 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
         i_start = i_end
 
+    stats_avg = {}
+    for metric in stats_dict.keys():
+        for sub_metric in stats_dict[metric].keys():
+            values = stats_dict[metric][sub_metric]
+            stats_avg[f"{metric}_{sub_metric[:-1]}"] = sum(values) / max(len(values), 1)
+    stats_dict.update(stats_avg)
+
     return stats_dict, result_dict
 
 def plot_heatmaps(results_dict, session, subset, savedir):
@@ -585,11 +592,6 @@ if __name__ == "__main__":
         NLIMetric.set(nli_model=args.nli_model, device=args.device, batch_size=args.batch_size)
     eval_stats, results_dict = msc_summaries.evaluate(model, **eval_kwargs)
     logging.info(eval_stats)
-    logging.report('\n'.join([
-        f"{metric}_{k}:\t{sum(v)/len(v):.4f}"
-        for metric, stats in eval_stats.items() for k, v in stats.items()
-        if isinstance(v, list)
-    ]))
 
     # Save results
     with open(args.savedir + f"MSC_Summary_session_{msc_summaries.session}_{msc_summaries.subset}_evalresults.json", "w") as f:
