@@ -34,21 +34,19 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         "bert": BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli'),
         "terp": TerpMetric(),
         "nli": NLIMetric(),
-        # infolm_metric = InfoLM(model_name_or_path='google/bert_uncased_L-2_H-128_A-2', return_sentence_level_score=True)
     }
+
     if metrics is None:
         metrics = metric.keys()
 
-    stats_dict = {}
-    for m in metrics:
-        if m == "nli":
-            for key in ["_tp", "_pt", "_avg"]:
-                stats_dict[m + key] = {"f1s": [], "precisions": [], "recalls": []}
-        else:
-            stats_dict[m] = {"f1s": [], "precisions": [], "recalls": []} 
+    assert len(set(metrics).difference(metric.keys())) == 0, f"Unknown metric in metrics: {metrics}; choose from {list(metrics.keys())}"
+    metric_keys = list(set(metrics))
+    if "nli" in metrics:
+        metric_keys.remove("nli")
+        metric_keys += ["nli" + suffix for suffix in ["_tp", "_pt", "_avg"]] if "nli" in metrics else []
+    sub_metrics = ['f1', 'precision', 'recall', 'prec_strength', 'rec_strength']
 
     result_dict = {}
-
     for index, prediction, target in zip(indices, predicted_summaries, target_summaries):
         dialog_id = index["dialog_id"]
         pred_sentences = [p.lower() for p in prediction.replace('. ', '\n').replace('.', '').split('\n') if p != '']
@@ -92,7 +90,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
                 nli_scores[dialog_id] = {direction: [score]}
         all_scores["nli"] = nli_scores
 
-    # Calculate the precision, recall and F1 scores for each of the metrics
+    # Calculate the submetrics (precision, recall and F1 scores etc) for each of the metrics
     i_start = 0
     for dialog_id in result_dict.keys():
         r = result_dict[dialog_id]
@@ -102,44 +100,50 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         if "ter" in metrics:
             scores = all_scores["ter"][1][i_start:i_end]
             scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+
+            # precision, recall, F1
             matching_predictions = scores <= TER_MAXIMUM
             precision = torch.any(matching_predictions, dim=0).float().mean().item()
             recall = torch.any(matching_predictions, dim=1).float().mean().item()
             f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
 
-            r["ter"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
+            # strength
+            prec_strength = (1 - scores).max(dim=0).values.mean().item()
+            rec_strength = (1- scores).max(dim=1).values.mean().item()
 
-            stats_dict["ter"]["f1s"].append(f1)
-            stats_dict["ter"]["precisions"].append(precision)
-            stats_dict["ter"]["recalls"].append(recall)
+            r["ter"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall, "prec_strength": prec_strength, "rec_strength": rec_strength}
         
         if "bert" in metrics:
             scores = torch.as_tensor(all_scores["bert"]['f1'][i_start:i_end])
             scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+
+            # precision, recall, F1
             matching_predictions = scores >= BERT_MINIMUM
             precision = torch.any(matching_predictions, dim=0).float().mean().item()
             recall = torch.any(matching_predictions, dim=1).float().mean().item()
             f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
 
-            r["bert"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
+            # strength
+            prec_strength = scores.max(dim=0).values.mean().item()
+            rec_strength = scores.max(dim=1).values.mean().item()
 
-            stats_dict["bert"]["f1s"].append(f1)
-            stats_dict["bert"]["precisions"].append(precision)
-            stats_dict["bert"]["recalls"].append(recall)
+            r["bert"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall, "prec_strength": prec_strength, "rec_strength": rec_strength}
 
         if "terp" in metrics:
             scores = all_scores["terp"][dialog_id]
             scores = scores.view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+
+            # precision, recall, F1
             matching_predictions = scores <= TERP_MAXIMUM
             precision = torch.any(matching_predictions, dim=0).float().mean().item()
             recall = torch.any(matching_predictions, dim=1).float().mean().item()
             f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
 
-            r["terp"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
+            # strength
+            prec_strength = (1 - scores).max(dim=0).values.mean().item()
+            rec_strength = (1- scores).max(dim=1).values.mean().item()
 
-            stats_dict["terp"]["f1s"].append(f1)
-            stats_dict["terp"]["precisions"].append(precision)
-            stats_dict["terp"]["recalls"].append(recall)
+            r["terp"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall, "prec_strength": prec_strength, "rec_strength": rec_strength}
 
         if "nli" in metrics:
             nli_scores = {}
@@ -149,24 +153,34 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             r["nli"] = {}
             for key in ["tp", "pt", "avg"]:
                 scores = nli_scores[key].view(len(r["pred_sentences"]), len(r["target_sentences"])).permute(1,0)
+
+                # precision, recall, F1
                 matching_predictions = scores >= NLI_MINIMUM
                 precision = torch.any(matching_predictions, dim=0).float().mean().item()
                 recall = torch.any(matching_predictions, dim=1).float().mean().item()
                 f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
-                r["nli_" + key] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall}
 
-                stats_dict["nli_" + key]["f1s"].append(f1)
-                stats_dict["nli_" + key]["precisions"].append(precision)
-                stats_dict["nli_" + key]["recalls"].append(recall)
+                # strength
+                prec_strength = scores.max(dim=0).values.mean().item()
+                rec_strength = scores.max(dim=1).values.mean().item()
+
+                r["nli_" + key] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall, "prec_strength": prec_strength, "rec_strength": rec_strength}
+
+        # Calculate length difference
+        r["numwords_factor"] = len(' '.join(r['pred_sentences'])) / max(len(' '.join(r['target_sentences'])), 1)
+        r["numfacts_factor"] = len(r['pred_sentences']) / max(len(r['target_sentences']), 1)
 
         i_start = i_end
 
-    stats_avg = {}
-    for metric in stats_dict.keys():
-        for sub_metric in stats_dict[metric].keys():
-            values = stats_dict[metric][sub_metric]
-            stats_avg[f"{metric}_{sub_metric[:-1]}"] = sum(values) / max(len(values), 1)
-    stats_dict.update(stats_avg)
+    # Summarize all metrics in stats_dict
+    stats_dict = {}
+    num_dialogues = len(result_dict.keys())
+    for metric in metric_keys:
+        for sub_metric in sub_metrics:
+            values = [result_dict[dialog_id][metric][sub_metric] for dialog_id in result_dict.keys()]
+            stats_dict[f"{metric}_{sub_metric}"] = sum(values) / num_dialogues
+    stats_dict["numwords_factor"] = sum([result_dict[dialog_id]["numwords_factor"] for dialog_id in result_dict.keys()]) / num_dialogues
+    stats_dict["numfacts_factor"] = sum([result_dict[dialog_id]["numfacts_factor"] for dialog_id in result_dict.keys()]) / num_dialogues    
 
     return stats_dict, result_dict
 
@@ -413,7 +427,7 @@ class MSC_Summaries(Dataset):
         output += 'Summary: ' + '\n\t' + summary.replace('\n', '\n\t')
         return output
 
-    def evaluate(self, model, metrics=None, device="cpu", decoder_max=20, print_max=20, log_interval=100):
+    def evaluate(self, model, generation_config, metrics=None, device="cpu", print_max=20, log_interval=100):
 
         model = model.to(device)
         model.eval()
@@ -431,11 +445,7 @@ class MSC_Summaries(Dataset):
                 pred_tokens = model.generate(
                     input_ids=encoded_utterances['input_ids'].to(device), 
                     attention_mask=encoded_utterances['attention_mask'].to(device),
-                    max_new_tokens=decoder_max, 
-                    num_beams=5,
-                    top_p=0.9,
-                    top_k=10,
-                    do_sample=True,
+                    **generation_config,
                 )
 
             preds = self.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
@@ -457,7 +467,7 @@ class MSC_Summaries(Dataset):
         return stats, results_dict
 
     @classmethod
-    def predict(cls, data, model, nofact_token='', device="cpu", decoder_max=20):
+    def predict(cls, data, model, generation_config, nofact_token='', device="cpu"):
 
         model = model.to(device)
         model.eval()
@@ -472,9 +482,7 @@ class MSC_Summaries(Dataset):
                 pred_tokens = model.generate(
                     input_ids=encoded_utterances['input_ids'].to(device), 
                     attention_mask=encoded_utterances['attention_mask'].to(device),
-                    max_new_tokens=decoder_max, 
-                    num_beams=5,
-                    do_sample=True,
+                    **generation_config,
                 )
 
             preds = cls.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
@@ -530,6 +538,7 @@ if __name__ == "__main__":
     args.speaker_prefixes = ["<other>", "<self>"]
     args.nofact_token = "<nofact>"
     args.add_tokens = ["<other>", "<self>", "<nofact>"]
+    generation_config = {"num_beams": 5, "top_p": 0.9, "top_k": 10, "do_sample": True, "temperature": 1.5, "max_new_tokens": args.decoder_max}
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained(args.bart_base)
@@ -575,16 +584,15 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load(args.checkpoint_dir + args.load, map_location=torch.device(args.device)))
 
     # Test predictions
-    # pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model)
-    # logging.report(('\n----------------------------------------\n').join(pred_summaries))
+    pred_summaries = msc_summaries.predict([utterances for utterances, _ in data], model, generation_config)
+    logging.report(('\n----------------------------------------\n').join(pred_summaries))
 
     # Run evaluation
-
     eval_kwargs = {
+        'generation_config': generation_config,
         'metrics': ["terp", "nli"], 
-        'device': args.device, 
+        'device': 'cpu', 
         'log_interval': args.log_interval, 
-        'decoder_max': 30
     }
     if "terp" in eval_kwargs['metrics']:
         TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)

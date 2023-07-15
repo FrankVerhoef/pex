@@ -226,7 +226,7 @@ class MSC_Turns(Dataset):
         return encoded
 
 
-    def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
+    def evaluate(self, model, generation_config, device="cpu", batch_size=1, print_max=20, log_interval=100):
 
         def print_predictions(data, predictions):
             for (x, y), p in zip(data, predictions):
@@ -251,14 +251,12 @@ class MSC_Turns(Dataset):
                 if model.batch_format == "huggingface":
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
-                        max_new_tokens=decoder_max, 
-                        num_beams=1,
-                        do_sample=False,
+                        **generation_config,
                     )
                     pred_fact = model.fact_mask(pred_tokens).any(dim=1)
 
                 elif model.batch_format == "padded_sequences":
-                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)        
+                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=generation_config.max_new_tokens)        
                     pred_fact = pred_tokens[:, 0] != model.nofact_token_id
 
             pred_persona = self.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
@@ -295,20 +293,21 @@ class MSC_Turns(Dataset):
 
 
     @classmethod
-    def predict_from_utterances(cls, utterances=[], model=None, device="cpu", decoder_max=20, batch_size=1):
+    def predict_from_utterances(cls, utterances=[], model=None, generation_config=None, device="cpu", batch_size=1):
         assert model is not None, "No model specified to use for predictions"
+        assert generation_config is not None, "No generation_config specified for predictions"
         assert len(utterances) % 2 == 0, f"Received {len(utterances)} utterances, this should be an even number"
         dataset = cls()
         if len(utterances) > 0:
             dataset.turns = [[(0, utterances[i][1]), (1, utterances[i + 1][1])] for i in range(0, len(utterances), 2)]
             dataset.personas = [None for i in range(0, len(utterances), 2)]
         turns = [(dataset[i][0], "") for i in range(len(dataset))]
-        pred_personas = cls.predict(turns, model, device, decoder_max, batch_size)
+        pred_personas = cls.predict(turns, model, generation_config, device, batch_size)
         return pred_personas
 
 
     @classmethod
-    def predict(cls, input, model, device="cpu", decoder_max=20, batch_size=1):
+    def predict(cls, input, model, generation_config, device="cpu", batch_size=1):
 
         model = model.to(device)
         model.eval()
@@ -322,13 +321,11 @@ class MSC_Turns(Dataset):
                 if model.batch_format == "huggingface":
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
-                        max_new_tokens=decoder_max, 
-                        num_beams=1,
-                        do_sample=False,
+                        **generation_config
                     )
 
                 elif model.batch_format == "padded_sequences":
-                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=decoder_max)        
+                    pred_tokens = model.generate(batch[0].to(device), batch[2], max=generation_config["max_new_tokens"])        
 
             pred_persona = cls.tokenizer.batch_decode(pred_tokens.cpu().tolist(), skip_special_tokens=True)
             pred_personas.extend([p for p in pred_persona if p != cls.nofact_token])
@@ -416,11 +413,17 @@ def calc_stats_generation(pred_personas, target_personas, indices, filter_fn):
             terp_metric.update(str(turn_id), [p], [t])
             p_split = [part.lower() for part in p.replace('. ', '\n').replace('.', '').split('\n') if part != '']
             t_split = [part.lower() for part in t.replace('. ', '\n').replace('.', '').split('\n') if part != '']
+            result_dict[turn_id]["numwords_factor"] = len(p.split(' ')) / max(len(t.split(' ')), 1)
             result_dict[turn_id]["len_p_split"] = len(p_split)
             result_dict[turn_id]["len_t_split"] = len(t_split)
             combinations = list(itertools.product(p_split, t_split))
             terp_split_metric.update(str(turn_id), *zip(*combinations))
 
+    numwords_factor_values = [
+        result_dict[turn_id]["numwords_factor"] 
+        for turn_id in result_dict.keys() 
+        if "numwords_factor" in result_dict[turn_id].keys()
+    ]
     bleu_2 = bleu_score(preds_withfact, targets_withfact, n_gram=2, smooth=True).item()
     bleu_4 = bleu_score(preds_withfact, targets_withfact, n_gram=4, smooth=True).item()
     rouge_scores = rouge_score(preds_withfact, targets_withfact, rouge_keys=('rouge1', 'rouge2', 'rougeL'))
@@ -438,6 +441,7 @@ def calc_stats_generation(pred_personas, target_personas, indices, filter_fn):
         result_dict[literal_eval(turn_id)].update({**dict_with_key_prefix(terp_split_summary, prefix="terp")})
 
     stats = {
+        "numwords_factor": sum(numwords_factor_values) / max(len(numwords_factor_values), 1),
         "bleu_2": bleu_2, 
         "bleu_4": bleu_4, 
         # "bert_f1": sum(bert_scores['f1']) / max(len(bert_scores['f1']), 1),

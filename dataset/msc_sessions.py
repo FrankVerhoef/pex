@@ -746,6 +746,14 @@ if __name__ == "__main__":
         bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
         bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
         bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+        bart_generation_config = {
+            "num_beams": bart_config['num_beams'],
+            "do_sample": bart_config['do_sample'],
+            "temperature": bart_config['temperature'],
+            "top_p": bart_config['top_p'],
+            "top_k": bart_config['top_k'],
+            "max_new_tokens": bart_config['decoder_max'],
+        }
         bart_device = args.device
         if bart_device == 'mps':
             bart_device = 'cpu'
@@ -759,7 +767,13 @@ if __name__ == "__main__":
             speaker_prefixes=bart_config['speaker_prefixes'], 
             nofact_token=bart_config['nofact_token']
         )
-        persona_selector = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device, batch_size=args.batch_size)
+        persona_selector = partial(
+            MSC_Turns.predict_from_utterances, 
+            model=bart_model, 
+            generation_config=bart_generation_config, 
+            device=bart_device, 
+            batch_size=args.batch_size
+        )
 
     MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, sessionbreak_token=sessionbreak_token)
     msc_turns = MSC_Session(
