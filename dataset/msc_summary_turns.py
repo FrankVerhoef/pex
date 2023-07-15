@@ -277,7 +277,7 @@ class MSC_Turns(Dataset):
 
         logging.info("Start calculating stats")
         clf_stats, clf_result_dict = calc_stats_classification(pred_facts, target_facts, self.indices)
-        nli_stats, nli_result_dict = calc_stats_nli([self[i][0] for i in range(len(self))], pred_personas, target_personas, self.indices)
+        nli_stats, nli_result_dict = calc_stats_nli([self[i][0] for i in range(len(self))], pred_personas, target_personas, self.indices, filter_fn=lambda x:x != self.nofact_token)
         gen_stats, gen_result_dict = calc_stats_generation(pred_personas, target_personas, self.indices, filter_fn=lambda x:x != self.nofact_token)
         stats = {**clf_stats, **nli_stats, **gen_stats}
         result_dict = {
@@ -357,38 +357,49 @@ def calc_stats_classification(pred_facts, target_facts, indices):
     }
     return stats, result_dict
 
-def calc_stats_nli(turns, preds, targets, indices):
+def calc_stats_nli(turns, preds, targets, indices, filter_fn):
     
     def turn_id(id):
         return id["session"], id['dialog_id'], id['turn_id']
     
-    result_dict = {}
     nli_pred = NLIMetric()
     nli_target = NLIMetric()
     nli_pred_to_target = NLIMetric()
     nli_target_to_pred = NLIMetric()
+
+    # Prepare calculation of metrics
     for id, turn, pred, target in zip (indices, turns, preds, targets):
-        nli_pred.update(turn_id(id), turn, pred)
-        nli_target.update(turn_id(id), turn, target)
-        nli_pred_to_target.update(turn_id(id), pred, target)
-        nli_target_to_pred.update(turn_id(id), target, pred)
+        if filter_fn(pred): 
+            nli_pred.update(turn_id(id), turn, pred)
+        if filter_fn(target): 
+            nli_target.update(turn_id(id), turn, target)
+        if filter_fn(pred) and filter_fn(target):
+            nli_pred_to_target.update(turn_id(id), pred, target)
+            nli_target_to_pred.update(turn_id(id), target, pred)
+
+    # Compute all NLI scores
     nli_preds = nli_pred.compute()
     nli_targets = nli_target.compute()
     nli_preds_to_targets = nli_pred_to_target.compute()
     nli_targets_to_preds = nli_target_to_pred.compute()
-    result_dict = {
-        turn_id(id): {
-            "nli_pred": nli_preds[turn_id(id)],
-            "nli_target": nli_targets[turn_id(id)],
-            "nli_pred_to_target": nli_preds_to_targets[turn_id(id)],
-            "nli_target_to_pred": nli_targets_to_preds[turn_id(id)]
-        } for id in indices
-    }
+
+    # Collect in result_dict per sample
+    result_dict = {turn_id(id): {} for id in indices}
+    for t_id in nli_preds.keys():
+        result_dict[t_id].update({"nli_pred": nli_preds[t_id]})
+    for t_id in nli_targets.keys():
+        result_dict[t_id].update({"nli_target": nli_targets[t_id]})
+    for t_id in nli_preds_to_targets.keys():
+        result_dict[t_id].update({"nli_pred_to_target": nli_preds_to_targets[t_id]})
+    for t_id in nli_targets_to_preds.keys():
+        result_dict[t_id].update({"nli_target_to_pred": nli_targets_to_preds[t_id]})
+
+    # Summarize stats
     stats = {
-        "nli_predictions": sum(nli_preds.values()) / max(len(indices) , 1),
-        "nli_targets": sum(nli_targets.values()) / max(len(indices) , 1),
-        "nli_preds_to_targets": sum(nli_preds_to_targets.values()) / max(len(indices) , 1),
-        "nli_targets_to_preds": sum(nli_targets_to_preds.values()) / max(len(indices) , 1),
+        "nli_predictions": sum(nli_preds.values()) / max(len(nli_preds.values()) , 1),
+        "nli_targets": sum(nli_targets.values()) / max(len(nli_targets.values()) , 1),
+        "nli_preds_to_targets": sum(nli_preds_to_targets.values()) / max(len(nli_preds_to_targets.values()) , 1),
+        "nli_targets_to_preds": sum(nli_targets_to_preds.values()) / max(len(nli_targets_to_preds.values()) , 1),
     }
 
     return stats, result_dict
