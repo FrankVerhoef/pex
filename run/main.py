@@ -134,11 +134,22 @@ def evaluate(model, testdata, args):
             logging.warning("Changed device from 'mps' to 'cpu' for evaluation")
         TerpMetric.set(terp_dir=args.terpdir, java_home=args.java_home, tmp_dir=args.tmpdir)
         NLIMetric.set(nli_model=args.nli_model, device=args.device, batch_size=args.batch_size)
-        eval_kwargs = {'device': args.device, 'decoder_max': args.decoder_max}
+        eval_kwargs = {
+            'generation_config': {
+                "num_beams": args.num_beams,
+                "do_sample": args.do_sample,
+                "temperature": args.temperature,
+                "top_p": args.top_p,
+                "top_k": args.top_k,
+                "max_new_tokens": args.decoder_max,
+            },
+            'device': args.device, 
+            'log_interval': args.log_interval
+        }
         if args.task == 'generate':
             eval_kwargs.update({'batch_size': args.batch_size})
         else:
-            eval_kwargs.update({'metrics': args.metrics, 'log_interval': args.log_interval})
+            eval_kwargs.update({'metrics': args.metrics})
     elif args.task == "dialog":
         if args.device == 'mps':
             args.device = 'cpu'
@@ -395,6 +406,14 @@ def prepare_model_and_data(args):
                 bart_nofact_token_id = bart_tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
                 bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
                 bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+                bart_generation_config = {
+                    "num_beams": bart_config['num_beams'],
+                    "do_sample": bart_config['do_sample'],
+                    "temperature": bart_config['temperature'],
+                    "top_p": bart_config['top_p'],
+                    "top_k": bart_config['top_k'],
+                    "max_new_tokens": bart_config['decoder_max'],
+                }
                 bart_device = args.device
                 if bart_device == 'mps':
                     bart_device = 'cpu'
@@ -408,7 +427,13 @@ def prepare_model_and_data(args):
                     speaker_prefixes=bart_config['speaker_prefixes'], 
                     nofact_token=bart_config['nofact_token']
                 )
-                dataset_config['persona_selector_fn'] = partial(MSC_Turns.predict_from_utterances, model=bart_model, device=bart_device, batch_size=args.batch_size)
+                dataset_config['persona_selector_fn'] = partial(
+                    MSC_Turns.predict_from_utterances, 
+                    model=bart_model, 
+                    generation_config=bart_generation_config,
+                    device=bart_device, 
+                    batch_size=args.batch_size
+                    )
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 if args.action in ['tune', 'train']:
