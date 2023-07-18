@@ -2,45 +2,47 @@ import torch
 import torch.nn as nn
 
 import utils.logging as logging
-from utils.general import padded_tensor
 
 from transformers import BartForConditionalGeneration, BartConfig
 from torchmetrics.functional.text.perplexity import perplexity
 
+##
+## This was first loss function. Is not obsolete, so commented out
+##
 
-class ConditionalFactLoss(nn.Module):
+# class ConditionalFactLoss(nn.Module):
 
-    def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5):
-        super().__init__()
-        self.nofact_token_id = nofact_token_id
-        self.ignore_index = ignore_index
-        self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
-        self.lm_weight = lm_weight
+#     def __init__(self, nofact_token_id, ignore_index=-100, lm_weight=0.5):
+#         super().__init__()
+#         self.nofact_token_id = nofact_token_id
+#         self.ignore_index = ignore_index
+#         self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
+#         self.lm_weight = lm_weight
 
-    def reweighted_fact_loss(self, lm_logprobs, target):
-        logprob_nofact = lm_logprobs[:, self.nofact_token_id]
-        all_tokens_ids = torch.arange(lm_logprobs.shape[1])
-        all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
-        logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
-        fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -logprob_fact)
-        return fact_loss
+#     def reweighted_fact_loss(self, lm_logprobs, target):
+#         logprob_nofact = lm_logprobs[:, self.nofact_token_id]
+#         all_tokens_ids = torch.arange(lm_logprobs.shape[1])
+#         all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
+#         logprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
+#         fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -logprob_fact)
+#         return fact_loss
 
-    def forward(self, lm_logprobs, target):
+#     def forward(self, lm_logprobs, target):
 
-        assert (lm_logprobs.shape[2] > 1) and (target.shape[1] > 1), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
+#         assert (lm_logprobs.shape[2] > 1) and (target.shape[1] > 1), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
 
-        # Classification loss: whether facts are recognized correctly
-        # Token directly after <bos> token signals whether sequence is a fact
-        classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
+#         # Classification loss: whether facts are recognized correctly
+#         # Token directly after <bos> token signals whether sequence is a fact
+#         classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
 
-        # LM loss: whether the tokens of the facts are predicted correctly
-        lm_loss = self.nllloss(lm_logprobs, target).mean(dim=1)
+#         # LM loss: whether the tokens of the facts are predicted correctly
+#         lm_loss = self.nllloss(lm_logprobs, target).mean(dim=1)
 
-        # Weighted combination of classification loss and LM loss
-        target_fact = (target[:, 1] != self.nofact_token_id).int()
-        combined_loss = (1 - target_fact) * classification_loss + target_fact * (self.lm_weight * lm_loss + (1 - self.lm_weight) * classification_loss)
+#         # Weighted combination of classification loss and LM loss
+#         target_fact = (target[:, 1] != self.nofact_token_id).int()
+#         combined_loss = (1 - target_fact) * classification_loss + target_fact * (self.lm_weight * lm_loss + (1 - self.lm_weight) * classification_loss)
         
-        return combined_loss.mean(), classification_loss.mean(), lm_loss.mean()
+#         return combined_loss.mean(), classification_loss.mean(), lm_loss.mean()
 
 class ExtractedFactLoss(nn.Module):
 
@@ -213,6 +215,10 @@ class BartExtractor(nn.Module):
 
         return stats
 
+##
+## The following is not used
+## PrefixBart model should be fixed and tested
+##
 
 class PrefixBart(BartExtractor):
 
@@ -392,7 +398,7 @@ if __name__ == "__main__":
             prefix_aggr=args.prefix_aggr
         )
     model.bart.resize_token_embeddings(len(tokenizer))
-    criterion = ConditionalFactLoss(nofact_token_id=nofact_token_id, ignore_index=-100, lm_weight=args.lm_loss_factor)
+    criterion = ExtractedFactLoss(nofact_token_id=nofact_token_id, ignore_index=-100, lm_weight=args.lm_loss_factor)
 
     MSC_Turns.set(tokenizer=tokenizer, len_context=args.len_context, speaker_prefixes=args.speaker_prefixes, nofact_token=args.nofact_token)
     msc_turns = MSC_Turns(basedir=basedir, sessions=args.sessions, subset=subset)
