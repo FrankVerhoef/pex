@@ -18,13 +18,14 @@ from datetime import datetime
 import textwrap
 from collections import Counter
 
-from transformers import GenerationConfig, LogitsProcessorList, NoRepeatNGramLogitsProcessor
+from transformers import AutoTokenizer
 from dataset.convai2 import ConvAI2
 from models.agent import Agent
 
 import utils.logging as logging
 from utils.general import prettydict
 from utils.plotting import save_dialogue_fig
+from utils.speechacts import count_speechacts, count_speechpatterns, joint_pattern, conditional_pattern
 
 INPUT_ORDER_OPTIONS = ['personas-history-current', 'history-personas-current']
 
@@ -94,16 +95,17 @@ class MSC_Metrics:
         stats.update(self.google_bleu.compute())
 
         return stats, result_dict
-    
+
 
 class MSC_Session(Dataset):
     
     tokenizer = None
     speaker_prefixes = None
     sessionbreak_token = None
+    speechact_classifier = None
     
     @classmethod
-    def set(cls, tokenizer=None, speaker_prefixes=None, sessionbreak_token=None):
+    def set(cls, tokenizer=None, speaker_prefixes=None, sessionbreak_token=None, speechact_classifier=None):
         assert True if speaker_prefixes is None else len(speaker_prefixes) == 2, "If speaker_prefixes are set, 2 values are required"
         cls.tokenizer = tokenizer
         cls.sessionbreak_token = sessionbreak_token
@@ -111,7 +113,7 @@ class MSC_Session(Dataset):
             cls.speaker_prefixes = {"you": speaker_prefixes[0], "me": speaker_prefixes[1]}
             if sessionbreak_token is not None:
                 cls.speaker_prefixes["sessionbreak"] = sessionbreak_token
-
+        cls.speechact_classifier = speechact_classifier
 
     @classmethod
     def add_cmdline_args(cls, parser):
@@ -423,7 +425,7 @@ class MSC_Session(Dataset):
                 corpus.append(utterance['text'])
         return corpus
 
-    def item_measurements(self, i):
+    def item_measurements(self, i, with_speechacts=False):
         stats = {
             "session": self.indices[i]["session"],
             "dialog_id": self.indices[i]["dialog_id"],
@@ -432,7 +434,13 @@ class MSC_Session(Dataset):
             "inputwords": len(self[i][0].split()), 
             "inputsentences": len(self.history[i]),
             "labelwords": len(self[i][1].split()), 
-        }       
+        }
+        if self.speechact_classifier is not None:
+            utterances = [u for s, u in self.history[i] if u != 'Nobody']
+            rhythm = self.speechact_classifier.get_dialogue_rhythm(utterances)
+            stats['speechacts'] = count_speechacts(rhythm)
+            stats['speechpatterns'] = count_speechpatterns(rhythm)
+            stats['p(A|Q)'] = conditional_pattern('Q-A', rhythm)
         return stats
     
     def measurements(self):
@@ -448,6 +456,10 @@ class MSC_Session(Dataset):
         labelwords = sum([length * freq for length, freq in labelwords_per_sample.items()])
         totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
 
+        speechacts = sum([m['speechacts'] for m in allitem_measurements], Counter())
+        speechpatterns = sum([m['speechpatterns'] for m in allitem_measurements], Counter())
+        pQA_avg = sum([m['p(A|Q)'] for m in allitem_measurements]) / max(num_samples, 1),
+
         all_measurements = {
             "allitem_measurements": allitem_measurements,
             "num_samples": num_samples,
@@ -460,7 +472,10 @@ class MSC_Session(Dataset):
             "inputwords_per_sample": sorted(inputwords_per_sample.items(), key=lambda x:x[0]),
             "labelwords_per_sample": sorted(labelwords_per_sample.items(), key=lambda x:x[0]),
             "totalwords_per_sample": sorted(totalwords_per_sample.items(), key=lambda x:x[0]),
-            "inputsentences_per_sample": sorted(inputsentences_per_sample.items(), key=lambda x:x[0])
+            "inputsentences_per_sample": sorted(inputsentences_per_sample.items(), key=lambda x:x[0]),
+            "speechacts": speechacts,
+            "speechpatterns": speechpatterns,
+            "p(A|Q)": pQA_avg
         }
 
         return all_measurements
@@ -741,6 +756,7 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
     from dataset.tokenizer import train_tokenizer, PAD_TOKEN
     from models.bart_extractor import BartExtractor
+    from models.speechact_clf import SpeechactClassifier
     from utils.general import load_config
 
     def get_parser():
@@ -782,13 +798,16 @@ if __name__ == "__main__":
     speaker_prefixes = ['<other>', '<self>']
     sessionbreak_token = '<sessionbreak>'
     add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
-    include_persona = True
+    include_persona = False
     include_history = True
     input_order = INPUT_ORDER_OPTIONS[0]
     max_samples = 5
 
     augmented = False
-    selected_turns = [0]
+    selected_turns = None
+
+    speechact_classifier = SpeechactClassifier(checkpoint_dir='/Users/FrankVerhoef/Programming/PEX/checkpoints/', modelname='trained_speechact_bert')
+
 
 
     # Test extraction of dialogue turns and persona sentences
@@ -848,7 +867,7 @@ if __name__ == "__main__":
             batch_size=args.batch_size
         )
 
-    MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, sessionbreak_token=sessionbreak_token)
+    MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, sessionbreak_token=sessionbreak_token, speechact_classifier=speechact_classifier)
     msc_turns = MSC_Session(
         basedir=datadir+basedir, 
         session=session, 
