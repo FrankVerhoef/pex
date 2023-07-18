@@ -20,7 +20,6 @@ class MSC_SpeechAct(Dataset):
     tokenizer = None
     classes = {
         'A': 'Answer',
-        'B': 'Bye',
         'E': 'Explanation',
         'G': 'Greeting',
         'Q': 'Question',
@@ -60,12 +59,13 @@ class MSC_SpeechAct(Dataset):
         Format of a speechact: string with two utterances (separated by <sep>), fo
         """
         def split_punctuation(s):
-            s_adjusted = s.replace('St. ', 'St.').replace('  ', ' ').replace('!', '!\n').replace('?', '?\n').replace('. ', '.\n')
+            s_adjusted = s.replace('St. ', 'St.').replace('Mt. ', 'Mt.')
+            s_adjusted = s_adjusted.replace('  ', ' ').replace('!', '!\n').replace('? ', '?\n').replace('?" ', '?"\n').replace('. ', '.\n').replace('." ', '."\n')
             s_filtered = [s for s in s_adjusted.split('\n') if s != '' and (not s in ['.', '!', '?', ' '])]
             return s_filtered
 
         speech, acts = [], []
-        for speechact_line in speechact_lines:
+        for i, speechact_line in enumerate(speechact_lines):
             speech_text, act_text = speechact_line.split('\t')
             turns_1, turns_2 = speech_text.split('<sep>')
             split_turns_1 = split_punctuation(turns_1)
@@ -75,12 +75,12 @@ class MSC_SpeechAct(Dataset):
                 speech.extend(split_turns_1)
                 acts.extend([*act_1])
             else:
-                logging.warning(f"Mismatch between number of sentences {split_turns_1} and number of acts {act_1} in: {speechact_line}")
+                logging.warning(f"Mismatch in line {i}/1: Number of sentences {split_turns_1}, number of acts {act_1}\n{speechact_line}")
             if len(split_turns_2) == len(act_2):
                 speech.extend(split_turns_2)
                 acts.extend([*act_2])
             else:
-                logging.warning(f"Mismatch between number of sentences {split_turns_2} and number of acts {act_2} in: {speechact_line}")
+                logging.warning(f"Mismatch in line {i}/2: Number of sentences {split_turns_2}, number of acts {act_2}\n{speechact_line}")
 
             # assert len(split_turns_1) == len(act_1), \
             #     f"Mismatch between number of sentences {len(split_turns_1)} and number of acts {len(act_1)} in: {speechact_line}"
