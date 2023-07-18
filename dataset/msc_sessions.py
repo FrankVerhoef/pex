@@ -13,12 +13,14 @@ from torch.utils.data import Dataset
 from dataset.msc_summary_turns import MSC_Turns
 import json
 import random
+from functools import partial
 from datetime import datetime
 import textwrap
 from collections import Counter
 
 from transformers import GenerationConfig, LogitsProcessorList, NoRepeatNGramLogitsProcessor
 from dataset.convai2 import ConvAI2
+from models.agent import Agent
 
 import utils.logging as logging
 from utils.general import prettydict
@@ -634,22 +636,28 @@ class MSC_Session(Dataset):
         model = model.to(device)
         model.eval()
 
-        generation_config.pad_token_id = model.tokenizer.pad_token_id
+        generation_config.pad_token_id = cls.tokenizer.pad_token_id
         generation_config.use_cache = True
-        generation_config.eos_token_id = [model.tokenizer.eos_token_id, model.tokenizer.encode('\n')[0]]
+        generation_config.eos_token_id = [cls.tokenizer.eos_token_id, cls.tokenizer.encode('\n')[0]]
         generation_config.output_scores = True
         generation_config.return_dict_in_generate = True
-        if model.speaker_prefixes is not None:
-            prefix_tokens = model.tokenizer.encode(model.speaker_prefixes['me'])
-            
+        if cls.speaker_prefixes is not None:
+            prefix_tokens = cls.tokenizer.encode(cls.speaker_prefixes['me'])
+
+        # If input is string, convert to list with one input and empty target
+        single_input = isinstance(input, str)
+        if single_input:
+            input = [(input, "")]
+
         all_responses = []
         for start_index in range(0, len(input), batch_size):
             data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
-            inputs = input.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=decoder_max)
+            inputs = cls.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=decoder_max)
             L = inputs.input_ids.shape[1]
 
             with torch.no_grad():
-                if model.speaker_prefixes is not None:
+                if cls.speaker_prefixes is not None:
+                    # Force generation of prefix tokens
                     generation_config.forced_decoder_ids = list(zip(range(L, L+len(prefix_tokens)), prefix_tokens))
                 output = model.model.generate(
                     inputs = inputs.input_ids.to(device), 
@@ -658,7 +666,72 @@ class MSC_Session(Dataset):
             responses = cls.tokenizer.batch_decode(output.sequences[:, L:].to("cpu"), skip_special_tokens=True)
             all_responses.extend(responses)
 
-        return all_responses
+        return all_responses[0] if single_input else all_responses
+
+
+    def selfchat(self, model, generation_config, device="cpu", num_turns=8, print_max=20, log_interval=100):
+
+        def print_selfchat(persona_1, persona_2, forced, generated):
+            print_string = ""
+            print_string += "Persona_1:\n\t" + '\n\t'.join(persona_1) + '\n'
+            print_string += "Persona_2:\n\t" + '\n\t'.join(persona_2) + '\n'
+            print_string += "Forced dialogue start:\n" + '\n'.join([f"{sp}:\t{text}" for sp, text in forced]) + '\n'
+            print_string += "Generated dialogue:\n" + '\n'.join([f"{sp}:\t{text}" for sp, text in generated]) + '\n'
+            print_string += '-' * 40 + '\n'
+            return print_string
+
+        generator = partial(self.predict, model=model, generation_config=generation_config, device=device, batch_size=1)
+
+        interval_counter = 0
+        all_dialogues = []
+        for dialog_id in range(len(self)):
+
+            # Get the persona information and initialize the agents
+            persona_1 = self.personas(dialog_id, "Speaker 1")
+            persona_2 = self.personas(dialog_id, "Speaker 2")
+            agents = [
+                Agent(id="Mike", generator=generator, persona=persona_1),
+                Agent(id="John", generator=generator, persona=persona_2)
+            ]
+
+            # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
+            speakers = [s for s, _ in self.history[dialog_id]]
+            if 'Nobody' in speakers:
+                start_index = -(speakers[::-1].index('Nobody'))   # This is the last occurrance of a sessionbreak
+                current_dialogue = self.history[dialog_id][start_index:]
+            else:
+                current_dialogue = []
+
+            # Start with 'forcing' the current dialogue history
+            if len(current_dialogue) > 0:
+                for speaker_id, utterance in current_dialogue:
+                    a = int(speaker_id == 'Speaker 2')
+                    response = agents[a].act(agents[1 - a].id, forced_text=utterance)
+                    agents[1 - a].observe(agents[a].id, response)
+                a = 1 - a   # switch turn to other speaker after the forced dialogue start
+            else:
+                a = random.randint(0,1)
+
+            # Continue conversation for a number of turns
+            generated_dialogue = []
+            for _ in range(num_turns):
+                response = agents[a].act(agents[1 - a].id)
+                agents[1 - a].observe(agents[a].id, response)
+                generated_dialogue.append(('Speaker 2' if a else 'Speaker 1', response))
+                a = 1 - a
+
+            all_dialogues.append(generated_dialogue)
+        
+            if print_max > 0:
+                logging.verbose(print_selfchat(persona_1, persona_2, current_dialogue, generated_dialogue))
+                print_max -= 1
+
+            interval_counter += 1
+            if interval_counter >= log_interval:
+                logging.verbose(f"Completed {len(all_dialogues)}/{len(self)} selfchats")
+                interval_counter -= log_interval
+
+        return all_dialogues
 
 
 if __name__ == "__main__":
