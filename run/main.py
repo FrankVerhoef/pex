@@ -18,7 +18,7 @@ from transformers import AutoTokenizer, PretrainedConfig, GenerationConfig
 from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
-from models.bart_extractor import PrefixBart, BartExtractor, ConditionalFactLoss, ExtractedFactLoss
+from models.bart_extractor import PrefixBart, BartExtractor, ExtractedFactLoss
 from models.dialogpt import DialoGPT
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
@@ -175,6 +175,31 @@ def evaluate(model, testdata, args):
 
     return eval_stats, result_dict 
 
+def selfchat(model, testdata, args):
+
+    if args.device == 'mps':
+        args.device = 'cpu'
+        logging.warning("Changed device from 'mps' to 'cpu' for selfchat")
+
+    eval_kwargs = {
+        'generation_config': GenerationConfig(
+            num_beams=args.num_beams,
+            do_sample=args.do_sample,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            max_new_tokens=args.decoder_max,
+        ),
+        'device': args.device,
+        'num_turns': args.num_turns,
+    }
+
+    logging.info(f"Performing selfchat on {len(testdata)} samples of testdata in {args.basedir} with arguments {eval_kwargs}")
+    selfchats = testdata.selfchat(model, **eval_kwargs)
+    eval_stats, result_dict = {'n': [len(c) for c in selfchats]}, {'n': len(selfchats)}
+    logging.report(prettydict(eval_stats, title="Selfchat_stats"))
+
+    return eval_stats, result_dict 
 
 def prepare_model_and_data(args):
 
@@ -439,7 +464,7 @@ def prepare_model_and_data(args):
                 if args.action in ['tune', 'train']:
                     traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
                     validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
-                if args.action == 'eval' or (args.action =='train' and (not args.skip_eval)):
+                if args.action in ['eval', 'selfchat'] or (args.action =='train' and (not args.skip_eval)):
                     testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
             collate_fn = partial(MSC_Session.batchify, with_labels=True, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id, buffer=0)
 
@@ -517,6 +542,14 @@ def train_with_args(config, args):
         logging.info(f"Saved evalresults in {savepath}")
         stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
+    if args.action == 'selfchat':
+        assert args.task == 'dialog', f"Self chat not compatible with task '{args.task}'; choose 'dialog'"
+        logging.info("Start self_chat")
+        logging.info(f"Use test dataset with {len(testdata)} samples")
+        selfchat_stats, result_dict = selfchat(model, testdata, args)
+
+        logging.report("Selfchat stats: {}".format(selfchat_stats))
+        stats.update(dict_with_key_prefix(selfchat_stats, prefix="selfchat_"))
 
     return stats
 
@@ -540,7 +573,7 @@ def get_args():
     generalgroup.add_argument("--use_wandb", default=False, action='store_true')
 
     # Main arguments
-    parser.add_argument("action", type=str, choices=['tune', 'train', 'eval'], help="choose an action")
+    parser.add_argument("action", type=str, choices=['tune', 'train', 'eval', 'selfchat'], help="choose an action")
     parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="choose one of the available models")
     parser.add_argument("task", type=str, choices=["generate", "summarize", "classify", "clf_act", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
 
@@ -565,6 +598,9 @@ def get_args():
     evalgroup.add_argument("--top_k", type=int, default=50, help="the number of highest probability vocabulary tokens to keep for top-k-filtering")
     evalgroup.add_argument("--do_sample", default=False, action='store_true', help="whether or not to use sampling ; use greedy decoding otherwise")
     evalgroup.add_argument("--num_beams", type=int, default=1, help="number of beams for beam search; 1 means no beam search")
+
+    selfchatgroup = parser.add_argument_group("options for selfchat")
+    selfchatgroup.add_argument("--num_turns", type=int, default=8, help="number of turns generated in the selfchat")
 
     args = parser.parse_known_args()[0]
 
