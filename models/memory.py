@@ -35,15 +35,21 @@ class TextMemory:
         else:
             self.mem[fact] += median if self.mem[fact] < median else 1 
 
-    def recall(self, keys, max_memories=None):
+    def recall(self, keys=None, max_memories=None):
         """
         Returns a list of memories that match with any of the key words
+        If keys is None, then return all memories
         """
-        memories = []
-        for fact in self.mem.keys():
-            if self.match(fact, keys):
-                memories.append(fact)
-                self.mem[fact] += 1
+        if keys is None:
+            memories = list(self.mem.keys())
+            for k in self.mem.keys():
+                self.mem[k] += 1
+        else:
+            memories = []
+            for fact in self.mem.keys():
+                if self.match(fact, keys):
+                    memories.append(fact)
+                    self.mem[fact] += 1
         
         # If max_memories is given, return the memories with highest weight
         if max_memories is not None:
