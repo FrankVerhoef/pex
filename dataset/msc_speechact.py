@@ -8,11 +8,9 @@ from torch.utils.data import Dataset
 from torchmetrics.functional.classification import multiclass_confusion_matrix, multiclass_accuracy, multiclass_f1_score, multiclass_precision, multiclass_recall
 
 import random
-import re
-from ast import literal_eval
 from collections import Counter
 
-from utils.general import prettydict, dict_with_key_prefix
+from utils.general import prettydict
 import utils.logging as logging
 
 class MSC_SpeechAct(Dataset):
@@ -54,39 +52,34 @@ class MSC_SpeechAct(Dataset):
             logging.warning(f"File '{filepath}' not found -> skipped")
         self.speech, self.acts = self.transform(speechacts, max_samples)
 
+    def split_utterance(s):
+        s_adjusted = s.replace('St. ', 'St.').replace('Mt. ', 'Mt.')
+        s_adjusted = s_adjusted.replace('  ', ' ').replace('!', '!\n').replace('? ', '?\n').replace('?" ', '?"\n').replace('. ', '.\n').replace('." ', '."\n')
+        s_filtered = [s for s in s_adjusted.split('\n') if s != '' and (not s in ['.', '!', '?', ' '])]
+        return s_filtered
+
     def transform(self, speechact_lines, max_samples):
         """
-        Format of a speechact: string with two utterances (separated by <sep>), fo
+        Format of a speechact: string with two utterances (separated by <sep>)
         """
-        def split_punctuation(s):
-            s_adjusted = s.replace('St. ', 'St.').replace('Mt. ', 'Mt.')
-            s_adjusted = s_adjusted.replace('  ', ' ').replace('!', '!\n').replace('? ', '?\n').replace('?" ', '?"\n').replace('. ', '.\n').replace('." ', '."\n')
-            s_filtered = [s for s in s_adjusted.split('\n') if s != '' and (not s in ['.', '!', '?', ' '])]
-            return s_filtered
 
         speech, acts = [], []
         for i, speechact_line in enumerate(speechact_lines):
             speech_text, act_text = speechact_line.split('\t')
             turns_1, turns_2 = speech_text.split('<sep>')
-            split_turns_1 = split_punctuation(turns_1)
-            split_turns_2 = split_punctuation(turns_2)
+            split_turns_1 = self.split_utterance(turns_1)
+            split_turns_2 = self.split_utterance(turns_2)
             act_1, act_2 = act_text.split('-')
             if len(split_turns_1) == len(act_1):
                 speech.extend(split_turns_1)
                 acts.extend([*act_1])
             else:
-                logging.warning(f"Mismatch in line {i}/1: Number of sentences {split_turns_1}, number of acts {act_1}\n{speechact_line}")
+                logging.warning(f"Mismatch in line {i}/1 between sentences {split_turns_1} and acts {act_1}\n{speechact_line}")
             if len(split_turns_2) == len(act_2):
                 speech.extend(split_turns_2)
                 acts.extend([*act_2])
             else:
-                logging.warning(f"Mismatch in line {i}/2: Number of sentences {split_turns_2}, number of acts {act_2}\n{speechact_line}")
-
-            # assert len(split_turns_1) == len(act_1), \
-            #     f"Mismatch between number of sentences {len(split_turns_1)} and number of acts {len(act_1)} in: {speechact_line}"
-            # assert len(split_turns_2) == len(act_2), \
-            #     f"Mismatch between number of sentences {len(split_turns_2)} and number of acts {len(act_2)} in: {speechact_line}"
-
+                logging.warning(f"Mismatch in line {i}/2 between sentences {split_turns_2} and acts {act_2}\n{speechact_line}")
         
         if max_samples is not None:
             if max_samples < len(acts):
@@ -141,9 +134,10 @@ class MSC_SpeechAct(Dataset):
         speech_batch, acts_batch = zip(*data)
         encoded = cls.tokenizer(speech_batch, padding=True, return_tensors='pt')
         X = (encoded['input_ids'], encoded['attention_mask'], encoded['token_type_ids'])
-        y = torch.tensor([cls.cls2id[a] for a in acts_batch], dtype=torch.long)
+        if with_labels:
+            y = torch.tensor([cls.cls2id[a] for a in acts_batch], dtype=torch.long)
 
-        return X, y if with_labels else X
+        return (X, y) if with_labels else X
 
 
     def evaluate(self, model, device="cpu", decoder_max=20, batch_size=1, print_max=20, log_interval=100):
@@ -185,10 +179,10 @@ class MSC_SpeechAct(Dataset):
         all_labels = torch.cat(all_labels)
         all_preds = torch.cat(all_preds)
         stats = {
-            "test_acc": multiclass_accuracy(all_preds, all_labels, num_classes=self.num_classes).item(),
-            "f1": multiclass_f1_score(all_preds, all_labels, num_classes=self.num_classes).item(),
-            "precision": multiclass_precision(all_preds, all_labels, num_classes=self.num_classes).item(),
-            "recall": multiclass_recall(all_preds, all_labels, num_classes=self.num_classes).item(),
+            "test_acc": multiclass_accuracy(all_preds, all_labels, num_classes=self.num_classes, average='weighted').item(),
+            "f1": multiclass_f1_score(all_preds, all_labels, num_classes=self.num_classes, average='weighted').item(),
+            "precision": multiclass_precision(all_preds, all_labels, num_classes=self.num_classes, average='weighted').item(),
+            "recall": multiclass_recall(all_preds, all_labels, num_classes=self.num_classes, average='weighted').item(),
             "cm": multiclass_confusion_matrix(all_preds, all_labels, num_classes=self.num_classes).tolist()
         }
 
@@ -196,14 +190,18 @@ class MSC_SpeechAct(Dataset):
 
 
     @classmethod
-    def predict(cls, input, model, device="cpu", decoder_max=20, batch_size=1):
+    def predict(cls, input, model, device="cpu", batch_size=32):
 
         model = model.to(device)
         model.eval()
         all_preds = []
 
+        single_input = isinstance(input, str)
+        if single_input:
+            input = [(input, "")]
+
         for start_index in range(0, len(input), batch_size):
-            data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
+            data = [(input[start_index + i], "") for i in range(batch_size) if start_index + i < len(input)]
             X = cls.batchify(data, with_labels=False)
             X = (x.to(device) for x in X)
 
@@ -211,9 +209,9 @@ class MSC_SpeechAct(Dataset):
                 logits = model(*X).cpu()
                 pred = logits.argmax(dim=1)
                 
-            all_preds.extend([cls.classes[cls.id2cls[p]] for p in pred])
+            all_preds.extend([cls.id2cls[p] for p in pred])
 
-        return all_preds
+        return all_preds[0] if single_input else all_preds
 
 
 
