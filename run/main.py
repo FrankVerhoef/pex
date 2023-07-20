@@ -20,6 +20,7 @@ from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ExtractedFactLoss
 from models.dialogpt import DialoGPT
+from models.speechact_clf import SpeechactClassifier
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
 from models.knowledge_grounded_generator.kg_utils import ConceptGraph
 from dataset.msc_kg_sessions import KG_enriched_MSC_Session
@@ -195,11 +196,10 @@ def selfchat(model, testdata, args):
     }
 
     logging.info(f"Performing selfchat on {len(testdata)} samples of testdata in {args.basedir} with arguments {eval_kwargs}")
-    selfchats = testdata.selfchat(model, **eval_kwargs)
-    eval_stats, result_dict = {'n': [len(c) for c in selfchats]}, {'n': len(selfchats)}
-    logging.report(prettydict(eval_stats, title="Selfchat_stats"))
+    stats, selfchat_results = testdata.selfchat(model, **eval_kwargs)
+    logging.report(prettydict(stats, title="Selfchat_stats"))
 
-    return eval_stats, result_dict 
+    return stats, selfchat_results 
 
 def prepare_model_and_data(args):
 
@@ -401,7 +401,12 @@ def prepare_model_and_data(args):
             model.model.resize_token_embeddings(len(tokenizer))
             criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
-            MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=args.speaker_prefixes, sessionbreak_token=args.sessionbreak_token)
+            MSC_Session.set(
+                tokenizer=tokenizer, 
+                speaker_prefixes=args.speaker_prefixes, 
+                sessionbreak_token=args.sessionbreak_token, 
+                speechact_classifier=None if args.speechact_classifier is None else SpeechactClassifier(checkpoint_dir=args.checkpoint_dir, modelname=args.speechact_classifier)
+            )
  
             dataset_config = {
                 'basedir': args.datadir + args.basedir,
@@ -548,7 +553,9 @@ def train_with_args(config, args):
         logging.info(f"Use test dataset with {len(testdata)} samples")
         selfchat_stats, result_dict = selfchat(model, testdata, args)
 
-        logging.report("Selfchat stats: {}".format(selfchat_stats))
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M%S") + "_selfchatresults"
+        save_dict(savepath, result_dict, config=vars(args))
+        logging.info(f"Saved selfchat results in {savepath}")
         stats.update(dict_with_key_prefix(selfchat_stats, prefix="selfchat_"))
 
     return stats
