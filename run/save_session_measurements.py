@@ -1,6 +1,7 @@
 from dataset.msc_sessions import MSC_Session
 from models.speechact_clf import SpeechactClassifier
 import json
+import utils.logging as logging
 
 basedir = "data/msc/msc_dialogue/"
 checkpoint_dir = "checkpoints/"
@@ -26,6 +27,10 @@ MSC_Session.set(**config)
 
 max_samples = 3
 
+# Prepare logging
+logging.set_log_level("VERBOSE")
+logging.add_file_handler(logdir='logs/')
+
 msc_sessions = {}
 for session in subsets.keys():
     if session == 1:
@@ -38,12 +43,16 @@ for session in subsets.keys():
         }
     }
 
-m = {
-    session: {
-        variant_key: {subset: msc_sessions[session][variant_key][subset].measurements() for subset in subsets[session]}
-    }
-    for session in subsets.keys()
-}
+logging.info(f"Start extracting speechacts from {basedir}, subsets {list(subsets.keys())}")
+m = {}
+for session in subsets.keys():
+    m[session] = {variant_key: {}}
+    for subset in subsets[session]:
+        m[session][variant_key][subset] = msc_sessions[session][variant_key][subset].measurements()
+        logging.verbose(f"Extracted speechacts from {session}-{subset}")
 
-with open(basedir + 'session_measurements.json', 'w') as f:
+logging.info("Finished extracting speechacts")
+resultsfile = basedir + 'session_measurements.json'
+logging.info(f"Saved results in {resultsfile}")
+with open(resultsfile, 'w') as f:
     f.write(json.dumps(m))
