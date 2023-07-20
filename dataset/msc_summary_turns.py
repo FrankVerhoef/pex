@@ -226,7 +226,7 @@ class MSC_Turns(Dataset):
         return encoded
 
 
-    def evaluate(self, model, generation_config, device="cpu", batch_size=1, print_max=20, log_interval=100):
+    def evaluate(self, model, generation_config, metrics=None, device="cpu", batch_size=1, print_max=20, log_interval=100):
 
         def print_predictions(data, predictions):
             for (x, y), p in zip(data, predictions):
@@ -470,11 +470,11 @@ if __name__ == "__main__":
     logging.info("Unit test {}".format(__file__))
 
     basedir = '/Users/FrankVerhoef/Programming/PEX/data/msc/msc_personasummary/'
-    sessions = [2]
-    subset = 'train'
-    speaker_prefixes = ["<you>", "<me>"]
-    nofact_token = '<nofact>'
-    add_tokens = speaker_prefixes + [nofact_token]
+    sessions = [1, 2, 3, 4]
+    subset = 'valid'
+    speaker_prefixes = ["<other>", "<self>"]
+    nofact_token = '' #'<nofact>'
+    add_tokens = None # speaker_prefixes + [nofact_token]
 
     # Test extraction of dialogue turns and persona sentences
     tokenizer = AutoTokenizer.from_pretrained("facebook/bart-base")
@@ -486,7 +486,7 @@ if __name__ == "__main__":
     if add_tokens is not None:
         tokenizer.add_tokens(add_tokens)
 
-    MSC_Turns.set(tokenizer=tokenizer, len_context=1, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
+    MSC_Turns.set(tokenizer=tokenizer, len_context=2, speaker_prefixes=speaker_prefixes, nofact_token=nofact_token)
 
     msc_turns = MSC_Turns(
         basedir=basedir, 
