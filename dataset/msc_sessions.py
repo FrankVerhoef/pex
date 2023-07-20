@@ -711,11 +711,11 @@ class MSC_Session(Dataset):
 
             # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
             speakers = [s for s, _ in self.history[dialog_id]]
+            current_dialogue = []
             if 'Nobody' in speakers:
                 start_index = -(speakers[::-1].index('Nobody'))   # This is the last occurrance of a sessionbreak
-                current_dialogue = self.history[dialog_id][start_index:]
-            else:
-                current_dialogue = []
+                if start_index < 0:
+                    current_dialogue = self.history[dialog_id][start_index:]
 
             # Start with 'forcing' the current dialogue history
             if len(current_dialogue) > 0:
