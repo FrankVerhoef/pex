@@ -52,12 +52,13 @@ class MSC_SpeechAct(Dataset):
             logging.warning(f"File '{filepath}' not found -> skipped")
         self.speech, self.acts = self.transform(speechacts, max_samples)
 
-    def split_utterance(s):
+    @classmethod
+    def split_utterance(cls, s):
         s_adjusted = s.replace('St. ', 'St.').replace('Mt. ', 'Mt.')
         s_adjusted = s_adjusted.replace('  ', ' ').replace('!', '!\n').replace('? ', '?\n').replace('?" ', '?"\n').replace('. ', '.\n').replace('." ', '."\n')
         s_filtered = [s for s in s_adjusted.split('\n') if s != '' and (not s in ['.', '!', '?', ' '])]
         return s_filtered
-
+    
     def transform(self, speechact_lines, max_samples):
         """
         Format of a speechact: string with two utterances (separated by <sep>)
