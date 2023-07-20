@@ -18,7 +18,6 @@ from datetime import datetime
 import textwrap
 from collections import Counter
 
-from transformers import AutoTokenizer
 from dataset.convai2 import ConvAI2
 from models.agent import Agent
 
@@ -128,6 +127,7 @@ class MSC_Session(Dataset):
         group.add_argument("--augmented", default=False, action='store_true', help='add all shorter versions of the dialogue to training set')
         group.add_argument("--selected_turns", default=None, type=int, nargs='*', help='include only selected turns')
         group.add_argument("--persona_selector", type=str, default=None, help="Model to select relevant persona sentences")
+        group.add_argument("--speechact_classifier", type=str, default=None, help="Model to classify speechacts")
 
         return parser
 
@@ -705,8 +705,8 @@ class MSC_Session(Dataset):
             persona_1 = self.personas(dialog_id, "Speaker 1")
             persona_2 = self.personas(dialog_id, "Speaker 2")
             agents = [
-                Agent(id="Mike", generator=generator, persona=persona_1),
-                Agent(id="John", generator=generator, persona=persona_2)
+                Agent(id="Speaker 1", generator=generator, persona=persona_1),
+                Agent(id="Speaker 2", generator=generator, persona=persona_2)
             ]
 
             # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
@@ -735,8 +735,8 @@ class MSC_Session(Dataset):
                 generated_dialogue.append(('Speaker 2' if a else 'Speaker 1', response))
                 a = 1 - a
 
-            all_dialogues.append(generated_dialogue)
-        
+            all_dialogues.append((self.indices[dialog_id], generated_dialogue))
+
             if print_max > 0:
                 logging.verbose(print_selfchat(persona_1, persona_2, current_dialogue, generated_dialogue))
                 print_max -= 1
@@ -746,7 +746,32 @@ class MSC_Session(Dataset):
                 logging.verbose(f"Completed {len(all_dialogues)}/{len(self)} selfchats")
                 interval_counter -= log_interval
 
-        return all_dialogues
+        stats, selfchat_results = self.calc_speechact_stats(all_dialogues)
+
+        return stats, selfchat_results
+
+    @classmethod
+    def calc_speechact_stats(self, dialogues):
+
+        selfchat_results = {}
+        for id, dialogue in dialogues:
+            utterances = [u for s, u in dialogue]
+            rhythm = self.speechact_classifier.get_dialogue_rhythm(utterances)
+            selfchat_results[(id["session"], id['dialog_id'], id['turn_id'])] = {
+                'speechacts': count_speechacts(rhythm),
+                'speechpatterns': count_speechpatterns(rhythm),
+                'p(A|Q)': conditional_pattern('Q-A', rhythm)
+            }
+        num_dialogues = len(dialogues)
+        sum_count_speechacts = sum([r['speechacts'] for r in selfchat_results.values()], Counter())
+        sum_count_speechpatterns = sum([r['speechpatterns'] for r in selfchat_results.values()], Counter())
+        all_pAQ = [r['p(A|Q)'] for r in selfchat_results.values()]
+        stats = {
+            'speechacts': {k: v / max(sum(sum_count_speechacts.values()), 1) for k, v in sum_count_speechacts.items()},
+            'speechpatterns': {k: v / max(sum(sum_count_speechpatterns.values()), 1) for k, v in sum_count_speechpatterns.items()},
+            'p(A|Q)': sum(all_pAQ) / max(len(all_pAQ), 1)
+        }
+        return stats, selfchat_results
 
 
 if __name__ == "__main__":
