@@ -50,7 +50,7 @@ class ExtractedFactLoss(nn.Module):
         super().__init__()
         assert True if nofact_weight is None else (False if num_tokens is None else num_tokens > nofact_token_id), \
             f"Invalid combination of nofact_weight '{nofact_weight}', num_tokens '{num_tokens}' and nofact_token_id '{nofact_token_id}'"
-        assert True if clf_loss is None else clf_loss == 'reweighted', f"Invalid value for clf_loss '{clf_loss}'"
+        assert True if clf_loss is None else (clf_loss == 'reweighted' or clf_loss == 'inverse'), f"Invalid value for clf_loss '{clf_loss}'"
         self.nofact_token_id = nofact_token_id
         self.clf_loss = clf_loss
         self.ignore_index = ignore_index
