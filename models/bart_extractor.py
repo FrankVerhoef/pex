@@ -62,13 +62,18 @@ class ExtractedFactLoss(nn.Module):
             self.nllloss = nn.NLLLoss(ignore_index=ignore_index, reduction='none')
         self.lm_weight = lm_weight
 
-    def reweighted_fact_loss(self, lm_logprobs, target):
-        logprob_nofact = lm_logprobs[:, self.nofact_token_id]
-        all_tokens_ids = torch.arange(lm_logprobs.shape[1])
-        all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
-        maxlogprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
-        # fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -maxlogprob_fact)  # This is old version
-        fact_loss = torch.where(target == self.nofact_token_id, -1/maxlogprob_fact, -1/logprob_nofact)
+    def fact_loss(self, lm_logprobs, target):
+        if self.clf_loss is None:
+            fact_loss = self.nllloss(lm_logprobs[:, :, 1], target[:, 1])
+        else:
+            logprob_nofact = lm_logprobs[:, self.nofact_token_id]
+            all_tokens_ids = torch.arange(lm_logprobs.shape[1])
+            all_tokens_ids_except_nofact = all_tokens_ids[all_tokens_ids != self.nofact_token_id]
+            maxlogprob_fact = lm_logprobs[:, all_tokens_ids_except_nofact].max(dim=1)[0]
+            if self.clf_loss == 'reweighted':
+                fact_loss = torch.where(target == self.nofact_token_id, -logprob_nofact, -maxlogprob_fact)  # This is old version
+            elif self.clf_loss == 'inverse':
+                fact_loss = torch.where(target == self.nofact_token_id, -1/maxlogprob_fact, -1/logprob_nofact)
         return fact_loss
 
     def forward(self, lm_logprobs, target):
@@ -77,10 +82,7 @@ class ExtractedFactLoss(nn.Module):
 
         # Classification loss: whether facts are recognized correctly
         # Token directly after <bos> token signals whether sequence is a fact
-        if self.clf_loss is None:
-            classification_loss = self.nllloss(lm_logprobs[:, :, 1], target[:, 1])
-        elif self.clf_loss == 'reweighted':
-            classification_loss = self.reweighted_fact_loss(lm_logprobs[:, :, 1], target[:, 1])
+        classification_loss = self.fact_loss(lm_logprobs[:, :, 1], target[:, 1])
 
         # LM loss: whether the tokens of the facts are predicted correctly; exclude <bos> from loss calculation
         lm_loss = self.nllloss(lm_logprobs[:, :, 1:], target[:, 1:]).sum(dim=1) / (target[:, 1:] != self.ignore_index).sum(dim=1)
@@ -99,7 +101,7 @@ class BartExtractor(nn.Module):
         group = parser.add_argument_group('BartExtractor')
         group.add_argument("--lm_loss_factor", type=float, default=1.0, help="relative weight of lm_loss in combined loss")
         group.add_argument("--nofact_weight", type=float, default=None, help="weight for nofact token in loss function")
-        group.add_argument("--clf_loss", default=None, choices=['reweighted'], help="variant for classification loss")
+        group.add_argument("--clf_loss", default=None, choices=['reweighted', 'inverse'], help="variant for classification loss")
         group.add_argument("--decoder_max", type=int, default=50, help="max number of tokens to generate")
         group.add_argument("--bart_base", type=str, default='facebook/bart-large-cnn', help="name of pretrained BART model")
         return parser
