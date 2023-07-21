@@ -22,7 +22,12 @@ from utils.general import prettydict
 import utils.logging as logging
 from utils.plotting import plot_heatmap
 
-TER_MAXIMUM = 0.6
+
+##
+## Functions to calculate evaluation statistics
+##
+
+TER_MAXIMUM = 0.75
 BERT_MINIMUM = 0.75
 TERP_MAXIMUM = 0.75
 NLI_MINIMUM = 0.5
@@ -229,6 +234,10 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                     predictions=r["pred_sentences"], 
                     title=f"NLI_{key} heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={NLI_MINIMUM:.2f})"
                 ).figure.savefig(f"{savedir}nli_{key}_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
+
+##
+## Definition of the dataset with Multi-Session Chat summaries
+##
 
 class MSC_Summaries(Dataset):
 
@@ -492,6 +501,9 @@ class MSC_Summaries(Dataset):
 
         return pred_summaries
 
+##
+## Unit test
+##
 
 if __name__ == "__main__":
     import argparse
