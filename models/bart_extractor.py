@@ -64,7 +64,7 @@ class ExtractedFactLoss(nn.Module):
 
     def fact_loss(self, lm_logprobs, target):
         if self.clf_loss is None:
-            fact_loss = self.nllloss(lm_logprobs[:, :, 1], target[:, 1])
+            fact_loss = self.nllloss(lm_logprobs, target)
         else:
             logprob_nofact = lm_logprobs[:, self.nofact_token_id]
             all_tokens_ids = torch.arange(lm_logprobs.shape[1])
