@@ -8,6 +8,7 @@ import torch
 from torchmetrics import TranslationEditRate
 from torchmetrics.text.bert import BERTScore
 from torchmetrics.text.infolm import InfoLM
+from torchmetrics.functional.text.rouge import rouge_score
 from metrics.terp import TerpMetric, TERP_DIR, JAVA_HOME
 from metrics.nli import NLIMetric
  
@@ -16,6 +17,7 @@ from torch.utils.data import Dataset
 import json
 import random
 import itertools
+from functools import partial
 from collections import Counter
 
 from utils.general import prettydict
@@ -32,6 +34,28 @@ BERT_MINIMUM = 0.75
 TERP_MAXIMUM = 0.75
 NLI_MINIMUM = 0.5
 
+
+class ROUGE_List:
+
+    rouge = partial(rouge_score, tokenizer=lambda s: s.replace('\n', ' ').split(' '), rouge_keys=('rougeL'))
+
+    def __init__(self):
+        self.ids = []
+        self.preds = []
+        self.targets = []
+
+
+    def update(self, id, prediction, target):
+        self.ids.append(id)
+        self.preds.append(prediction)
+        self.targets.append(target)
+
+    def compute(self):
+        scores = [
+            self.rouge(p, t) for id, p, t in zip(self.ids, self.preds, self.targets)
+        ]
+        return scores
+
 def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
     metric = {
@@ -39,13 +63,17 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         "bert": BERTScore(model_name_or_path='microsoft/deberta-xlarge-mnli'),
         "terp": TerpMetric(),
         "nli": NLIMetric(),
+        "rougeL": ROUGE_List(),
     }
 
     if metrics is None:
-        metrics = metric.keys()
+        metrics = list(metric.keys())
 
-    assert len(set(metrics).difference(metric.keys())) == 0, f"Unknown metric in metrics: {metrics}; choose from {list(metrics.keys())}"
+    assert len(set(metrics).difference(metric.keys())) == 0, f"Unknown metric in metrics: {metrics}; choose from {list(metric.keys())}"
     metric_keys = list(set(metrics))
+    if "rougeL" in metrics:
+        metric_keys.remove("rougeL")
+        rouge_submetrics = ['rougeL_fmeasure', 'rougeL_precision', 'rougeL_recall']
     if "nli" in metrics:
         metric_keys.remove("nli")
         metric_keys += ["nli" + suffix for suffix in ["_tp", "_pt", "_avg"]] if "nli" in metrics else []
@@ -78,6 +106,9 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             for comb_id, (pred, target) in enumerate(combinations):
                 metric["nli"].update((dialog_id, "pt", comb_id), pred, target) # entailment score from prediction to target
                 metric["nli"].update((dialog_id, "tp", comb_id), target, pred) # entailment score from target to prediction
+        if "rougeL" in metrics:
+            metric["rougeL"].update(dialog_id, prediction, target)
+            # result_dict[dialog_id]["rougeL"] = rouge_score(prediction, target)
 
     # Compute all the metrics
     all_scores = {m: metric[m].compute() for m in metrics}
@@ -97,7 +128,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
     # Calculate the submetrics (precision, recall and F1 scores etc) for each of the metrics
     i_start = 0
-    for dialog_id in result_dict.keys():
+    for i, dialog_id in enumerate(result_dict.keys()):
         r = result_dict[dialog_id]
         logging.debug(f"calc_stats {dialog_id}: compute {metrics}")
         i_end = i_start + r["num_combinations"]
@@ -114,7 +145,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
             # strength
             prec_strength = (1 - scores).max(dim=0).values.mean().item()
-            rec_strength = (1- scores).max(dim=1).values.mean().item()
+            rec_strength = (1 - scores).max(dim=1).values.mean().item()
 
             r["ter"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall, "prec_strength": prec_strength, "rec_strength": rec_strength}
         
@@ -146,7 +177,7 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
 
             # strength
             prec_strength = (1 - scores).max(dim=0).values.mean().item()
-            rec_strength = (1- scores).max(dim=1).values.mean().item()
+            rec_strength = (1 - scores).max(dim=1).values.mean().item()
 
             r["terp"] = {"scores": scores.tolist(), "f1": f1, "precision": precision, "recall": recall, "prec_strength": prec_strength, "rec_strength": rec_strength}
 
@@ -175,6 +206,9 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         r["numwords_factor"] = len(' '.join(r['pred_sentences'])) / max(len(' '.join(r['target_sentences'])), 1)
         r["numfacts_factor"] = len(r['pred_sentences']) / max(len(r['target_sentences']), 1)
 
+        # Get ROUGE scores from all_scores
+        r["rougeL"] = {k: v.item() for k, v in all_scores["rougeL"][i].items()}
+
         i_start = i_end
 
     # Summarize all metrics in stats_dict
@@ -185,7 +219,11 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
             values = [result_dict[dialog_id][metric][sub_metric] for dialog_id in result_dict.keys()]
             stats_dict[f"{metric}_{sub_metric}"] = sum(values) / num_dialogues
     stats_dict["numwords_factor"] = sum([result_dict[dialog_id]["numwords_factor"] for dialog_id in result_dict.keys()]) / num_dialogues
-    stats_dict["numfacts_factor"] = sum([result_dict[dialog_id]["numfacts_factor"] for dialog_id in result_dict.keys()]) / num_dialogues    
+    stats_dict["numfacts_factor"] = sum([result_dict[dialog_id]["numfacts_factor"] for dialog_id in result_dict.keys()]) / num_dialogues
+    if "rougeL" in metrics:
+        for dialog_id in result_dict.keys():
+            for sub_metric in rouge_submetrics:
+                stats_dict[sub_metric] = sum([result_dict[dialog_id]["rougeL"][sub_metric] for dialog_id in result_dict.keys()]) / num_dialogues
 
     return stats_dict, result_dict
 
