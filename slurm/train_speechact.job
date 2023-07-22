@@ -4,7 +4,7 @@
 #SBATCH --nodes 1
 #SBATCH --gpus 1
 #SBATCH --job-name Train_Bert
-#SBATCH --time 02:30:00
+#SBATCH --time 00:30:00
 #SBATCH --mem 32G
 #SBATCH --output slurm/outputs/train_%A.out
 
@@ -22,24 +22,21 @@ cp -r data  "$TMPDIR"/data
 mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/checkpoints
 
-srun python -u run/main.py train bert classify \
-        --basedir msc/msc_personasummary/  \
-        --sessions 1 2 3 \
-	--len_context 1 \
-        --batch_size 64  \
-        --learning_rate 0.0001 \
+srun python -u run/main.py train bert clf_act \
+        --basedir msc/msc_speechacts/  \
         --freeze 8 \
-	--epochs 5  \
-	--valid_samples 2000 \
-	--test_samples 1000 \
+	--prefix_size 0 \
+        --batch_size 32  \
+        --learning_rate 0.00001 \
+        --epochs 20  \
 	--valid_interval 25 \
         --patience 9 \
         --device cuda  \
-        --loglevel DEBUG  \
+        --loglevel VERBOSE  \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save trained_len1  \
+        --save trained_speechact  \
         --use_wandb
 
 cp "$TMPDIR"/logs/* ./logs

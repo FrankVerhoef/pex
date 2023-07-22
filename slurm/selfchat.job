@@ -1,0 +1,50 @@
+#!/bin/bash
+
+#SBATCH --partition gpu
+#SBATCH --nodes 1
+#SBATCH --gpus 1
+#SBATCH --job-name Selfchat
+#SBATCH --time 02:00:00
+#SBATCH --mem 32G
+#SBATCH --output slurm/outputs/chat_%A.out
+
+source ./slurm/.secrets
+
+module purge
+module load 2022
+module load Anaconda3/2022.05
+module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
+module load Java/11.0.16
+
+source activate pex
+
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/output
+
+srun python -u run/main.py selfchat dialogpt dialog \
+	--checkpoint_dir checkpoints/ \
+	--load trained_f_hpc_s4_dgpt \
+	--speechact_classifier trained_speechact_bert \
+	--lm gpt2 \
+	--datadir "$TMPDIR"/data/ \
+	--basedir msc/msc_dialogue/ \
+	--session 2 \
+	--speaker_prefixes \<other\> \<self\> \
+	--sessionbreak \<session\> \
+	--include_persona \
+	--selected_turns 3 \
+	--test_samples 8 \
+	--do_sample \
+	--num_beams 5 \
+	--temperature 1.5 \
+	--top_p 0.9 \
+	--top_k 50 \
+	--num_turns 5 \
+	--decoder_max 50 \
+	--device cuda \
+	--log_interval 10 \
+	--loglevel VERBOSE \
+	--output_dir "$TMPDIR"/output/ 
+
+cp "$TMPDIR"/output/* output

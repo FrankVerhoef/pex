@@ -1,0 +1,55 @@
+#!/bin/bash
+
+#SBATCH --partition gpu
+#SBATCH --nodes 1
+#SBATCH --gpus 1
+#SBATCH --job-name Eval_DialoGPT
+#SBATCH --time 01:00:00
+#SBATCH --mem 32G
+#SBATCH --output slurm/outputs/eval_%A.out
+
+source ./slurm/.secrets
+
+module purge
+module load 2022
+module load Anaconda3/2022.05
+module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
+
+source activate pex
+
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
+
+echo START
+date
+
+srun python -u run/main.py eval dialogpt dialog \
+        --basedir msc/msc_dialogue/  \
+        --session 5 \
+        --speaker_prefixes \<other\> \<self\> \
+	--include_persona \
+	--persona_selector preprocessed:trained_base_reweighted_bart \
+        --augmented \
+        --input_order history-personas-current \
+	--lm gpt2 \
+	--do_sample \
+	--num_beams 5 \
+	--top_p 0.9 \
+	--top_k 10 \
+	--decoder_max 30 \
+        --batch_size 8  \
+        --log_interval 5 \
+        --device cuda  \
+        --loglevel VERBOSE  \
+        --logdir "$TMPDIR"/logs/  \
+	--datadir "$TMPDIR"/data/ \
+        --checkpoint_dir ./checkpoints/ \
+	--output_dir ./output/ \
+        --load trained_f_hpc_s4_dgpt
+
+cp "$TMPDIR"/logs/* ./logs
+cp "$TMPDIR"/data/msc/msc_dialogue/preprocessed* ./data/msc/msc_dialogue
+
+echo FINISH
+date

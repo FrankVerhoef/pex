@@ -3,12 +3,12 @@
 #SBATCH --partition gpu
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH --job-name Tune_Bart
-#SBATCH --time 08:00:00
+#SBATCH --job-name Eval_Bert
+#SBATCH --time 01:00:00
 #SBATCH --mem 32G
-#SBATCH --output slurm/outputs/train_%A.out
+#SBATCH --output slurm/outputs/eval_%A.out
 
-#source ./slurm/.secrets
+source ./slurm/.secrets
 
 module purge
 module load 2022
@@ -20,25 +20,18 @@ source activate pex
 #Copy data dir  to scratch
 cp -r data  "$TMPDIR"/data
 mkdir "$TMPDIR"/logs
-mkdir "$TMPDIR"/output
 
-srun python -u run/main.py tune bart generate \
+srun python -u run/main.py eval bert classify \
         --basedir msc/msc_personasummary/  \
-        --sessions 1 2 3  \
+        --sessions 1 2 3 4 \
 	--speaker_prefixes \<other\> \<self\> \
-	--train_samples 1000 \
-	--valid_samples 1000 \
         --batch_size 64  \
-        --learning_rate 0.00001 \
-        --epochs 1  \
-	--valid_interval 10 \
-	--patience 4 \
         --device cuda  \
-        --loglevel INFO  \
+        --loglevel VERBOSE  \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
-        --output_dir "$TMPDIR"/output/ \
-	--experiment_name bart_loss
+        --checkpoint_dir ./checkpoints/ \
+	--output_dir ./output/ \
+	--load trained_len3_bert  \
 
 cp "$TMPDIR"/logs/* ./logs
-cp -r "$TMPDIR"/output/* ./output
