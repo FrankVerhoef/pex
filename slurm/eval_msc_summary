@@ -6,7 +6,8 @@
 #SBATCH --job-name Eval_MSC_Summary
 #SBATCH --time 02:00:00
 #SBATCH --mem 32G
-#SBATCH --output slurm/outputs/eval_%A.out
+#SBATCH --array=1-16%4
+#SBATCH --output slurm/outputs/eval_%A_%a.out
 
 source ./slurm/.secrets
 
@@ -18,6 +19,8 @@ module load Java/11.0.16
 
 source activate pex
 
+HPARAMS_FILE=$HOME/pex/slurm/eval_msc_summary_params.txt
+
 #Copy data dir  to scratch
 cp -r data  "$TMPDIR"/data
 mkdir "$TMPDIR"/output
@@ -25,17 +28,11 @@ mkdir "$TMPDIR"/output
 srun python -u run/main.py eval bart summarize \
 	--datadir "$TMPDIR"/data/ \
 	--basedir msc/msc_personasummary/ \
-	--metrics terp nli  \
-	--session 4 \
+	--metrics terp nli rougeL \
 	--speaker_prefixes \<other\> \<self\> \
 	--checkpoint_dir checkpoints/ \
 	--load trained_nll05_bart \
 	--bart_base facebook/bart-base \
-	--do_sample \
-	--num_beams 5 \
-	--temperature 1.5 \
-	--top_p 0.9 \
-	--top_k 50 \
 	--decoder_max 30 \
 	--device cuda \
 	--terpdir ~/terp/ \
@@ -43,6 +40,7 @@ srun python -u run/main.py eval bart summarize \
 	--tmpdir "$TMPDIR"/ \
 	--log_interval 10 \
 	--loglevel DEBUG \
-	--output_dir "$TMPDIR"/output/ 
+	--output_dir "$TMPDIR"/output/ \
+	$(head -$SLURM_ARRAY_TASK_ID $HPARAMS_FILE | tail -1)
 
 cp "$TMPDIR"/output/* output
