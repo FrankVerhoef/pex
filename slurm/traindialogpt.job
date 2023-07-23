@@ -30,7 +30,7 @@ srun python -u run/main.py train dialogpt dialog \
         --basedir msc/msc_dialogue/  \
         --session 4 \
 	--speaker_prefixes \<other\> \<self\> \
-	--sessionbreak \<session\> \
+	--sessionbreak_token \<session\> \
 	--include_persona \
 	--persona_selector trained_nll05_bart \
 	--augmented \
