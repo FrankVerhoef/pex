@@ -18,7 +18,7 @@ module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
 
 source activate pex
 
-HPARAMS_FILE=$HOME/pex/slurm/eval_msc_summary_params.txt
+HPARAMS_FILE=$HOME/pex/slurm/eval_gpt_params.txt
 
 #Copy data dir  to scratch
 cp -r data  "$TMPDIR"/data
