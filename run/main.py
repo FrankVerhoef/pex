@@ -422,48 +422,51 @@ def prepare_model_and_data(args):
             if args.persona_selector is not None:
 
                 # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
-                if args.persona_selector.split(':')[0] == 'preprocessed':
-                    modelname = args.persona_selector.split(':')[1]
+                if args.persona_selector == 'init_persona':
+                    dataset_config['persona_selector_fn'] = lambda turns: []  # no persona sentences except init_persona
                 else:
-                    modelname = args.persona_selector
-                loadpath = args.checkpoint_dir + modelname
-                logging.info("Loading persona_selector from {}".format(loadpath))
-                bart_config = load_config(loadpath + '.config')
-                assert bart_config["speaker_prefixes"] == args.speaker_prefixes, f"persona selector was trained with speaker prefixes {bart_config['speaker_prefixes']}, current dataset has speaker prefixes {args.speaker_prefixes}"
-                bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
-                if bart_config['add_tokens'] is not None:
-                    bart_tokenizer.add_tokens(bart_config['add_tokens'])
-                bart_nofact_token_id = bart_tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
-                bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
-                bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
-                bart_generation_config = {
-                    "num_beams": bart_config['num_beams'],
-                    "do_sample": bart_config['do_sample'],
-                    "temperature": bart_config['temperature'],
-                    "top_p": bart_config['top_p'],
-                    "top_k": bart_config['top_k'],
-                    "max_new_tokens": bart_config['decoder_max'],
-                }
-                bart_device = args.device
-                if bart_device == 'mps':
-                    bart_device = 'cpu'
-                    logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
-                bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
+                    if args.persona_selector.split(':')[0] == 'preprocessed':
+                        modelname = args.persona_selector.split(':')[1]
+                    else:
+                        modelname = args.persona_selector
+                    loadpath = args.checkpoint_dir + modelname
+                    logging.info("Loading persona_selector from {}".format(loadpath))
+                    bart_config = load_config(loadpath + '.config')
+                    assert bart_config["speaker_prefixes"] == args.speaker_prefixes, f"persona selector was trained with speaker prefixes {bart_config['speaker_prefixes']}, current dataset has speaker prefixes {args.speaker_prefixes}"
+                    bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
+                    if bart_config['add_tokens'] is not None:
+                        bart_tokenizer.add_tokens(bart_config['add_tokens'])
+                    bart_nofact_token_id = bart_tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
+                    bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
+                    bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+                    bart_generation_config = {
+                        "num_beams": bart_config['num_beams'],
+                        "do_sample": bart_config['do_sample'],
+                        "temperature": bart_config['temperature'],
+                        "top_p": bart_config['top_p'],
+                        "top_k": bart_config['top_k'],
+                        "max_new_tokens": bart_config['decoder_max'],
+                    }
+                    bart_device = args.device
+                    if bart_device == 'mps':
+                        bart_device = 'cpu'
+                        logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
+                    bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
 
-                # Configure MSC_Turns to predict persona sentences from a list of utterances
-                MSC_Turns.set(
-                    tokenizer=bart_tokenizer, 
-                    len_context=2, 
-                    speaker_prefixes=bart_config['speaker_prefixes'], 
-                    nofact_token=bart_config['nofact_token']
-                )
-                dataset_config['persona_selector_fn'] = partial(
-                    MSC_Turns.predict_from_utterances, 
-                    model=bart_model, 
-                    generation_config=bart_generation_config,
-                    device=bart_device, 
-                    batch_size=args.batch_size
+                    # Configure MSC_Turns to predict persona sentences from a list of utterances
+                    MSC_Turns.set(
+                        tokenizer=bart_tokenizer, 
+                        len_context=2, 
+                        speaker_prefixes=bart_config['speaker_prefixes'], 
+                        nofact_token=bart_config['nofact_token']
                     )
+                    dataset_config['persona_selector_fn'] = partial(
+                        MSC_Turns.predict_from_utterances, 
+                        model=bart_model, 
+                        generation_config=bart_generation_config,
+                        device=bart_device, 
+                        batch_size=args.batch_size
+                        )
 
             with FileLock(os.path.expanduser(args.datadir[:-1] + ".lock")): 
                 if args.action in ['tune', 'train']:
