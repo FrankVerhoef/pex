@@ -44,7 +44,7 @@ class MSC_Metrics:
         self.meteor = evaluate.load("meteor", experiment_id=datetime.now().strftime("%j%H%M%S"))
         self.google_bleu = evaluate.load("google_bleu", experiment_id=datetime.now().strftime("%j%H%M%S"))
 
-    def update(self, responses, targets, input_batch, label_batch, output_batch, indices):
+    def update(self, responses, targets, input_batch, indices):
     
         self.indices.extend(indices)
         self.responses.extend(responses)
@@ -624,7 +624,7 @@ class MSC_Session(Dataset):
             data = [self[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
             indices = [self.indices[start_index + i] for i in range(batch_size) if start_index + i < len(self)]
             targets = [label for _, label in data]
-            inputs, labels = self.batchify(data, with_labels=True, batch_format='huggingface_xysplit', buffer=generation_config.max_new_tokens)
+            inputs = self.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=generation_config.max_new_tokens)
             B, L = inputs.input_ids.shape[:2]
 
             with torch.no_grad():
@@ -642,7 +642,7 @@ class MSC_Session(Dataset):
                 logging.verbose(print_responses(indices, data, responses))
                 print_max -= len(data)
 
-            msc_metrics.update(responses, targets, inputs, labels, output, indices)
+            msc_metrics.update(responses, targets, inputs, indices)
 
             interval_counter += B
             if interval_counter >= log_interval:
