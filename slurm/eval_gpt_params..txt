@@ -1,5 +1,5 @@
---load trained_hib_hpc_s4_dgpt --persona_selector init_persona --session 4
---load trained_hib_hpc_s4_dgpt --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
---load trained_hib_hpc_s4_dgpt --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
---load trained_hib_hpc_s4_dgpt --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
---load trained_hib_hpc_s4_dgpt --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
