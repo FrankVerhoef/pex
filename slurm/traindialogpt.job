@@ -33,13 +33,13 @@ srun python -u run/main.py train dialogpt dialog \
 	--sessionbreak \<session\> \
 	--include_history \
 	--include_persona \
-	--persona_selector preprocessed:trained_base_reweighted_bart \
+	--persona_selector init_persona \
 	--augmented \
 	--input_order history-personas-current \
 	--valid_samples 200 \
         --test_samples 100 \
         --lm gpt2 \
-        --decoder_max 30 \
+        --decoder_max 50 \
         --batch_size 8  \
         --learning_rate 0.00005 \
         --epochs 1 \
@@ -51,7 +51,7 @@ srun python -u run/main.py train dialogpt dialog \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save trained_hfb_hpc_s4  \
+        --save trained_hib_hpc_s4  \
 	--seed 2206 \
 
 cp "$TMPDIR"/logs/* ./logs
