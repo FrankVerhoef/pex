@@ -21,7 +21,7 @@ source activate pex
 cp -r data  "$TMPDIR"/data
 mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/checkpoints
-cp ./checkpoints/trained_base_reweighted_bart* "$TMPDIR"/checkpoints
+cp ./checkpoints/trained_nll05_bart* "$TMPDIR"/checkpoints
 
 echo START
 date
@@ -31,9 +31,8 @@ srun python -u run/main.py train dialogpt dialog \
         --session 4 \
 	--speaker_prefixes \<other\> \<self\> \
 	--sessionbreak \<session\> \
-	--include_history \
 	--include_persona \
-	--persona_selector init_persona \
+	--persona_selector trained_nll05_bart \
 	--augmented \
 	--input_order history-personas-current \
 	--valid_samples 200 \
@@ -51,7 +50,7 @@ srun python -u run/main.py train dialogpt dialog \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save trained_hib_hpc_s4  \
+        --save trained_fb_hpc_s4_nll05bart  \
 	--seed 2206 \
 
 cp "$TMPDIR"/logs/* ./logs
