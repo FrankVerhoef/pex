@@ -25,6 +25,7 @@ import utils.logging as logging
 from utils.general import prettydict
 from utils.plotting import save_dialogue_fig
 from utils.speechacts import count_speechacts, count_speechpatterns, joint_pattern, conditional_pattern
+from utils.textoverlap import overlap
 
 INPUT_ORDER_OPTIONS = ['personas-history-current', 'history-personas-current']
 
@@ -434,6 +435,9 @@ class MSC_Session(Dataset):
             "inputwords": len(self[i][0].split()), 
             "inputsentences": len(self.history[i]),
             "labelwords": len(self[i][1].split()), 
+            "ref_self": overlap(self.personas(i, self.next_utterance[i][0]), self.next_utterance[i][1], ["NOUN", "PROPN"]),
+            "ref_other": overlap(self.personas(i, self.history[i][-1][0]), self.next_utterance[i][1], ["NOUN", "PROPN"]),
+            "ref_context": overlap([self.history[i][-1][1]], self.next_utterance[i][1], ["NOUN", "PROPN", "VERB"]),
         }
         if self.speechact_classifier is not None:
             utterances = [u for s, u in self.history[i] if u != 'Nobody']
@@ -460,6 +464,10 @@ class MSC_Session(Dataset):
         speechpatterns = sum([m['speechpatterns'] for m in allitem_measurements], Counter())
         pQA_avg = sum([m['p(A|Q)'] for m in allitem_measurements]) / max(num_samples, 1),
 
+        ref_self_avg = sum([m['ref_self'] for m in allitem_measurements]) / max(num_samples, 1),
+        ref_other_avg = sum([m['ref_other'] for m in allitem_measurements]) / max(num_samples, 1),
+        ref_contex_avg = sum([m['ref_context'] for m in allitem_measurements]) / max(num_samples, 1),
+
         all_measurements = {
             "allitem_measurements": allitem_measurements,
             "num_samples": num_samples,
@@ -475,7 +483,10 @@ class MSC_Session(Dataset):
             "inputsentences_per_sample": sorted(inputsentences_per_sample.items(), key=lambda x:x[0]),
             "speechacts": speechacts,
             "speechpatterns": speechpatterns,
-            "p(A|Q)": pQA_avg
+            "p(A|Q)": pQA_avg,
+            "ref_self": ref_self_avg,
+            "ref_other": ref_other_avg,
+            "ref_context": ref_contex_avg,
         }
 
         return all_measurements
@@ -735,7 +746,7 @@ class MSC_Session(Dataset):
                 generated_dialogue.append(('Speaker 2' if a else 'Speaker 1', response))
                 a = 1 - a
 
-            all_dialogues.append((self.indices[dialog_id], generated_dialogue))
+            all_dialogues.append((self.indices[dialog_id], generated_dialogue, persona_1, persona_2, current_dialogue))
 
             if print_max > 0:
                 logging.verbose(print_selfchat(persona_1, persona_2, current_dialogue, generated_dialogue))
@@ -754,22 +765,41 @@ class MSC_Session(Dataset):
     def calc_speechact_stats(self, dialogues):
 
         selfchat_results = {}
-        for id, dialogue in dialogues:
+        for id, dialogue, p1, p2, previous_dialogue in dialogues:
+            # speechact statistics
             utterances = [u for s, u in dialogue]
             rhythm = self.speechact_classifier.get_dialogue_rhythm(utterances)
             selfchat_results[(id["session"], id['dialog_id'], id['turn_id'])] = {
                 'speechacts': count_speechacts(rhythm),
                 'speechpatterns': count_speechpatterns(rhythm),
-                'p(A|Q)': conditional_pattern('Q-A', rhythm)
+                'p(A|Q)': conditional_pattern('Q-A', rhythm),
             }
+
+            # utterance overlap statistics
+            u1 = [utterance for (speaker, utterance) in dialogue if speaker == 'Speaker 1']
+            u2 = [utterance for (speaker, utterance) in dialogue if speaker == 'Speaker 2']
+            context = [previous_dialogue[-1] if len(previous_dialogue) > 0 else ('Nobody', '')] + dialogue[:-1]
+            ref_self = overlap(p1, u1, ["NOUN", "PROPN"]) + overlap(p2, u2, ["NOUN", "PROPN"])
+            ref_other = overlap(p2, u1, ["NOUN", "PROPN"]) + overlap(p1, u2, ["NOUN", "PROPN"])
+            ref_context = [overlap([c], u, ["NOUN", "PROPN", "VERB"]) for (_, c), (_, u) in zip(context, dialogue)]
+            selfchat_results[(id["session"], id['dialog_id'], id['turn_id'])].update({
+                'ref_self': sum(ref_self) / max(len(ref_self), 1),
+                'ref_other': sum(ref_other) / max(len(ref_other), 1),
+                'ref_context': sum(ref_context) / max(len(ref_context), 1)
+            })
+
         num_dialogues = len(dialogues)
         sum_count_speechacts = sum([r['speechacts'] for r in selfchat_results.values()], Counter())
         sum_count_speechpatterns = sum([r['speechpatterns'] for r in selfchat_results.values()], Counter())
         all_pAQ = [r['p(A|Q)'] for r in selfchat_results.values()]
+
         stats = {
             'speechacts': {k: v / max(sum(sum_count_speechacts.values()), 1) for k, v in sum_count_speechacts.items()},
             'speechpatterns': {k: v / max(sum(sum_count_speechpatterns.values()), 1) for k, v in sum_count_speechpatterns.items()},
-            'p(A|Q)': sum(all_pAQ) / max(len(all_pAQ), 1)
+            'p(A|Q)': sum(all_pAQ) / max(len(all_pAQ), 1),
+            'ref_self': sum([r['ref_self'] for r in selfchat_results.values()]) / num_dialogues,
+            'ref_other': sum([r['ref_other'] for r in selfchat_results.values()]) / num_dialogues,
+            'ref_context': sum([r['ref_context'] for r in selfchat_results.values()]) / num_dialogues,
         }
         return stats, selfchat_results
 
@@ -823,7 +853,7 @@ if __name__ == "__main__":
     speaker_prefixes = ['<other>', '<self>']
     sessionbreak_token = '<sessionbreak>'
     add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
-    include_persona = False
+    include_persona = True
     include_history = True
     input_order = INPUT_ORDER_OPTIONS[0]
     max_samples = 5
