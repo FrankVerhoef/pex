@@ -6,7 +6,7 @@
 #SBATCH --job-name Selfchat
 #SBATCH --time 02:00:00
 #SBATCH --mem 32G
-#SBATCH --array=3%4
+#SBATCH --array=4%4
 #SBATCH --output slurm/outputs/chat_%A_%a.out
 
 source ./slurm/.secrets
@@ -29,6 +29,7 @@ mkdir "$TMPDIR"/output
 srun python -u run/main.py selfchat dialogpt dialog \
 	--checkpoint_dir checkpoints/ \
 	--lm gpt2 \
+	--speechact_classifier trained_speechact_bert \
 	--datadir "$TMPDIR"/data/ \
 	--basedir msc/msc_dialogue/ \
 	--speaker_prefixes \<other\> \<self\> \
