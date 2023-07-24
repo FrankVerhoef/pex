@@ -4,9 +4,9 @@
 #SBATCH --nodes 1
 #SBATCH --gpus 1
 #SBATCH --job-name Eval_GPT
-#SBATCH --time 01:00:00
+#SBATCH --time 01:30:00
 #SBATCH --mem 32G
-#SBATCH --array=6%8
+#SBATCH --array=11-20%5
 #SBATCH --output slurm/outputs/eval_%A_%a.out
 
 source ./slurm/.secrets
