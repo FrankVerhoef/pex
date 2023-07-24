@@ -31,10 +31,11 @@ INPUT_ORDER_OPTIONS = ['personas-history-current', 'history-personas-current']
 
 class MSC_Metrics:
 
-    def __init__(self, ignore_index, device):
+    def __init__(self, ignore_index, device, speechact_clf=None):
         self.indices = []
         self.responses = []
         self.targets = []
+        self.speechact_clf = speechact_clf
         self.perc_truncated_tokens = torch.tensor([])
         self.sacreblue4_score = SacreBLEUScore(n_gram=4)
         self.bleu2_score = BLEUScore(n_gram=2, smooth=True)
@@ -83,6 +84,14 @@ class MSC_Metrics:
             for i, id in enumerate(self.indices)
         }
 
+        if self.speechact_clf is not None:
+            for id, response in zip(self.indices, self.responses):
+                speechacts = self.speechact_clf.get_speechacts(response)
+                result_dict[turn_id(id)].update({
+                    'speechacts': count_speechacts(speechacts),
+                    'speechpattern': speechacts,
+                })
+
         stats = {
             "truncation": self.perc_truncated_tokens.mean().item() if len(self.perc_truncated_tokens) > 0 else 0,
             "sacreblue_4": self.sacreblue4_score.compute().item(),
@@ -93,6 +102,13 @@ class MSC_Metrics:
         stats.update({k: v.item() for k, v in rouge_scores.items()})
         stats.update(self.meteor.compute())
         stats.update(self.google_bleu.compute())
+
+        if self.speechact_clf is not None:
+            sum_count_speechacts = sum([r['speechacts'] for r in result_dict.values()], Counter())
+            stats.update({
+                "speechacts": {k: v / max(sum(sum_count_speechacts.values()), 1) for k, v in sum_count_speechacts.items()},
+                "speechpatterns": {k: v / max(len(self.indices), 1) for k, v in Counter([r['speechpattern'] for r in result_dict.values()]).items()}
+            })
 
         return stats, result_dict
 
@@ -618,7 +634,7 @@ class MSC_Session(Dataset):
             prefix_tokens = self.tokenizer.encode(self.speaker_prefixes['me'])
 
         # Initialize metrics
-        msc_metrics = MSC_Metrics(ignore_index=self.tokenizer.pad_token_id, device=device)
+        msc_metrics = MSC_Metrics(ignore_index=self.tokenizer.pad_token_id, device=device, speechact_clf=self.speechact_classifier)
 
         for start_index in range(0, len(self), batch_size):
             data = [self[start_index + i] for i in range(batch_size) if start_index + i < len(self)]

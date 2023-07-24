@@ -20,8 +20,9 @@ class MSC_SpeechAct(Dataset):
         'A': 'Answer',
         'E': 'Explanation',
         'G': 'Greeting',
-        'Q': 'Question',
+        'O': 'Opinion',
         'P': 'Proposal',
+        'Q': 'Question',
         'R': 'Reaction',
         'S': 'Statement',
     }
