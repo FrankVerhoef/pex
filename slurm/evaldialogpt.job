@@ -4,9 +4,9 @@
 #SBATCH --nodes 1
 #SBATCH --gpus 1
 #SBATCH --job-name Eval_GPT
-#SBATCH --time 01:30:00
+#SBATCH --time 02:30:00
 #SBATCH --mem 32G
-#SBATCH --array=11-20%5
+#SBATCH --array=16-20%5
 #SBATCH --output slurm/outputs/eval_%A_%a.out
 
 source ./slurm/.secrets
@@ -36,6 +36,7 @@ srun python -u run/main.py eval dialogpt dialog \
         --augmented \
         --input_order history-personas-current \
 	--lm gpt2 \
+        --speechact_classifier trained_speechact_bert \
 	--decoder_max 50 \
         --batch_size 8  \
         --log_interval 5 \
