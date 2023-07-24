@@ -1,1 +1,1 @@
---load trained_f_hpc_s4_dgpt --speechact_classifier trained_speechact_bert --session 2 --include_persona --selected_turns 3 --test_samples 8 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50 --num_turns 5
+--load trained_hib_hpc_s4_dgpt --speechact_classifier trained_speechact_bert --session 3 --include_history --include_persona --persona_selector init_persona --selected_turns 3 --test_samples 8 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50 --num_turns 5
