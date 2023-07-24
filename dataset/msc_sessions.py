@@ -657,7 +657,7 @@ class MSC_Session(Dataset):
 
 
     @classmethod
-    def predict(cls, input, model, generation_config, device="cpu", decoder_max=20, batch_size=1):
+    def predict(cls, input, model, generation_config, device="cpu", batch_size=1):
 
         model = model.to(device)
         model.eval()
@@ -678,7 +678,7 @@ class MSC_Session(Dataset):
         all_responses = []
         for start_index in range(0, len(input), batch_size):
             data = [input[start_index + i] for i in range(batch_size) if start_index + i < len(input)]
-            inputs = cls.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=decoder_max)
+            inputs = cls.batchify(data, with_labels=False, batch_format='huggingface_xysplit', buffer=generation_config.max_new_tokens)
             L = inputs.input_ids.shape[1]
 
             with torch.no_grad():
@@ -699,8 +699,8 @@ class MSC_Session(Dataset):
 
         def print_selfchat(persona_1, persona_2, forced, generated):
             print_string = ""
-            print_string += "Persona_1:\n\t" + '\n\t'.join(persona_1) + '\n'
-            print_string += "Persona_2:\n\t" + '\n\t'.join(persona_2) + '\n'
+            print_string += "Persona 1:\n\t" + '\n\t'.join(persona_1) + '\n'
+            print_string += "Persona 2:\n\t" + '\n\t'.join(persona_2) + '\n'
             print_string += "Forced dialogue start:\n" + '\n'.join([f"{sp}:\t{text}" for sp, text in forced]) + '\n'
             print_string += "Generated dialogue:\n" + '\n'.join([f"{sp}:\t{text}" for sp, text in generated]) + '\n'
             print_string += '-' * 40 + '\n'
@@ -728,9 +728,21 @@ class MSC_Session(Dataset):
                 if start_index < 0:
                     current_dialogue = self.history[dialog_id][start_index:]
 
-            # Start with 'forcing' the current dialogue history
-            if len(current_dialogue) > 0:
-                for speaker_id, utterance in current_dialogue:
+            # Dialogue history consists of all utterances before personas, or between personas and current dialogue
+            sessionbreaks = [i for i, (speaker, _) in enumerate(self.history[dialog_id]) if speaker == 'Nobody']
+            previous_sessions = []
+            if len(sessionbreaks) > 1:
+                episodes = [(start, end) for start, end in zip(sessionbreaks[:-1], sessionbreaks[1:])]
+                previous_sessions = [
+                    (speaker, utterance) 
+                    for start, end in episodes 
+                    for speaker, utterance in self.history[dialog_id][start+1: end]
+                    if self.history[dialog_id][start][1] != 'personas'
+                ]
+
+            # Start with 'forcing' the previous sessions and current dialogue history
+            if len(previous_sessions + current_dialogue) > 0:
+                for speaker_id, utterance in previous_sessions + current_dialogue:
                     a = int(speaker_id == 'Speaker 2')
                     response = agents[a].act(agents[1 - a].id, forced_text=utterance)
                     agents[1 - a].observe(agents[a].id, response)
@@ -746,10 +758,10 @@ class MSC_Session(Dataset):
                 generated_dialogue.append(('Speaker 2' if a else 'Speaker 1', response))
                 a = 1 - a
 
-            all_dialogues.append((self.indices[dialog_id], generated_dialogue, persona_1, persona_2, current_dialogue))
+            all_dialogues.append((self.indices[dialog_id], generated_dialogue, persona_1, persona_2, previous_sessions + current_dialogue))
 
             if print_max > 0:
-                logging.verbose(print_selfchat(persona_1, persona_2, current_dialogue, generated_dialogue))
+                logging.verbose(print_selfchat(persona_1, persona_2, previous_sessions + current_dialogue, generated_dialogue))
                 print_max -= 1
 
             interval_counter += 1
@@ -758,6 +770,11 @@ class MSC_Session(Dataset):
                 interval_counter -= log_interval
 
         stats, selfchat_results = self.calc_speechact_stats(all_dialogues)
+        for id, generated_dialogue, p1, p2, previous_dialogue in all_dialogues:
+            selfchat_results[(id["session"], id['dialog_id'], id['turn_id'])].update({
+                "selfchat": print_selfchat(p1, p2, previous_dialogue, generated_dialogue)
+            })
+
 
         return stats, selfchat_results
 
