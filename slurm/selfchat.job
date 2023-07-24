@@ -23,6 +23,7 @@ HPARAMS_FILE=$HOME/pex/slurm/selfchat_params.txt
 
 #Copy data dir  to scratch
 cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/output
 
 srun python -u run/main.py selfchat dialogpt dialog \
@@ -40,4 +41,5 @@ srun python -u run/main.py selfchat dialogpt dialog \
 	--output_dir "$TMPDIR"/output/ \
 	$(head -$SLURM_ARRAY_TASK_ID $HPARAMS_FILE | tail -1)
 
+cp "$TMPDIR"/logs/* ./logs
 cp "$TMPDIR"/output/* output
