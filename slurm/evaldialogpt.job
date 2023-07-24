@@ -6,7 +6,7 @@
 #SBATCH --job-name Eval_GPT
 #SBATCH --time 01:00:00
 #SBATCH --mem 32G
-#SBATCH --array=1-5%8
+#SBATCH --array=6%8
 #SBATCH --output slurm/outputs/eval_%A_%a.out
 
 source ./slurm/.secrets
