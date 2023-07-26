@@ -478,11 +478,11 @@ class MSC_Session(Dataset):
 
         speechacts = sum([m['speechacts'] for m in allitem_measurements], Counter())
         speechpatterns = sum([m['speechpatterns'] for m in allitem_measurements], Counter())
-        pQA_avg = sum([m['p(A|Q)'] for m in allitem_measurements]) / max(num_samples, 1),
+        pQA_avg = sum([m['p(A|Q)'] for m in allitem_measurements]) / max(num_samples, 1)
 
-        ref_self_avg = sum([m['ref_self'] for m in allitem_measurements]) / max(num_samples, 1),
-        ref_other_avg = sum([m['ref_other'] for m in allitem_measurements]) / max(num_samples, 1),
-        ref_contex_avg = sum([m['ref_context'] for m in allitem_measurements]) / max(num_samples, 1),
+        ref_self_avg = sum([m['ref_self'] for m in allitem_measurements]) / max(num_samples, 1)
+        ref_other_avg = sum([m['ref_other'] for m in allitem_measurements]) / max(num_samples, 1)
+        ref_contex_avg = sum([m['ref_context'] for m in allitem_measurements]) / max(num_samples, 1)
 
         all_measurements = {
             "allitem_measurements": allitem_measurements,
