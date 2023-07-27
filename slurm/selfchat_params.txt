@@ -52,3 +52,29 @@
 --load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 3 --num_turns 2 
 --load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 3 --num_turns 5 
 --load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 3 --num_turns 8 
+
+# parameters for unbiased sampling
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 0 --num_turns 2 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 0 --num_turns 5 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 0 --num_turns 8 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 1 --num_turns 2 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 1 --num_turns 5 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 1 --num_turns 8 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 2 --num_turns 2 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 2 --num_turns 5 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 2 --num_turns 8 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 3 --num_turns 2 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 3 --num_turns 5 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --session 5 --include_history --include_persona --persona_selector init_persona --selected_turns 3 --num_turns 8 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 0 --num_turns 2 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 0 --num_turns 5 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 0 --num_turns 8 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 1 --num_turns 2 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 1 --num_turns 5 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 1 --num_turns 8 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 2 --num_turns 2 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 2 --num_turns 5 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 2 --num_turns 8 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 3 --num_turns 2 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 3 --num_turns 5 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 5 --include_persona --persona_selector preprocessed:trained_nll05_bart --selected_turns 3 --num_turns 8 --do_sample --top_k 0

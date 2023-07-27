@@ -18,3 +18,9 @@
 --load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 5 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
 --load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 5 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
 --load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 5 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+
+# Extra runs with unbiased sampling
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
+--load trained_hib_hpc_s4_dgpt --include_history --persona_selector init_persona --session 5 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 5 --do_sample --top_k 0
