@@ -180,6 +180,14 @@ class MSC_SpeechAct(Dataset):
 
         all_labels = torch.cat(all_labels)
         all_preds = torch.cat(all_preds)
+        evalresults = {
+            i: {
+                "sentence": self.speech[i],
+                "target": self.id2cls[target],
+                "prediction": self.id2cls[prediction]
+            }
+            for i, (target, prediction) in enumerate(zip(all_labels, all_preds))
+        }
         stats = {
             "test_acc": multiclass_accuracy(all_preds, all_labels, num_classes=self.num_classes, average='weighted').item(),
             "f1": multiclass_f1_score(all_preds, all_labels, num_classes=self.num_classes, average='weighted').item(),
@@ -188,7 +196,7 @@ class MSC_SpeechAct(Dataset):
             "cm": multiclass_confusion_matrix(all_preds, all_labels, num_classes=self.num_classes).tolist()
         }
 
-        return stats, {} # need to add result_dict
+        return stats, evalresults # need to add result_dict
 
 
     @classmethod
