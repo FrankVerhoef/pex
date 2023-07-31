@@ -6,7 +6,7 @@
 #SBATCH --job-name Selfchat
 #SBATCH --time 02:00:00
 #SBATCH --mem 32G
-#SBATCH --array=[57-80]%4
+#SBATCH --array=[83-94]%4
 #SBATCH --output slurm/outputs/chat_%A_%a.out
 #SBATCH --begin=2023-07-25T04:00:00
 
