@@ -176,27 +176,39 @@ def evaluate(model, testdata, args):
 
     return eval_stats, result_dict 
 
-def selfchat(model, testdata, args):
+def selfchat(models, testdata, args):
 
     if args.device == 'mps':
         args.device = 'cpu'
         logging.warning("Changed device from 'mps' to 'cpu' for selfchat")
 
-    eval_kwargs = {
-        'generation_config': GenerationConfig(
-            num_beams=args.num_beams,
-            do_sample=args.do_sample,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            top_k=args.top_k,
+    gen_config = GenerationConfig(
+        num_beams=args.num_beams,
+        do_sample=args.do_sample,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        max_new_tokens=args.decoder_max,
+    )
+    if not args.new_agent:
+        gen_config_other = gen_config
+    else:
+        gen_config_other = GenerationConfig(
+            num_beams=args.num_beams_other,
+            do_sample=args.do_sample_other,
+            temperature=args.temperature_other,
+            top_p=args.top_p_other,
+            top_k=args.top_k_other,
             max_new_tokens=args.decoder_max,
-        ),
+        )
+    eval_kwargs = {
+        'generation_configs': (gen_config, gen_config_other),
         'device': args.device,
         'num_turns': args.num_turns,
     }
 
-    logging.info(f"Performing selfchat on {len(testdata)} samples of testdata in {args.basedir} with arguments {eval_kwargs}")
-    stats, selfchat_results = testdata.selfchat(model, **eval_kwargs)
+    logging.info(f"Performing selfchat on {len(testdata[0])} samples of testdata in {args.basedir} with arguments {eval_kwargs}")
+    stats, selfchat_results = MSC_Session.selfchat(models, testdata, **eval_kwargs)
     logging.report(prettydict(stats, title="Selfchat_stats"))
 
     return stats, selfchat_results 
@@ -419,7 +431,7 @@ def prepare_model_and_data(args):
                 'input_order': args.input_order
             }
 
-            if args.persona_selector is not None:
+            if args.include_persona and args.persona_selector is not None:
 
                 # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
                 if args.persona_selector == 'init_persona':
@@ -474,6 +486,26 @@ def prepare_model_and_data(args):
                     validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
                 if args.action in ['eval', 'selfchat'] or (args.action =='train' and (not args.skip_eval)):
                     testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
+                if args.action == 'selfchat':
+                    if not args.new_agent:
+                        testdata_other = testdata
+                    else:
+                        dataset_config_other = dataset_config
+                        dataset_config_other.update({
+                            'include_persona': args.include_persona_other,
+                            'include_history': args.include_history_other,
+                            'input_order': args.input_order_other,
+                            'persona_selector': args.persona_selector_other,
+                            'persona_selector_fn': None,
+                            'flipped_perspective': True
+                        })
+                        if args.include_persona_other and args.persona_selector_other is not None:
+                            if args.persona_selector_other == 'init_persona':
+                                dataset_config['persona_selector_fn'] = lambda turns: []  # no persona sentences except init_persona
+                            else:
+                                logging.warning(f"Persona selection with {args.persona_selector_other} not available for second agent, using gold summaries instead")
+                        testdata_other = MSC_Session(subset='test', max_samples=testdata.indices, **dataset_config_other)
+                    testdata = (testdata, testdata_other)
             collate_fn = partial(MSC_Session.batchify, with_labels=True, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id, buffer=0)
 
         else:
@@ -553,8 +585,16 @@ def train_with_args(config, args):
     if args.action == 'selfchat':
         assert args.task == 'dialog', f"Self chat not compatible with task '{args.task}'; choose 'dialog'"
         logging.info("Start self_chat")
-        logging.info(f"Use test dataset with {len(testdata)} samples")
-        selfchat_stats, result_dict = selfchat(model, testdata, args)
+
+        if args.load_other == "":
+            logging.info("Using same model for both agents")
+            model_other = model
+        else:
+            loadpath = args.checkpoint_dir + args.load_other
+            logging.info("Loading model for other agent from {}".format(loadpath))
+            model_other = copy.deepcopy(model)
+            model_other.load_state_dict(torch.load(loadpath, map_location=torch.device(args.device)))
+        selfchat_stats, result_dict = selfchat((model, model_other), testdata, args)
 
         savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M%S") + "_selfchatresults"
         save_dict(savepath, result_dict, config=vars(args))
@@ -611,6 +651,17 @@ def get_args():
 
     selfchatgroup = parser.add_argument_group("options for selfchat")
     selfchatgroup.add_argument("--num_turns", type=int, default=8, help="number of turns generated in the selfchat")
+    selfchatgroup.add_argument("--new_agent", default=False, action='store_true', help="it True, specify second agent with its own configuration (default is to use a clone)")
+    selfchatgroup.add_argument("--load_other", type=str, default="", help="filename of model to load for second agent")
+    selfchatgroup.add_argument("--include_persona_other", default=False, action='store_true')
+    selfchatgroup.add_argument("--include_history_other", default=False, action='store_true')
+    selfchatgroup.add_argument("--input_order_other", default='history-personas-current')
+    selfchatgroup.add_argument("--persona_selector_other", type=str, default=None, help="Model to select relevant persona sentences")
+    selfchatgroup.add_argument("--temperature_other", type=float, default=1.0, help="value used to modulate the next token probabilities")
+    selfchatgroup.add_argument("--top_p_other", type=float, default=1.0, help="top-p parameter for other agent")
+    selfchatgroup.add_argument("--top_k_other", type=int, default=50, help="top-k parameter for other agent")
+    selfchatgroup.add_argument("--do_sample_other", default=False, action='store_true', help="whether or not to use sampling for other agent")
+    selfchatgroup.add_argument("--num_beams_other", type=int, default=1, help="number of beams for beam search for other agent")
 
     args = parser.parse_known_args()[0]
 
