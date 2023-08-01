@@ -755,7 +755,8 @@ class MSC_Session(Dataset):
         all_dialogues = []
         for dialog_id in range(len(testdatasets[0])):
 
-            SPEAKER_IDS = ['Speaker 1', 'Speaker 2'] if testdatasets[0].next_utterance[dialog_id] == 'Speaker 1' else ['Speaker 2', 'Speaker 1']
+            # The speaker_id of the next utterance determines the speaker_id for agent[0]; agent[0] will speak first
+            SPEAKER_IDS = ['Speaker 1', 'Speaker 2'] if testdatasets[0].next_utterance[dialog_id][0] == 'Speaker 1' else ['Speaker 2', 'Speaker 1']
 
             # Initialize the agents
             agents = []
