@@ -33,7 +33,7 @@ class Agent:
     def add_persona(self, speaker_id, persona):
 
         if speaker_id not in self.mem.keys():
-            self.mem[speaker_id] = TextMemory(id, maxsize=self.MEMORY_SIZE)
+            self.mem[speaker_id] = TextMemory(speaker_id, maxsize=self.MEMORY_SIZE)
         if persona is not None:
             for p in persona:
                 self.mem[speaker_id].add(p)
@@ -61,7 +61,7 @@ class Agent:
 
             # Get response from generator
             response = self.generator(context)
-            response = response.split(self.OTHER)[0].replace(self.SELF, '')
+            response = response.split(self.OTHER)[0].replace(self.SELF, '').replace('\n', '')
 
         # Add to dialogue memory and return response
         self.dialogues[speaker_id].append((self.id, response))
@@ -72,17 +72,18 @@ class Agent:
         return f"<Agent id: {self.id}, {len(self.mem.keys())} memory keys, {len(self.dialogues.keys())} dialogue keys>"
 
     def __str__(self):
-        s = f"Agent {self.id}\n"
+        s = f"AGENT {self.id}\n"
         s += f"Memory: {len(self.mem.keys())}\n"
         s += '\n'.join([
             str(memory) 
             for memory in self.mem.values()
         ]) + '\n'
         s += f"Dialogues: {len(self.dialogues.keys())}\n"
-        s += '\n'.join([
-            f"{other_id}:\n" + '\n'.join([(self.SELF if s_id == self.id else self.OTHER) + text for s_id, text in dialogue])
-            for other_id, dialogue in self.dialogues.items()
-        ]) + '\n'
+        for other_id, dialogue in self.dialogues.items():
+            s += f"Chat with {other_id}\n"
+            s += '\n'.join([f"{s_id}:\t{text}" for s_id, text in dialogue]) + '\n'
+            s += '-' * 10
+
         return(s)
 
 
