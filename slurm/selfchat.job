@@ -6,7 +6,7 @@
 #SBATCH --job-name Selfchat
 #SBATCH --time 02:00:00
 #SBATCH --mem 32G
-#SBATCH --array=[95-106]%6
+#SBATCH --array=[7,10,16]%6
 #SBATCH --output slurm/outputs/chat_%A_%a.out
 #SBATCH --begin=2023-07-25T04:00:00
 
@@ -39,6 +39,7 @@ srun python -u run/main.py selfchat dialogpt dialog \
 	--device cuda \
 	--log_interval 10 \
 	--loglevel VERBOSE \
+	--sees 2206 \
 	--logdir "$TMPDIR"/logs/  \
 	--output_dir "$TMPDIR"/output/ \
 	$(head -$SLURM_ARRAY_TASK_ID $HPARAMS_FILE | tail -1)
