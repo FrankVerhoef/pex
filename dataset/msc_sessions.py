@@ -734,13 +734,10 @@ class MSC_Session(Dataset):
     @classmethod
     def selfchat(cls, models, testdatasets, generation_configs, device="cpu", num_turns=8, print_max=20, log_interval=100):
 
-        def print_selfchat(persona_1, persona_2, history_1, history_2, forced, generated):
+        def print_selfchat_agents(agent1, agent2, generated):
             print_string = ""
-            print_string += "Persona 1:\n\t" + '\n\t'.join(persona_1) + '\n'
-            print_string += "History 1:\n\t" + '\n\t'.join([f"{sp}:\t{text}" for sp, text in history_1]) + '\n'
-            print_string += "Persona 2:\n\t" + '\n\t'.join(persona_2) + '\n'
-            print_string += "History 2:\n\t" + '\n\t'.join([f"{sp}:\t{text}" for sp, text in history_2]) + '\n'
-            print_string += "Forced dialogue start:\n" + '\n'.join([f"{sp}:\t{text}" for sp, text in forced]) + '\n'
+            print_string += str(agent1) + '\n'
+            print_string += str(agent2) + '\n'
             print_string += "Generated dialogue:\n" + '\n'.join([f"{sp}:\t{text}" for sp, text in generated]) + '\n'
             print_string += '-' * 40 + '\n'
             return print_string
@@ -754,17 +751,18 @@ class MSC_Session(Dataset):
 
         generators = [partial(cls.predict, model=m, generation_config=g, device=device, batch_size=1) for m, g in zip(models, generation_configs)]
 
-        SPEAKER_IDS = ['Speaker 1', 'Speaker 2']
         interval_counter = 0
         all_dialogues = []
         for dialog_id in range(len(testdatasets[0])):
 
-            # Initialize the agents with their own persona information and their utterance generator
-            personas = [testdata.personas(dialog_id, sp_id) for sp_id, testdata in zip(SPEAKER_IDS, testdatasets)]
-            agents = [
-                Agent(id=sp_id, generator=generator, persona=persona)
-                for sp_id, generator, persona in zip(SPEAKER_IDS, generators, personas)
-            ]
+            SPEAKER_IDS = ['Speaker 1', 'Speaker 2'] if testdatasets[0].next_utterance[dialog_id] == 'Speaker 1' else ['Speaker 2', 'Speaker 1']
+
+            # Initialize the agents
+            agents = []
+            for sp_id_self, sp_id_other, generator, testdata in zip(SPEAKER_IDS, SPEAKER_IDS[::-1], generators, testdatasets):
+                a = Agent(id=sp_id_self, generator=generator, persona=testdata.personas(dialog_id, sp_id_self))
+                a.add_persona(speaker_id=sp_id_other, persona=testdata.personas(dialog_id, sp_id_other))
+                agents.append(a)
 
             # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
             # Note: this should be the same for both testdatasets
@@ -799,15 +797,8 @@ class MSC_Session(Dataset):
                         else:
                             agent.observe(speaker_id=sp_id_other, message=utterance)
 
-            # Determine which agent speaks first
-            if len(current_dialogue) > 0:
-                a = int(current_dialogue[-1][0] == 'Speaker 2')
-            elif len(presession_histories[0]) > 0:
-                a = int(presession_histories[0][-1][0] == 'Speaker 2')
-            elif len(presession_histories[1]) > 0:
-                a = int(presession_histories[1][-1][0] == 'Speaker 2')
-            else:
-                a = random.randint(0,1)
+            # Agent 0 starts (determined by the speaker_id of the next utterance)
+            a = 0
 
             # Continue conversation for a number of turns
             generated_dialogue = []
@@ -817,10 +808,10 @@ class MSC_Session(Dataset):
                 generated_dialogue.append(('Speaker 2' if a else 'Speaker 1', response))
                 a = 1 - a
 
-            all_dialogues.append((testdatasets[0].indices[dialog_id], generated_dialogue, *personas, *presession_histories, current_dialogue))
+            all_dialogues.append((testdatasets[0].indices[dialog_id], generated_dialogue, *agents))
 
             if print_max > 0:
-                logging.verbose(print_selfchat(*personas, *presession_histories, current_dialogue, generated_dialogue))
+                logging.verbose(print_selfchat_agents(*agents, generated_dialogue))
                 print_max -= 1
 
             interval_counter += 1
@@ -829,18 +820,17 @@ class MSC_Session(Dataset):
                 interval_counter -= log_interval
 
         stats, selfchat_results = cls.calc_speechact_stats(all_dialogues)
-        for id, generated_dialogue, p1, p2, h1, h2, h in all_dialogues:
+        for id, generated_dialogue, a1, a2 in all_dialogues:
             selfchat_results[(id["session"], id['dialog_id'], id['turn_id'])].update({
-                "selfchat": print_selfchat(p1, p2, h1, h2, h, generated_dialogue)
+                "selfchat": print_selfchat_agents(a1, a2, generated_dialogue)
             })
-
         return stats, selfchat_results
 
     @classmethod
     def calc_speechact_stats(self, dialogues):
 
         selfchat_results = {}
-        for id, dialogue, p1, p2, h1, h2, h in dialogues:
+        for id, dialogue, a1, a2 in dialogues:
             # speechact statistics
             utterances = [u for s, u in dialogue]
             rhythm = self.speechact_classifier.get_dialogue_rhythm(utterances)
@@ -853,13 +843,13 @@ class MSC_Session(Dataset):
             # utterance overlap statistics
             u1 = [utterance for (speaker, utterance) in dialogue if speaker == 'Speaker 1']
             u2 = [utterance for (speaker, utterance) in dialogue if speaker == 'Speaker 2']
-            c1 = [h1[-1] if len(h1) > 0 else ('Nobody', '')]+ (dialogue[:-1] if len(dialogue) > 0 else [])
-            c2 = [h2[-1] if len(h2) > 0 else ('Nobody', '')]+ (dialogue[:-1] if len(dialogue) > 0 else [])
+            c1 = [a1.dialogues[a2.id][-len(dialogue)] if (len(dialogue) > 0 and len(a1.dialogues[a2.id]) > len(dialogue)) else ('Nobody', '')]+ (dialogue[:-1] if len(dialogue) > 0 else [])
+            c2 = [a2.dialogues[a1.id][-len(dialogue)] if (len(dialogue) > 0 and len(a2.dialogues[a1.id]) > len(dialogue)) else ('Nobody', '')]+ (dialogue[:-1] if len(dialogue) > 0 else [])
 
-            ref_self_1 = overlap(p1, u1, ["NOUN", "PROPN"])
-            ref_self_2 = overlap(p2, u2, ["NOUN", "PROPN"])
-            ref_other_1 = overlap(p2, u1, ["NOUN", "PROPN"])
-            ref_other_2 = overlap(p1, u2, ["NOUN", "PROPN"])
+            ref_self_1 = overlap(a1.mem[a1.id].mem.keys(), u1, ["NOUN", "PROPN"])
+            ref_self_2 = overlap(a2.mem[a2.id].mem.keys(), u2, ["NOUN", "PROPN"])
+            ref_other_1 = overlap(a1.mem[a2.id].mem.keys(), u1, ["NOUN", "PROPN"])
+            ref_other_2 = overlap(a2.mem[a1.id].mem.keys(), u2, ["NOUN", "PROPN"])
             ref_context_1 = [overlap([c], u, ["NOUN", "PROPN", "VERB"]) for (_, c), (speaker, u) in zip(c1, dialogue) if speaker == 'Speaker 1']
             ref_context_2 = [overlap([c], u, ["NOUN", "PROPN", "VERB"]) for (_, c), (speaker, u) in zip(c2, dialogue) if speaker == 'Speaker 2']
             selfchat_results[(id["session"], id['dialog_id'], id['turn_id'])].update({
