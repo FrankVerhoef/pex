@@ -452,12 +452,12 @@ def prepare_model_and_data(args):
                     bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
                     bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
                     bart_generation_config = {
-                        "num_beams": bart_config['num_beams'],
-                        "do_sample": bart_config['do_sample'],
-                        "temperature": bart_config['temperature'],
-                        "top_p": bart_config['top_p'],
-                        "top_k": bart_config['top_k'],
-                        "max_new_tokens": bart_config['decoder_max'],
+                        "num_beams": bart_config.get('num_beams', 5),
+                        "do_sample": bart_config.get('do_sample', True),
+                        "temperature": bart_config.get('temperature', 1.0),
+                        "top_p": bart_config.get('top_p', 1.0),
+                        "top_k": bart_config.get('top_k', 50),
+                        "max_new_tokens": bart_config.get('decoder_max', 30),
                     }
                     bart_device = args.device
                     if bart_device == 'mps':
