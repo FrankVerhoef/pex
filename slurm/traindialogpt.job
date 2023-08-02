@@ -21,7 +21,7 @@ source activate pex
 cp -r data  "$TMPDIR"/data
 mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/checkpoints
-cp ./checkpoints/trained_nll05_bart* "$TMPDIR"/checkpoints
+cp ./checkpoints/trained_base_reweighted_bart* "$TMPDIR"/checkpoints
 
 echo START
 date
@@ -34,7 +34,6 @@ srun python -u run/main.py train dialogpt dialog \
 	--sessionbreak_token \<session\> \
         --include_history \
 	--include_persona \
-	--persona_selector preprocessed:trained_base_reweighted_bart \
 	--augmented \
 	--input_order personas-history-current \
         --train_samples 2000 \
