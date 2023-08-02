@@ -24,27 +24,27 @@ mkdir "$TMPDIR"/output
 
 srun python -u run/main.py tune dialogpt dialog \
         --lm gpt2 \
-	--basedir msc/msc_dialogue/  \
+		--basedir msc/msc_dialogue/  \
         --session 4  \
-	--speaker_prefixes \<other\> \<self\> \
-	--include_history \
-	--include_persona \
-	--input_order history-personas-current \
-	--train_samples 2000 \
-	--valid_samples 100 \
-	--augmented \
+		--speaker_prefixes \<other\> \<self\> \
+		--include_history \
+		--include_persona \
+		--input_order personas-history-current \
+		--train_samples 2000 \
+		--valid_samples 100 \
+		--augmented \
         --batch_size 8  \
         --learning_rate 0.00005 \
         --epochs 1  \
-	--valid_interval 25 \
-	--patience 4 \
+		--valid_interval 25 \
+		--patience 4 \
         --device cuda  \
         --loglevel INFO  \
         --logdir "$TMPDIR"/logs/  \
-	--datadir "$TMPDIR"/data/ \
-        --output_dir "$TMPDIR"/output/ \
-	--checkpoint_dir ~/pex/checkpoints/ \
-	--experiment_name gpt_context4 \
+		--datadir "$TMPDIR"/data/ \
+		--output_dir "$TMPDIR"/output/ \
+		--checkpoint_dir ~/pex/checkpoints/ \
+		--experiment_name gpt_context5 \
 
 cp "$TMPDIR"/logs/* ./logs
 cp -r "$TMPDIR"/output/* ./output

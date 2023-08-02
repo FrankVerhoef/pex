@@ -11,9 +11,19 @@ def do_tune(train_fn, run_config):
         logging_level="warning",
         )
     search_space = {
-        "seed": tune.grid_search([42]),
-        "lm_loss_factor": tune.sample_from(lambda spec: random.random()),
+        "seed": tune.grid_search([42, 2206, 1968, 524, 55]),
+        "context_option": tune.grid_search([3, 4]),
+        "config_option": tune.grid_search([0, 3]),
+        "persona_selector": tune.sample_from(lambda spec: {
+            3: 'preprocessed:trained_base_reweighted_bart',
+            4: None
+            }[spec.config.context_option]),
+        "sessionbreak_token": tune.sample_from(lambda spec: {
+            0: None,
+            3: '<session>'
+        }[spec.config.config_option])
         # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
+        # "lm_loss_factor": tune.sample_from(lambda spec: random.random()),
         # "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
         # "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "<nofact>"),
         # "add_tokens": tune.sample_from(
