@@ -39,7 +39,7 @@ srun python -u run/main.py tune dialogpt dialog \
 		--valid_interval 25 \
 		--patience 4 \
         --device cuda  \
-        --loglevel INFO  \
+        --loglevel VERBOSE  \
         --logdir "$TMPDIR"/logs/  \
 		--datadir "$TMPDIR"/data/ \
 		--output_dir "$TMPDIR"/output/ \
