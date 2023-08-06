@@ -34,3 +34,7 @@
 --session 2 --do_sample --num_beams 1 --temperature 1.5 --top_p 0.9 --top_k 50
 --session 3 --do_sample --num_beams 1 --temperature 1.5 --top_p 0.9 --top_k 50
 --session 4 --do_sample --num_beams 1 --temperature 1.5 --top_p 0.9 --top_k 50
+--session 1 --do_sample --top_k 0
+--session 2 --do_sample --top_k 0
+--session 3 --do_sample --top_k 0
+--session 4 --do_sample --top_k 0
