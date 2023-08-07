@@ -434,6 +434,33 @@ class MSC_Session(Dataset):
             turn_id += 1
         return persona_sentences
 
+    def dialogue_history(self, dialog_id, sp_id=None):
+        # Dialogue history consists of all utterances before personas, or after the sessionbreak that closes the personas section
+
+        if self.sessionbreak_token is None:
+            logging.warning("Can only filter persona sentences if sessionbreak_token is defined")
+            return []
+        
+        sessionbreaks = [i for i, (speaker, _) in enumerate(self.history[dialog_id]) if speaker == 'Nobody']
+        utterances = []
+        if len(sessionbreaks) > 1:
+            episodes = [(start, end) for start, end in zip(sessionbreaks[:-1], sessionbreaks[1:])]
+            utterances = [
+                utterance
+                for start, end in episodes 
+                for speaker, utterance in self.history[dialog_id][start+1: end]
+                if self.history[dialog_id][start][1] != 'personas' and (True if sp_id is None else speaker == sp_id)
+            ]
+        if len(sessionbreaks) > 0:
+            if self.history[dialog_id][sessionbreaks[-1]] != 'personas':
+                if len(self.history[dialog_id][sessionbreaks[-1]:]) > 1:
+                    utterances.extend([
+                        utterance
+                        for speaker, utterance in self.history[dialog_id][sessionbreaks[-1]+1:]
+                        if (True if sp_id is None else speaker == sp_id)
+                    ])
+        return utterances
+
     def _get_speaker_mapping(self, i):
         # Determine who is Speaker 1 and Speaker 2 (who is 'you', who is 'me')
         speakers = [speaker for speaker, _ in self.history[i] if speaker != "Nobody"]
@@ -477,7 +504,7 @@ class MSC_Session(Dataset):
             "ref_context": overlap([self.history[i][-1][1]], self.next_utterance[i][1], ["NOUN", "PROPN", "VERB"]),
         }
         if self.speechact_classifier is not None:
-            utterances = [u for s, u in self.history[i] if u != 'Nobody']
+            utterances = self.dialogue_history(i)
             rhythm = self.speechact_classifier.get_dialogue_rhythm(utterances)
             stats['speechacts'] = count_speechacts(rhythm)
             stats['speechpatterns'] = count_speechpatterns(rhythm)
@@ -497,14 +524,6 @@ class MSC_Session(Dataset):
         labelwords = sum([length * freq for length, freq in labelwords_per_sample.items()])
         totalwords = sum([length * freq for length, freq in totalwords_per_sample.items()])
 
-        speechacts = sum([m['speechacts'] for m in allitem_measurements], Counter())
-        speechpatterns = sum([m['speechpatterns'] for m in allitem_measurements], Counter())
-        pQA_avg = sum([m['p(A|Q)'] for m in allitem_measurements]) / max(num_samples, 1)
-
-        ref_self_avg = sum([m['ref_self'] for m in allitem_measurements]) / max(num_samples, 1)
-        ref_other_avg = sum([m['ref_other'] for m in allitem_measurements]) / max(num_samples, 1)
-        ref_contex_avg = sum([m['ref_context'] for m in allitem_measurements]) / max(num_samples, 1)
-
         all_measurements = {
             "allitem_measurements": allitem_measurements,
             "num_samples": num_samples,
@@ -517,14 +536,25 @@ class MSC_Session(Dataset):
             "inputwords_per_sample": sorted(inputwords_per_sample.items(), key=lambda x:x[0]),
             "labelwords_per_sample": sorted(labelwords_per_sample.items(), key=lambda x:x[0]),
             "totalwords_per_sample": sorted(totalwords_per_sample.items(), key=lambda x:x[0]),
-            "inputsentences_per_sample": sorted(inputsentences_per_sample.items(), key=lambda x:x[0]),
-            "speechacts": speechacts,
-            "speechpatterns": speechpatterns,
-            "p(A|Q)": pQA_avg,
-            "ref_self": ref_self_avg,
-            "ref_other": ref_other_avg,
-            "ref_context": ref_contex_avg,
+            "inputsentences_per_sample": sorted(inputsentences_per_sample.items(), key=lambda x:x[0])
         }
+
+        if self.speechact_classifier is not None:
+            speechacts = sum([m['speechacts'] for m in allitem_measurements], Counter())
+            speechpatterns = sum([m['speechpatterns'] for m in allitem_measurements], Counter())
+            pQA_avg = sum([m['p(A|Q)'] for m in allitem_measurements]) / max(num_samples, 1)
+
+            ref_self_avg = sum([m['ref_self'] for m in allitem_measurements]) / max(num_samples, 1)
+            ref_other_avg = sum([m['ref_other'] for m in allitem_measurements]) / max(num_samples, 1)
+            ref_contex_avg = sum([m['ref_context'] for m in allitem_measurements]) / max(num_samples, 1)
+            all_measurements.update({
+                "speechacts": speechacts,
+                "speechpatterns": speechpatterns,
+                "p(A|Q)": pQA_avg,
+                "ref_self": ref_self_avg,
+                "ref_other": ref_other_avg,
+                "ref_context": ref_contex_avg,
+            })
 
         return all_measurements
 
@@ -919,9 +949,9 @@ if __name__ == "__main__":
     datadir = '/Users/FrankVerhoef/Programming/PEX/data/'
     basedir = 'msc/msc_dialogue/'
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
-    subset = 'valid'
+    subset = 'test'
     session = 4
-    persona_selector = None 
+    persona_selector = "init_persona"
     # session = "preprocessed:session_3_train_withprefixes_selectedpersona_withhistory"
     # persona_selector = 'test_bart'
     if session == 1:
@@ -930,15 +960,15 @@ if __name__ == "__main__":
     speaker_prefixes = ['<other>', '<self>']
     sessionbreak_token = '<sessionbreak>'
     add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
-    include_persona = True
-    include_history = True
+    include_persona = False
+    include_history = False
     input_order = INPUT_ORDER_OPTIONS[0]
-    max_samples = 5
+    max_samples = None
 
     augmented = False
     selected_turns = None
 
-    speechact_classifier = SpeechactClassifier(checkpoint_dir='/Users/FrankVerhoef/Programming/PEX/checkpoints/', modelname='trained_speechact_bert')
+    speechact_classifier = None # SpeechactClassifier(checkpoint_dir='/Users/FrankVerhoef/Programming/PEX/checkpoints/', modelname='trained_speechact_bert')
 
 
 
@@ -958,46 +988,48 @@ if __name__ == "__main__":
     # pad_token_id = tokenizer.token_to_id(PAD_TOKEN)
 
     if persona_selector is not None:
+        if persona_selector == "init_persona":
+            persona_selector_fn = lambda turns: []
+        else:
+            # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
+            loadpath = checkpoint_dir + persona_selector
+            logging.info("Loading persona_selector from {}".format(loadpath))
+            bart_config = load_config(loadpath + '.config')
+            assert bart_config["speaker_prefixes"] == speaker_prefixes, f"persona selector was trained with speaker prefixes {bart_config['speaker_prefixes']}, current dataset has speaker prefixes {speaker_prefixes}"
+            bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
+            if bart_config['add_tokens'] is not None:
+                bart_tokenizer.add_tokens(bart_config['add_tokens'])
+            bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
+            bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
+            bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
+            bart_generation_config = {
+                "num_beams": bart_config['num_beams'],
+                "do_sample": bart_config['do_sample'],
+                "temperature": bart_config['temperature'],
+                "top_p": bart_config['top_p'],
+                "top_k": bart_config['top_k'],
+                "max_new_tokens": bart_config['decoder_max'],
+            }
+            bart_device = args.device
+            if bart_device == 'mps':
+                bart_device = 'cpu'
+                logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
+            bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
 
-        # Load pretrained model to select generate (tokens for) persona sentences from a batch with input_ids
-        loadpath = checkpoint_dir + persona_selector
-        logging.info("Loading persona_selector from {}".format(loadpath))
-        bart_config = load_config(loadpath + '.config')
-        assert bart_config["speaker_prefixes"] == speaker_prefixes, f"persona selector was trained with speaker prefixes {bart_config['speaker_prefixes']}, current dataset has speaker prefixes {speaker_prefixes}"
-        bart_tokenizer = AutoTokenizer.from_pretrained(bart_config['bart_base'])
-        if bart_config['add_tokens'] is not None:
-            bart_tokenizer.add_tokens(bart_config['add_tokens'])
-        bart_nofact_token_id = tokenizer.convert_tokens_to_ids(bart_config['nofact_token']) if bart_config['nofact_token'] != '' else bart_tokenizer.eos_token_id
-        bart_model = BartExtractor(bart_config['bart_base'], bart_nofact_token_id)
-        bart_model.bart.resize_token_embeddings(len(bart_tokenizer))
-        bart_generation_config = {
-            "num_beams": bart_config['num_beams'],
-            "do_sample": bart_config['do_sample'],
-            "temperature": bart_config['temperature'],
-            "top_p": bart_config['top_p'],
-            "top_k": bart_config['top_k'],
-            "max_new_tokens": bart_config['decoder_max'],
-        }
-        bart_device = args.device
-        if bart_device == 'mps':
-            bart_device = 'cpu'
-            logging.warning("Changed device from 'mps' to 'cpu' for BART persona selector")
-        bart_model.load_state_dict(torch.load(loadpath, map_location=torch.device(bart_device)))
-
-        # Configure MSC_Turns to predict persona sentences from a list of utterances
-        MSC_Turns.set(
-            tokenizer=bart_tokenizer, 
-            len_context=2, 
-            speaker_prefixes=bart_config['speaker_prefixes'], 
-            nofact_token=bart_config['nofact_token']
-        )
-        persona_selector = partial(
-            MSC_Turns.predict_from_utterances, 
-            model=bart_model, 
-            generation_config=bart_generation_config, 
-            device=bart_device, 
-            batch_size=args.batch_size
-        )
+            # Configure MSC_Turns to predict persona sentences from a list of utterances
+            MSC_Turns.set(
+                tokenizer=bart_tokenizer, 
+                len_context=2, 
+                speaker_prefixes=bart_config['speaker_prefixes'], 
+                nofact_token=bart_config['nofact_token']
+            )
+            persona_selector_fn = partial(
+                MSC_Turns.predict_from_utterances, 
+                model=bart_model, 
+                generation_config=bart_generation_config, 
+                device=bart_device, 
+                batch_size=args.batch_size
+            )
 
     MSC_Session.set(tokenizer=tokenizer, speaker_prefixes=speaker_prefixes, sessionbreak_token=sessionbreak_token, speechact_classifier=speechact_classifier)
     msc_turns = MSC_Session(
@@ -1010,7 +1042,8 @@ if __name__ == "__main__":
         input_order=input_order,
         augmented=augmented,
         selected_turns=selected_turns,
-        persona_selector=persona_selector
+        persona_selector=persona_selector,
+        persona_selector_fn=persona_selector_fn
     )
     
     m = msc_turns.item_measurements(0)
@@ -1022,6 +1055,7 @@ if __name__ == "__main__":
         logging.verbose(sentence)
     logging.verbose('-'*40)
 
+    msc_turns.save_dialogue_fig(1, './output/')
     for i in range(min(10, max_samples)):
         msc_turns.save_dialogue_fig(i, './output/')
 

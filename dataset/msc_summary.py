@@ -239,8 +239,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 criterion = lambda x, threshold: x <= threshold,
                 targets=r["target_sentences"], 
                 predictions=r["pred_sentences"], 
-                title=f"TER heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TER_MAXIMUM:.2f})"
-            ).figure.savefig(f"{savedir}ter_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
+                title="" #f"TER heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TER_MAXIMUM:.2f})"
+            ).figure.savefig(f"{savedir}ter_heatmap_session_{session}_{subset}_{r['convai_id']}.pdf", dpi=300, format='pdf', bbox_inches='tight')
 
         if "bert" in r.keys():
             plot_heatmap(
@@ -249,8 +249,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 criterion = lambda x, threshold: x >= threshold,
                 targets=r["target_sentences"], 
                 predictions=r["pred_sentences"], 
-                title=f"BERT heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={BERT_MINIMUM:.2f})"
-            ).figure.savefig(f"{savedir}bert_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
+                title="" #f"BERT heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={BERT_MINIMUM:.2f})"
+            ).figure.savefig(f"{savedir}bert_heatmap_session_{session}_{subset}_{r['convai_id']}.pdf", dpi=300, format='pdf', bbox_inches='tight')
 
         if "terp" in r.keys():
             plot_heatmap(
@@ -259,8 +259,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                 criterion = lambda x, threshold: x <= threshold,
                 targets=r["target_sentences"], 
                 predictions=r["pred_sentences"], 
-                title=f"TERp heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TERP_MAXIMUM:.2f})"
-            ).figure.savefig(f"{savedir}terp_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
+                title="" #f"TERp heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={TERP_MAXIMUM:.2f})"
+            ).figure.savefig(f"{savedir}terp_heatmap_session_{session}_{subset}_{r['convai_id']}.pdf", dpi=300, format='pdf', bbox_inches='tight')
 
         if len([m for m in r.keys() if m[:4] == "nli_"]):
             for key in ["tp", "pt", "avg"]:
@@ -270,8 +270,8 @@ def plot_heatmaps(results_dict, session, subset, savedir):
                     criterion = lambda x, threshold: x >= threshold,
                     targets=r["target_sentences"], 
                     predictions=r["pred_sentences"], 
-                    title=f"NLI_{key} heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={NLI_MINIMUM:.2f})"
-                ).figure.savefig(f"{savedir}nli_{key}_heatmap_session_{session}_{subset}_{r['convai_id']}.jpg")
+                    title="" #f"NLI_{key} heatmap MSC_Summary session_{session}/{subset}, dialog {r['convai_id']}\n(threshold={NLI_MINIMUM:.2f})"
+                ).figure.savefig(f"{savedir}nli_{key}_heatmap_session_{session}_{subset}_{r['convai_id']}.pdf", dpi=300, format='pdf', bbox_inches='tight')
 
 ##
 ## Definition of the dataset with Multi-Session Chat summaries
@@ -580,14 +580,14 @@ if __name__ == "__main__":
     args.session = 3
     args.batch_size = 8
     subset = 'test'
-    test_samples = 5
+    test_samples = None
     args.java_home = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
     args.terpdir = "/Users/FrankVerhoef/Programming/terp/"
     args.tmpdir = "/Users/FrankVerhoef/Programming/PEX/output/"
     args.load = "trained_bart"
     args.speaker_prefixes = ["<other>", "<self>"]
-    args.nofact_token = "<nofact>"
-    args.add_tokens = ["<other>", "<self>", "<nofact>"]
+    args.nofact_token = '' # "<nofact>"
+    args.add_tokens = None #["<other>", "<self>", "<nofact>"]
     generation_config = {"num_beams": 5, "top_p": 0.9, "top_k": 10, "do_sample": True, "temperature": 1.5, "max_new_tokens": args.decoder_max}
 
     # Test extraction of dialogue turns and persona sentences
@@ -602,7 +602,7 @@ if __name__ == "__main__":
     train_set = MSC_Summaries(
         basedir=args.datadir + args.basedir, 
         session=args.session, 
-        subset="train",         
+        subset="test",         
     )
     m = train_set.item_measurements(0)
     train_measurements = train_set.measurements()
@@ -614,6 +614,8 @@ if __name__ == "__main__":
         subset=subset, 
         max_samples=test_samples, 
     )
+    if test_samples is None:
+        test_samples = len(msc_summaries)
     data = [msc_summaries[i] for i in range(test_samples)]
 
     for item in data:

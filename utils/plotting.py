@@ -264,9 +264,9 @@ def save_dialogue_fig(wrapped_turns, title, savepath):
 
     # Final formatting
     ax.invert_yaxis()
-    ax.set_title(title)
+    # ax.set_title(title)
     plt.axis('off')
-    plt.savefig(savepath + ".png", pad_inches=0.2, bbox_inches='tight', transparent=True)
+    plt.savefig(savepath + ".pdf", pad_inches=0.2, bbox_inches='tight', transparent=True, dpi=300, format='pdf')
     plt.close(fig)
 
     return fig

@@ -21,24 +21,22 @@ source activate pex
 cp -r data  "$TMPDIR"/data
 mkdir "$TMPDIR"/logs
 
-srun python -u run/main.py \
-	--task classify  \
+srun python -u run/main.py tune bert classify \
         --basedir msc/msc_personasummary/  \
-        --sessions 1  \
+        --sessions 1 2 3 4 \
         --model bert  \
         --freeze 8 \
-	--prefix_size 5 \
+	--prefix_size 0 \
 	--prefix_aggr concat \
-        --batch_size 16  \
-        --learning_rate 0.0001 \
+        --batch_size 64  \
+        --learning_rate 0.00001 \
         --epochs 1  \
-        --patience 4 \
-	--valid_interval 100 \
+        --patience 9 \
+	--valid_interval 25 \
         --device cuda  \
         --loglevel DEBUG  \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --do_grid_search
 
 cp "$TMPDIR"/logs/* ./logs
