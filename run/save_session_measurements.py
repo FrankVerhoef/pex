@@ -20,8 +20,8 @@ config = {
     "speechact_classifier": SpeechactClassifier(checkpoint_dir=checkpoint_dir, modelname="trained_speechact_bert")
 }
 
-variant = {"include_persona": False, "include_history": False}
-variant_key = "no_persona_no_hist"
+variant = {"include_persona": True, "include_history": False, "persona_selector": None}
+variant_key = "gold_persona_no_hist"
 
 MSC_Session.set(**config)
 
@@ -52,7 +52,7 @@ for session in subsets.keys():
         logging.verbose(f"Extracted speechacts from {session}-{subset}")
 
 logging.info("Finished extracting speechacts")
-resultsfile = basedir + 'session_measurements.json'
+resultsfile = basedir + f'session_measurements_{variant_key}.json'
 logging.info(f"Saved results in {resultsfile}")
 with open(resultsfile, 'w') as f:
     f.write(json.dumps(m))
