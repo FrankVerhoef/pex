@@ -25,7 +25,7 @@ variant_key = "no_persona_no_hist"
 
 MSC_Session.set(**config)
 
-max_samples = 3
+max_samples = None
 
 # Prepare logging
 logging.set_log_level("VERBOSE")
