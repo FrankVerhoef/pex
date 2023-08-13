@@ -39,7 +39,7 @@ srun python -u run/main.py selfchat dialogpt dialog \
 	--device cuda \
 	--log_interval 10 \
 	--loglevel VERBOSE \
-	--sees 2206 \
+	--seed 2206 \
 	--logdir "$TMPDIR"/logs/  \
 	--output_dir "$TMPDIR"/output/ \
 	$(head -$SLURM_ARRAY_TASK_ID $HPARAMS_FILE | tail -1)
