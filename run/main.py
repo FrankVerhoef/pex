@@ -487,10 +487,10 @@ def prepare_model_and_data(args):
                 if args.action in ['eval', 'selfchat'] or (args.action =='train' and (not args.skip_eval)):
                     testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
                 if args.action == 'selfchat':
+                    dataset_config_other = dataset_config
                     if not args.new_agent:
-                        testdata_other = testdata
+                        dataset_config_other['flipped_perspective'] = True
                     else:
-                        dataset_config_other = dataset_config
                         dataset_config_other.update({
                             'include_persona': args.include_persona_other,
                             'include_history': args.include_history_other,
@@ -504,7 +504,7 @@ def prepare_model_and_data(args):
                                 dataset_config['persona_selector_fn'] = lambda turns: []  # no persona sentences except init_persona
                             else:
                                 logging.warning(f"Persona selection with {args.persona_selector_other} not available for second agent, using gold summaries instead")
-                        testdata_other = MSC_Session(subset='test', max_samples=testdata.indices, **dataset_config_other)
+                    testdata_other = MSC_Session(subset='test', max_samples=testdata.indices, **dataset_config_other)
                     testdata = (testdata, testdata_other)
             collate_fn = partial(MSC_Session.batchify, with_labels=True, batch_format=DialoGPT.batch_format, batch_pad_id=tokenizer.pad_token_id, buffer=0)
 
