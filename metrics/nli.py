@@ -142,19 +142,19 @@ if __name__ == '__main__':
         max_samples=20
     )
 
-    # NLIMetric.set(nli_model='facebook/bart-large-mnli', device='cpu', batch_size=8)
-    # nli_metric = NLIMetric()
-    # for i in range(len(msc_turns)):
-    #     nli_metric.update(msc_turns.indices[i]['convai_id'], msc_turns[i][0], msc_turns[i][1] if msc_turns[i][1] is not None else "")
-    # stats = nli_metric.compute()
+    NLIMetric.set(nli_model='facebook/bart-large-mnli', device='cpu', batch_size=8)
+    nli_metric = NLIMetric()
+    for i in range(len(msc_turns)):
+        nli_metric.update(msc_turns.indices[i]['convai_id'], msc_turns[i][0], msc_turns[i][1] if msc_turns[i][1] is not None else "")
+    stats = nli_metric.compute()
 
-    # for i,s in enumerate(stats.values()):
-    #     if msc_turns[i][1] != nofact_token:
-    #         print("Id      : ", msc_turns.indices[i]['convai_id'])
-    #         print("History : ", msc_turns[i][0])
-    #         print("Target  : ", msc_turns[i][1])
-    #         print(f"Score   :  {s:.4f}")
-    #         print('-' * 40)
+    for i,s in enumerate(stats.values()):
+        if msc_turns[i][1] != nofact_token:
+            print("Id      : ", msc_turns.indices[i]['convai_id'])
+            print("History : ", msc_turns[i][0])
+            print("Target  : ", msc_turns[i][1])
+            print(f"Score   :  {s:.4f}")
+            print('-' * 40)
 
     MSC_Session.set(sessionbreak_token='<session>')
     msc_sessions = MSC_Session(
