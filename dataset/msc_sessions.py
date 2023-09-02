@@ -469,17 +469,23 @@ class MSC_Session(Dataset):
             mapping = {"Speaker 1": "you", "Speaker 2": "me", "Nobody": "sessionbreak"}
         return mapping
 
-    def save_dialogue_fig(self, i, savedir='./'):
+    def save_dialogue_fig(self, i, savedir='./', per_session=False):
 
         dialog_id = self.indices[i]
         mapping = self._get_speaker_mapping(i)
-        wrapped_turns = [(mapping[p], textwrap.wrap(t, width=45)) for p, t in self.history[i] + [self.next_utterance[i]]]
+        all_turns = self.history[i] + [self.next_utterance[i]]
+        sessionbreaks = [j for j, (speaker, _) in enumerate(all_turns) if speaker == 'Nobody'] + [len(all_turns)]
+        if (len(sessionbreaks) > 1) and per_session:
+            sessions = [(start, end) for start, end in zip(sessionbreaks[:-1], sessionbreaks[1:])]
+        else:
+            sessions = [(0, len(all_turns))]
 
-        variant = f"{'no' if not self.include_persona else ''}persona" + f"_{'and_' if self.include_history and self.include_persona else 'no'}history"
-        title=f"Dataset: session_{self.session}/{self.subset}, dialog_id: {dialog_id['dialog_id']}\nvariant: {variant}"
-
-        savepath = savedir + f"dialogfig_session_{self.session}_{self.subset}_{dialog_id['dialog_id']:06d}:{dialog_id['turn_id']:02d}_{variant}"
-        save_dialogue_fig(wrapped_turns, title, savepath)
+        for start, end in sessions:
+            wrapped_turns = [(mapping[p], textwrap.wrap(t, width=45)) for p, t in all_turns[start:end]]
+            variant = f"{'no' if not self.include_persona else ''}persona" + f"_{'and_' if self.include_history and self.include_persona else 'no'}history"
+            title=f"Dataset: session_{self.session}/{self.subset}, dialog_id: {dialog_id['dialog_id']}\nvariant: {variant}"
+            savepath = savedir + f"dialogfig_session_{self.session}_{self.subset}_{dialog_id['dialog_id']:06d}:{start:03d}-{end:03d}_{variant}"
+            save_dialogue_fig(wrapped_turns, title, savepath, last_utterance_dotted=(end==len(all_turns)))
 
     def corpus(self):
         corpus = []
@@ -775,7 +781,7 @@ class MSC_Session(Dataset):
         # Minimal check on validity of the input
         assert len(models) == 2, f"Selfchat needs two models, but got {len(models)} models"
         assert len(testdatasets) == 2, f"Selfchat needs two datasets with same length, but got {len(models)} datasets"
-        assert len(generation_configs) == 2, f"Selfchat needs two one generation config for each agent, but got {len(generation_configs)} configs"
+        assert len(generation_configs) == 2, f"Selfchat needs one generation config for each agent, but got {len(generation_configs)} configs"
         assert len(testdatasets[0]) == len(testdatasets[1]), f"Test datasets for both agents must have same length, but are {len(testdatasets[0])} and {len(testdatasets[1])}"
         assert sum([not cls.equal_index(i0, i1) for i0, i1 in zip(testdatasets[0].indices, testdatasets[1].indices)]) == 0, "Indices of both testdatasets should be equal"
 
@@ -961,7 +967,7 @@ if __name__ == "__main__":
     sessionbreak_token = '<sessionbreak>'
     add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
     include_persona = False
-    include_history = False
+    include_history = True
     input_order = INPUT_ORDER_OPTIONS[0]
     max_samples = None
 
