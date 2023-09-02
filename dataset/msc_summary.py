@@ -19,10 +19,12 @@ import random
 import itertools
 from functools import partial
 from collections import Counter
+import textwrap
 
 from utils.general import prettydict
 import utils.logging as logging
 from utils.plotting import plot_heatmap
+from utils.plotting import save_dialogue_fig
 
 
 ##
@@ -207,7 +209,8 @@ def calc_stats(predicted_summaries, target_summaries, indices, metrics=None):
         r["numfacts_factor"] = len(r['pred_sentences']) / max(len(r['target_sentences']), 1)
 
         # Get ROUGE scores from all_scores
-        r["rougeL"] = {k: v.item() for k, v in all_scores["rougeL"][i].items()}
+        if 'rougeL' in metrics:
+            r["rougeL"] = {k: v.item() for k, v in all_scores["rougeL"][i].items()}
 
         i_start = i_end
 
@@ -317,7 +320,7 @@ class MSC_Summaries(Dataset):
                     dialogues.append(json.loads(line))
         except FileNotFoundError:
             logging.warning(f"File '{filepath}' not found -> skipped")
-        self.indices, self.turns, self.summaries = self.transform(dialogues, max_samples)
+        self.indices, self.turns, self.dialogues, self.summaries = self.transform(dialogues, max_samples)
         
     def transform(self, dialogues, max_samples):
         """
@@ -347,7 +350,7 @@ class MSC_Summaries(Dataset):
                     - 0: persona sentences Speaker 1
                     - 1: persona sentances Speaker 2
         """
-        turns, summaries, ids = [], [], []
+        turns, summaries, dialogs, ids = [], [], [], []
 
         # If max_samples is set, and lower than total number of summaries, then take a random sample
         selection = list(range(len(dialogues)))
@@ -369,11 +372,15 @@ class MSC_Summaries(Dataset):
                 utterances.append(turn)
             turns.append(utterances)
 
+            # Also save the list with dialogue utterances
+            dialogue = [(turn["id"], turn.get("text", "")) for turn in d["dialog"]]
+            dialogs.append(dialogue)
+
             # The 'agg_persona_list" in the last utterance is the summary for the whole dialogue
             summaries.append('\n'.join(d['dialog'][-1]['agg_persona_list']))
             ids.append({"dialog_id": dialog_id, "convai_id": d["initial_data_id"]})
 
-        return ids, turns, summaries
+        return ids, turns, dialogs, summaries
         
     def __len__(self):
         return len(self.summaries)
@@ -397,6 +404,19 @@ class MSC_Summaries(Dataset):
             ]
 
         return utterances, self.summaries[i]
+
+    def save_summary_fig(self, i, savedir='./'):
+
+        dialog_id = self.indices[i]
+        mapping = {"bot_0": "me", "bot_1": "you", "Nobody": "sessionbreak"}
+        variant = "nopersona_nohistory"
+
+        for j in range(0, len(self.dialogues[i]), 2):
+            wrapped_turns = [(mapping[p], textwrap.wrap(t, width=45)) for p, t in self.dialogues[i][j:j+2]]
+            title=f"Dataset: session_{self.session}/{self.subset}, dialog_id: {dialog_id['dialog_id']}_{j}\nvariant: {variant}"
+
+            savepath = savedir + f"summaryfig_session_{self.session}_{self.subset}_{dialog_id['dialog_id']:06d}{j:02d}:{dialog_id['convai_id']}_{variant}"
+            save_dialogue_fig(wrapped_turns, title, savepath, last_utterance_dotted=False)
 
     def item_measurements(self, i):
         stats = {
@@ -577,9 +597,9 @@ if __name__ == "__main__":
     logging.info("Unit test {}".format(__file__))
 
     # Settings for this test
-    args.session = 3
+    args.session = 2
     args.batch_size = 8
-    subset = 'test'
+    subset = 'train'
     test_samples = None
     args.java_home = "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
     args.terpdir = "/Users/FrankVerhoef/Programming/terp/"
