@@ -216,7 +216,7 @@ def plot_heatmap(scores, threshold, criterion, targets, predictions, title):
 PER_LINE = 0.22 # inch
 PER_TURN = 0.15 # inch
 
-def save_dialogue_fig(wrapped_turns, title, savepath):
+def save_dialogue_fig(wrapped_turns, title, savepath, last_utterance_dotted=True):
 
     # Setup figure
     total_lines = sum([len(t[1]) for t in wrapped_turns])
@@ -240,7 +240,7 @@ def save_dialogue_fig(wrapped_turns, title, savepath):
         )
 
         # Different style for last utterance
-        if i == len(wrapped_turns) - 1:
+        if (i == len(wrapped_turns) - 1) and last_utterance_dotted:
             bbox_style['fc'] = 'floralwhite'
             bbox_style['linestyle'] = '--'
 
