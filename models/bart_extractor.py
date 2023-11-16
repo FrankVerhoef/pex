@@ -76,16 +76,17 @@ class ExtractedFactLoss(nn.Module):
                 fact_loss = torch.where(target == self.nofact_token_id, -1/maxlogprob_fact, -1/logprob_nofact)
         return fact_loss
 
-    def forward(self, lm_logprobs, target):
+    def forward(self, lm_logprobs, target, seq_start=1):
+        # Use seq_start=1 if sequence starts with <bos> token, otherwise use seq_start=0
 
-        assert (lm_logprobs.shape[2] > 1) and (target.shape[1] > 1), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
+        assert (lm_logprobs.shape[2] > seq_start) and (target.shape[1] > seq_start), f"Invalid shape for lm_logprobs {input.shape} or target {target.shape}"
 
         # Classification loss: whether facts are recognized correctly
         # Token directly after <bos> token signals whether sequence is a fact
-        classification_loss = self.fact_loss(lm_logprobs[:, :, 1], target[:, 1])
+        classification_loss = self.fact_loss(lm_logprobs[:, :, seq_start], target[:, seq_start])
 
         # LM loss: whether the tokens of the facts are predicted correctly; exclude <bos> from loss calculation
-        lm_loss = self.nllloss(lm_logprobs[:, :, 1:], target[:, 1:]).sum(dim=1) / (target[:, 1:] != self.ignore_index).sum(dim=1)
+        lm_loss = self.nllloss(lm_logprobs[:, :, seq_start:], target[:, seq_start:]).sum(dim=1) / (target[:, seq_start:] != self.ignore_index).sum(dim=1)
 
         # Weighted combination of classification loss and LM loss
         combined_loss =  (1 - self.lm_weight) * classification_loss + self.lm_weight * lm_loss

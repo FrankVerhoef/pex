@@ -22,6 +22,7 @@ from utils.general import prettydict, dict_with_key_prefix
 import utils.logging as logging
 
 TERP_MAXIMUM = 0.75  # Used in calculation of evaluation statistics
+T5_PREFIX = "Extract personas from: "
 
 class MSC_Turns(Dataset):
 
@@ -195,12 +196,20 @@ class MSC_Turns(Dataset):
         """
         assert cls.tokenizer is not None, "Missing tokenizer to batchify dataset"
         assert batch_format is not None, f"batch_format should be specified"
-        assert batch_format in ["huggingface", "padded_sequences"], f"Unknown batch_format '{batch_format}' for dataset {cls.__class__.__name__}"
+        assert batch_format in ["huggingface", "huggingface_t5", "padded_sequences"], f"Unknown batch_format '{batch_format}' for dataset {cls.__class__.__name__}"
 
         history_batch, persona_batch = zip(*data)
 
         if batch_format == "huggingface":
 
+            if with_labels:
+                encoded = cls.tokenizer(text=history_batch, text_target=persona_batch, padding=True, return_tensors="pt")
+            else:
+                encoded = cls.tokenizer(text=history_batch, padding=True, return_tensors="pt")
+
+        elif batch_format == "huggingface_t5":
+
+            history_batch = [T5_PREFIX + h for h in history_batch]
             if with_labels:
                 encoded = cls.tokenizer(text=history_batch, text_target=persona_batch, padding=True, return_tensors="pt")
             else:
@@ -247,7 +256,7 @@ class MSC_Turns(Dataset):
             batch = self.batchify(data, with_labels=False, batch_format=model.batch_format)
 
             with torch.no_grad():
-                if model.batch_format == "huggingface":
+                if model.batch_format in ["huggingface", "huggingface_t5"]:
                     pred_tokens = model.generate(
                         batch['input_ids'].to(device), 
                         **generation_config,

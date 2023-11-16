@@ -19,6 +19,7 @@ from dataset.msc_binary import MSC_Turn_Facts
 from models.persona_extractor import PersonaExtractor
 from models.bert_classifier import PrefixBert
 from models.bart_extractor import PrefixBart, BartExtractor, ExtractedFactLoss
+from models.t5_extractor import T5Extractor
 from models.dialogpt import DialoGPT
 from models.speechact_clf import SpeechactClassifier
 from models.knowledge_grounded_generator.kg_model import KnowledgeGroundedDecoder, KG_loss
@@ -335,6 +336,26 @@ def prepare_model_and_data(args):
                 clf_loss=args.clf_loss
             )
 
+        elif args.model == "t5":
+
+            tokenizer = AutoTokenizer.from_pretrained(args.t5_base)
+            if args.add_tokens is not None:
+                num_added_toks = tokenizer.add_tokens(args.add_tokens)
+            pad_token_id = tokenizer.pad_token_id
+            nofact_token_id = tokenizer.convert_tokens_to_ids(args.nofact_token) if args.nofact_token != '' else tokenizer.eos_token_id
+            assert nofact_token_id != tokenizer.unk_token_id, "nofact_token '{}' must be known token".format(args.nofact_token)
+
+            model = T5Extractor(t5_base=args.t5_base, nofact_token_id=nofact_token_id)
+            model.t5.resize_token_embeddings(len(tokenizer))
+            criterion = ExtractedFactLoss(
+                nofact_token_id=nofact_token_id, 
+                ignore_index=tokenizer.pad_token_id, 
+                lm_weight=args.lm_loss_factor, 
+                nofact_weight=args.nofact_weight, 
+                num_tokens=len(tokenizer), 
+                clf_loss=args.clf_loss
+            )
+
         else:
             assert False, "Model {} is incompatible with task {}".format(args.model, args.task)
 
@@ -624,7 +645,7 @@ def get_args():
 
     # Main arguments
     parser.add_argument("action", type=str, choices=['tune', 'train', 'eval', 'selfchat'], help="choose an action")
-    parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "kg_gen", "dialogpt"], help="choose one of the available models")
+    parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "t5", "kg_gen", "dialogpt"], help="choose one of the available models")
     parser.add_argument("task", type=str, choices=["generate", "summarize", "classify", "clf_act", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
 
     tune_group = parser.add_argument_group("options for tuning")
@@ -672,6 +693,7 @@ def get_args():
         "bert": PrefixBert,
         "bart": BartExtractor,
         "prefixbart": PrefixBart,
+        "t5": T5Extractor,
         "kg_gen": KnowledgeGroundedDecoder,
         "dialogpt": DialoGPT,
     }[args.model].add_cmdline_args(modelgroup)
