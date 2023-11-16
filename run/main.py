@@ -338,7 +338,7 @@ def prepare_model_and_data(args):
 
         elif args.model == "t5":
 
-            tokenizer = AutoTokenizer.from_pretrained(args.t5_base, model_max_length=512)
+            tokenizer = AutoTokenizer.from_pretrained(args.t5_base, model_max_length=256)
             if args.add_tokens is not None:
                 num_added_toks = tokenizer.add_tokens(args.add_tokens)
             pad_token_id = tokenizer.pad_token_id
