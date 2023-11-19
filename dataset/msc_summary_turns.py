@@ -22,7 +22,7 @@ from utils.general import prettydict, dict_with_key_prefix
 import utils.logging as logging
 
 TERP_MAXIMUM = 0.75  # Used in calculation of evaluation statistics
-T5_PREFIX = "Extract personas from: "
+T5_PREFIX = "Extract personas: "
 
 class MSC_Turns(Dataset):
 
@@ -211,9 +211,9 @@ class MSC_Turns(Dataset):
 
             history_batch = [T5_PREFIX + h for h in history_batch]
             if with_labels:
-                encoded = cls.tokenizer(text=history_batch, text_target=persona_batch, padding=True, return_tensors="pt")
+                encoded = cls.tokenizer(text=history_batch, text_target=persona_batch, padding=True, truncation=True, return_tensors="pt")
             else:
-                encoded = cls.tokenizer(text=history_batch, padding=True, return_tensors="pt")
+                encoded = cls.tokenizer(text=history_batch, padding=True, truncation=True, return_tensors="pt")
 
         elif batch_format == "padded_sequences":
 
