@@ -25,7 +25,7 @@ mkdir "$TMPDIR"/logs
 srun python -u run/main.py eval t5 generate \
 	--t5_base t5-base \
     --basedir msc/msc_personasummary/  \
-    --speaker_prefixes \<other\> \<self\>  \
+    --speaker_prefixes \[other\] \[self\]  \
     --sessions 1 2 3 4 \
 	--test_samples 100 \
 	--batch_size 16 \
