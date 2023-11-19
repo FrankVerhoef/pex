@@ -34,7 +34,7 @@ srun python -u run/main.py train t5 generate \
 	--skip_eval \
 	--batch_size 48  \
 	--learning_rate 0.0001 \
-	--lm_loss_factor 0.5 \
+	--lm_loss_factor 0.0 \
 	--epochs 5  \
 	--valid_interval 25 \
 	--patience 9 \
