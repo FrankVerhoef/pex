@@ -29,7 +29,7 @@ srun python -u run/main.py train t5 generate \
 	--basedir msc/msc_personasummary/  \
 	--sessions 1 2 3 \
 	--speaker_prefixes \[other\] \[self\] \
-	--train_samples 4000 \
+	--train_samples 10000 \
 	--valid_samples 200 \
 	--skip_eval \
 	--batch_size 48  \
