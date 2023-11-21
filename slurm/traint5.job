@@ -29,14 +29,12 @@ srun python -u run/main.py train t5 generate \
 	--basedir msc/msc_personasummary/  \
 	--sessions 1 2 3 \
 	--speaker_prefixes \[other\] \[self\] \
-	--nofact_token \[nofact\] \
-	--add_tokens \[nofact\] \
 	--train_samples 10000 \
-	--valid_samples 200 \
+	--valid_samples 2000 \
 	--skip_eval \
 	--batch_size 48  \
 	--learning_rate 0.0001 \
-	--lm_loss_factor 0.0 \
+	--lm_loss_factor 0.5 \
 	--epochs 5  \
 	--valid_interval 25 \
 	--patience 9 \
