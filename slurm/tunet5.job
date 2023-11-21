@@ -1,0 +1,43 @@
+#!/bin/bash
+
+#SBATCH --partition gpu
+#SBATCH --nodes 1
+#SBATCH --gpus 1
+#SBATCH --job-name Tune_T5
+#SBATCH --time 08:00:00
+#SBATCH --mem 32G
+#SBATCH --output slurm/outputs/train_%A.out
+
+#source ./slurm/.secrets
+
+module purge
+module load 2022
+module load Anaconda3/2022.05
+module load PyTorch/1.12.0-foss-2022a-CUDA-11.7.0
+
+source activate pex
+
+#Copy data dir  to scratch
+cp -r data  "$TMPDIR"/data
+mkdir "$TMPDIR"/logs
+mkdir "$TMPDIR"/output
+
+srun python -u run/main.py tune t5 generate \
+        --basedir msc/msc_personasummary/  \
+        --sessions 1 \
+	--train_samples 10000 \
+	--valid_samples 2000 \
+        --batch_size 64  \
+        --learning_rate 0.0001 \
+        --epochs 1  \
+	--valid_interval 10 \
+	--patience 4 \
+        --device cuda  \
+        --loglevel INFO  \
+        --logdir "$TMPDIR"/logs/  \
+	--datadir "$TMPDIR"/data/ \
+        --output_dir "$TMPDIR"/output/ \
+	--experiment_name t5_s1
+
+cp "$TMPDIR"/logs/* ./logs
+cp -r "$TMPDIR"/output/* ./output
