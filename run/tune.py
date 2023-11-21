@@ -33,7 +33,7 @@ def do_tune(train_fn, run_config):
         #         else spec.config.speaker_prefixes + [spec.config.nofact_token]
         #     ),
         "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
-        "batch_size": tune.grid_search([16, 32, 64]),
+        "batch_size": tune.grid_search([32, 64, 128]),
         # "prefix_size": tune.grid_search([0, 5]),
         # # If there is a prefix, then freeze all Bert layers
         # # If the is no prefix, then vary the number of frozen layers

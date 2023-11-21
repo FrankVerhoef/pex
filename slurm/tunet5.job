@@ -24,7 +24,7 @@ mkdir "$TMPDIR"/output
 
 srun python -u run/main.py tune t5 generate \
         --basedir msc/msc_personasummary/  \
-        --sessions 1 \
+        --sessions 2 3 \
 	--train_samples 10000 \
 	--valid_samples 2000 \
         --batch_size 64  \
@@ -37,7 +37,7 @@ srun python -u run/main.py tune t5 generate \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --output_dir "$TMPDIR"/output/ \
-	--experiment_name t5_s1
+	--experiment_name t5_s23
 
 cp "$TMPDIR"/logs/* ./logs
 cp -r "$TMPDIR"/output/* ./output
