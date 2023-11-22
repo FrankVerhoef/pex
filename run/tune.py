@@ -11,7 +11,7 @@ def do_tune(train_fn, run_config):
         logging_level="warning",
         )
     search_space = {
-        "seed": tune.grid_search([42, 2206, 1968, 524, 123]),
+        "seed": tune.grid_search([42, 2206, 1968, 524, 123, 55]),
         # "context_option": tune.grid_search([3, 4]),
         # "config_option": tune.grid_search([0, 3]),
         # "persona_selector": tune.sample_from(lambda spec: {
@@ -24,16 +24,16 @@ def do_tune(train_fn, run_config):
         # }[spec.config.config_option])
         # "prefix_aggr": tune.grid_search(["concat", "max", "avg"]),
         # "lm_loss_factor": tune.sample_from(lambda spec: random.random()),
-        # "speaker_prefixes": tune.grid_search([None, ["<self>", "<other>"]]),
-        # "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "<nofact>"),
-        # "add_tokens": tune.sample_from(
-        #     lambda spec: 
-        #         spec.config.speaker_prefixes 
-        #         if spec.config.speaker_prefixes is None 
-        #         else spec.config.speaker_prefixes + [spec.config.nofact_token]
-        #     ),
-        "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
-        "batch_size": tune.grid_search([32, 64, 128]),
+        "speaker_prefixes": tune.grid_search([None, ["[other]", "[self]"]]),
+        "nofact_token": tune.sample_from(lambda spec: "" if spec.config.speaker_prefixes is None else "[nofact]"),
+        "add_tokens": tune.sample_from(
+            lambda spec: 
+                spec.config.speaker_prefixes 
+                if spec.config.speaker_prefixes is None 
+                else spec.config.speaker_prefixes + [spec.config.nofact_token]
+            ),
+        # "learning_rate": tune.grid_search([1e-5, 1e-4, 1e-3]),
+        # "batch_size": tune.grid_search([32, 64, 128]),
         # "prefix_size": tune.grid_search([0, 5]),
         # # If there is a prefix, then freeze all Bert layers
         # # If the is no prefix, then vary the number of frozen layers

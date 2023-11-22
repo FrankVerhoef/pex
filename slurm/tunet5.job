@@ -27,8 +27,8 @@ srun python -u run/main.py tune t5 generate \
         --sessions 2 3 \
 	--train_samples 10000 \
 	--valid_samples 2000 \
-        --batch_size 64  \
-        --learning_rate 0.0001 \
+        --batch_size 48  \
+        --learning_rate 0.0003 \
         --epochs 1  \
 	--valid_interval 10 \
 	--patience 4 \
@@ -37,7 +37,7 @@ srun python -u run/main.py tune t5 generate \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --output_dir "$TMPDIR"/output/ \
-	--experiment_name t5_s23
+	--experiment_name t5_tokens_s23
 
 cp "$TMPDIR"/logs/* ./logs
 cp -r "$TMPDIR"/output/* ./output
