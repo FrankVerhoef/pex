@@ -6,7 +6,7 @@
 #SBATCH --job-name Eval_MSC_Summary
 #SBATCH --time 08:00:00
 #SBATCH --mem 32G
-#SBATCH --array=[1-4,5-8,9-12,37-40]%8
+#SBATCH --array=1-4%4
 #SBATCH --output slurm/outputs/eval_%A_%a.out
 
 source ./slurm/.secrets
