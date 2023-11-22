@@ -33,7 +33,7 @@ srun python -u run/main.py train t5 generate \
 	--skip_eval \
 	--batch_size 48  \
 	--learning_rate 0.001 \
-	--lm_loss_factor 0.5 \
+	--lm_loss_factor 1.0 \
 	--epochs 5  \
 	--valid_interval 25 \
 	--patience 9 \
@@ -43,7 +43,7 @@ srun python -u run/main.py train t5 generate \
 	--datadir "$TMPDIR"/data/ \
     --checkpoint_dir "$TMPDIR"/checkpoints/ \
 	--output_dir "$TMPDIR"/output/ \
-    --save trained_nll05final  \
+    --save trained_nll  \
 	--seed 2206 \
     --use_wandb
 
