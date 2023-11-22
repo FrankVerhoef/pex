@@ -32,7 +32,7 @@ srun python -u run/main.py eval t5 summarize \
 	--speaker_prefixes \[other\] \[self\] \
 	--checkpoint_dir checkpoints/ \
 	--load trained_nll05final_t5 \
-	--bart_base t5-base \
+	--t5_base t5-base \
 	--decoder_max 30 \
 	--device cuda \
 	--terpdir ~/terp/ \
