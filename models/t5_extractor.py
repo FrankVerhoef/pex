@@ -32,7 +32,7 @@ class T5Extractor(nn.Module):
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, input_ids, attention_mask, labels):
-        # NOTE: within t5.forward(), a decoder_start_token </s> is inserted (--> label shifted right)
+        # NOTE: within t5.forward(), a decoder_start_token (which is the padding token) is inserted (--> label shifted right)
         output = self.t5(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
         lm_logits = output.logits
         lm_logprobs = self.logsoftmax(lm_logits)
@@ -56,6 +56,7 @@ class T5Extractor(nn.Module):
         return generation_args
     
     def fact_mask(self, output_ids):
+        # If the output contains any tokens that is not <nofact>, <bos>, <eos> or <pad>, then consider it a fact
         mask = output_ids != self.nofact_token_id
         mask *= output_ids !=self.t5.config.bos_token_id
         mask *= output_ids !=self.t5.config.eos_token_id
@@ -70,7 +71,6 @@ class T5Extractor(nn.Module):
         kwargs = self._update_generation_args(**kwargs)
         gen_out = self.t5.generate(input_ids, **kwargs)
         pred_fact = torch.any(self.fact_mask(gen_out), dim=1)
-        # pred_fact = gen_out[:, 2] != self.nofact_token_id
 
         logging.spam("Generate: pred_fact={}".format(pred_fact))
         logging.spam("Generate: gen_out={}".format(gen_out))

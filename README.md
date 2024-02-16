@@ -1,6 +1,21 @@
 # PEX = Persona EXtractor
 
-This README is still under construction
+This repository contains the code I wrote for my thesis for the MSc Artificial Intelligence at the University of Amsterdam: 
+[Improving Dialogue Generation in Longer Conversations by Explicitly Modeling Mentalizing and Joint Co-construction](https://www.researchgate.net/publication/373711296_Improving_Dialogue_Generation_in_Longer_Conversations_by_Explicitly_Modeling_Mentalizing_and_Joint_Co-construction).
+
+In my thesis I investigate how dialogue generation in longer dialogues can be improved. Cooperative communication requires that a dialogue agent implements a mentalization approach that distinguishes between a ‘me-belief’, ‘you-belief’ and ‘we-belief’. To this end, I experiment with extracting persona summaries from the dialogue history and using those summaries for the dialogue generation process combined with a shortened version of the dialogue history that focuses on the current dialogue session only. 
+
+While the experimental results cannot be tied directly to better abilities for cooperative communication, this research provides several useful contributions: 
+- it shows that using summaries instead of the full dialogue history for dialogue generation is effective; 
+- it provides insights and suggestions about the impact of dataset preprocessing on the training process and the impact of choosing the right generation strategy on the produced utterances; 
+- it proposes a new evaluation metric based on analysis of the variability of the speech acts in the generated dialogues compared to the variability of speech acts in human dialogue. 
+
+The benefits of the proposed approach are twofold: i) more transparency because the summaries make visible what personal information is used by the conversational agent, and allow correction or deletion by the user; ii) higher efficiency because storing and processing the summaries requires less computational and energy resources than storing and processing the full dialogue history at the start of each utterance.
+
+Please consider citing my work, if you found the provided resources useful.
+
+Below is an explanation about the contents of the repository.
+This README is still under construction.
 
 ## Organization
 
