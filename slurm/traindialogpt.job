@@ -52,8 +52,8 @@ srun python -u run/main.py train dialogpt dialog \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save trained_hib_HPC_s4_4096  \
-	--seed 2206 \
+        --save trained_hib_HPC_s4_4096_seed55  \
+	--seed 55 \
 
 cp "$TMPDIR"/logs/* ./logs
 cp "$TMPDIR"/checkpoints/* ./checkpoints
