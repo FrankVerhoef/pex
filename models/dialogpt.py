@@ -14,12 +14,36 @@ class DialoGPT(PreTrainedModel):
         group = parser.add_argument_group('DialoGPT')
         group.add_argument("--lm", type=str, default="microsoft/DialoGPT-small", help="Name of language model")
         group.add_argument("--decoder_max", type=int, default=50, help="Max number of tokens to generate")
+        group.add_argument("--n_positions", type=int, default=1024, help="Maximum length of decoder input")
         return parser
 
-    def __init__(self, lm, bos_token_id):
+    def __init__(self, lm, bos_token_id, n_positions=1024):
         super().__init__(config=PretrainedConfig())
         self.model = AutoModelForCausalLM.from_pretrained(lm)
+        if n_positions > self.model.config.n_positions:
+            self.extend_ctx(n_positions)
         self.bos_token_id = bos_token_id
+
+    def extend_ctx(self, n_positions):
+        W = self.model.transformer.wpe.weight
+        N, D = W.shape
+        assert n_positions % N == 0, f'n_positions should be multiple of {N}'
+        multiple = n_positions // N
+        if multiple > 0:
+            extended_W = torch.hstack([W for _ in range(multiple)]).reshape(n_positions, D)
+            self.model.transformer.wpe = torch.nn.Embedding.from_pretrained(extended_W, freeze=False)
+            self.model.config.n_ctx = n_positions
+            self.model.config.n_positions = n_positions
+
+            # Adjust registered buffers in Attention Modules
+            for block in self.model.transformer.h:
+                block.attn.register_buffer(
+                    "bias",
+                    torch.tril(torch.ones((n_positions, n_positions), dtype=torch.bool)).view(1, 1, n_positions, n_positions),
+                    persistent=False,
+                )
+            logging.info(f"Extended context length to {n_positions}")
+        return
 
     def forward(self, **kwargs):
         return self.model(**kwargs)

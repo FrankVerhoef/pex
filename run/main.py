@@ -425,12 +425,13 @@ def prepare_model_and_data(args):
 
             tokenizer = AutoTokenizer.from_pretrained(args.lm)
             tokenizer.pad_token_id = tokenizer.eos_token_id
+            tokenizer.model_max_length = args.n_positions
             if args.add_tokens is not None:
                 tokenizer.add_tokens(args.add_tokens)
             tokenizer.bos_token_id = tokenizer.eos_token_id
             if args.speaker_prefixes is not None:
                 tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(args.speaker_prefixes[0])
-            model = DialoGPT(args.lm, tokenizer.bos_token_id)
+            model = DialoGPT(args.lm, tokenizer.bos_token_id, args.n_positions)
             model.model.resize_token_embeddings(len(tokenizer))
             criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
