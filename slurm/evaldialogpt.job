@@ -6,7 +6,7 @@
 #SBATCH --job-name Eval_GPT
 #SBATCH --time 06:00:00
 #SBATCH --mem 32G
-#SBATCH --array=[29-34]%6
+#SBATCH --array=[37-48]%6
 #SBATCH --output slurm/outputs/eval_%A_%a.out
 #SBATCH --begin=2023-07-25T03:00:00
 
