@@ -34,26 +34,25 @@ srun python -u run/main.py train dialogpt dialog \
 	--sessionbreak_token \<session\> \
         --include_history \
 	--include_persona \
-        --persona_selector preprocessed:trained_nll05_bart \
+        --persona_selector init_persona \
 	--augmented \
 	--input_order personas-history-current \
-        --train_samples 2000 \
 	--valid_samples 200 \
         --lm gpt2 \
         --n_positions 4096 \
         --decoder_max 30 \
-        --batch_size 8  \
+        --batch_size 2  \
         --learning_rate 0.00005 \
         --epochs 1 \
-        --patience 4 \
+        --patience 9 \
         --log_interval 10 \
-	--valid_interval 25 \
+	--valid_interval 100 \
         --device cuda  \
         --loglevel VERBOSE \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save test  \
+        --save trained_hib_hpc_s4_4096  \
 	--seed 2206 \
 
 cp "$TMPDIR"/logs/* ./logs
