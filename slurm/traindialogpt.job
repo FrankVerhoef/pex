@@ -33,7 +33,8 @@ srun python -u run/main.py train dialogpt dialog \
 	--speaker_prefixes \<other\> \<self\> \
 	--sessionbreak_token \<session\> \
 	--include_persona \
-        --persona_selector preprocessed:trained_nll05_bart \
+        --include_history \
+        --persona_selector init_persona \
 	--augmented \
 	--input_order history-personas-current \
 	--valid_samples 200 \
@@ -51,7 +52,7 @@ srun python -u run/main.py train dialogpt dialog \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save trained_fb_hpc_s4_nll05bart_4096  \
+        --save trained_hib_HPC_s4_4096  \
 	--seed 2206 \
 
 cp "$TMPDIR"/logs/* ./logs
