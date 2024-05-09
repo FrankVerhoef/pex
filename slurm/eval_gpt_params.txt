@@ -26,9 +26,9 @@
 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 5 --do_sample --top_k 0
 
 # Runs with contextlength 4096
---n_positions 4096 --load trained_HIB_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4
---n_positions 4096 --load trained_HIB_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
---n_positions 4096 --load trained_HIB_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
---n_positions 4096 --load trained_HIB_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
---n_positions 4096 --load trained_HIB_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
---n_positions 4096 --load trained_HIB_hpc_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
+--n_positions 4096 --load trained_hib_HPC_s4_dgpt --include_history --persona_selector init_persona --session 4
+--n_positions 4096 --load trained_hib_HPC_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--n_positions 4096 --load trained_hib_HPC_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--n_positions 4096 --load trained_hib_HPC_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--n_positions 4096 --load trained_hib_HPC_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--n_positions 4096 --load trained_hib_HPC_s4_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
