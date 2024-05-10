@@ -69,3 +69,17 @@
 
 # Eval run on session 5
 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 5
+
+# Eval PEX with different seeds
+--seed 55 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4
+--seed 55 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--seed 55 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--seed 55 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--seed 55 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--seed 55 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --top_k 0
+--seed 2206 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4
+--seed 2206 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--seed 2206 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--seed 2206 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--seed 2206 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--seed 2206 --load trained_fb_hpc_s4_nll05bart_dgpt  --persona_selector preprocessed:trained_nll05_bart --session 4 --do_sample --top_k 0
