@@ -33,26 +33,24 @@ srun python -u run/main.py train dialogpt dialog \
 	--speaker_prefixes \<other\> \<self\> \
 	--sessionbreak_token \<session\> \
 	--include_persona \
-        --include_history \
-        --persona_selector init_persona \
+        --persona_selector preprocessed:trained_nll05_bart \
 	--augmented \
 	--input_order history-personas-current \
 	--valid_samples 200 \
         --lm gpt2 \
-        --n_positions 4096 \
         --decoder_max 30 \
-        --batch_size 2  \
+        --batch_size 8  \
         --learning_rate 0.00005 \
         --epochs 1 \
-        --patience 9 \
+        --patience 4 \
         --log_interval 10 \
-	--valid_interval 100 \
+	--valid_interval 25 \
         --device cuda  \
         --loglevel VERBOSE \
         --logdir "$TMPDIR"/logs/  \
 	--datadir "$TMPDIR"/data/ \
         --checkpoint_dir "$TMPDIR"/checkpoints/ \
-        --save trained_hib_HPC_s4_4096_seed55  \
+        --save trained_fb_hpc_s4_nll05bart_seed55 \
 	--seed 55 \
 
 cp "$TMPDIR"/logs/* ./logs
