@@ -48,24 +48,24 @@
 --seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
 
 # Runs with other trained GPT2 model with contextlength 4096 and different seeds
---n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4
---n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
---n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
---n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
---n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
---n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
---seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4
---seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
---seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
---seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
---seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
---seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
---seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4
---seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
---seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
---seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
---seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
---seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
+--n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4
+--n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
+--seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4
+--seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--seed 55 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
+--seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4
+--seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 50
+--seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
+--seed 2206 --n_positions 4096 --load trained_hib_HPC_s4_4096_seed55_dgpt --include_history --persona_selector init_persona --session 4 --do_sample --top_k 0
 
 # Eval run on session 5
 --n_positions 4096 --load trained_hib_HPC_s4_4096_dgpt --include_history --persona_selector init_persona --session 5
