@@ -35,7 +35,6 @@ srun python -u run/main.py eval dialogpt dialog \
         --sessionbreak_token \<session\> \
 	--include_persona \
         --augmented \
-        --input_order history-personas-current \
 	--lm gpt2 \
         --speechact_classifier trained_speechact_bert \
 	--decoder_max 50 \
