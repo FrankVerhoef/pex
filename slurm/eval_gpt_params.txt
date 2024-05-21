@@ -131,3 +131,10 @@
 --seed 2206 --load trained_hib_phc_s4_4096_seed55_dgpt  --n_positions 4096 --include_history --input_order personas-history-current --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
 --seed 2206 --load trained_hib_phc_s4_4096_seed55_dgpt  --n_positions 4096 --include_history --input_order personas-history-current --persona_selector init_persona --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
 --seed 2206 --load trained_hib_phc_s4_4096_seed55_dgpt  --n_positions 4096 --include_history --input_order personas-history-current --persona_selector init_persona --session 4 --do_sample --top_k 0
+
+Evalruns with gold summary
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 4
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 4 --do_sample --num_beams 1 --temperature 1.0 --top_p 1.0 --top_k 0
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 4 --do_sample --num_beams 5 --temperature 1.0 --top_p 0.9 --top_k 10
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 10
+--load trained_fb_hpc_s4_nll05bart_dgpt --session 4 --do_sample --num_beams 5 --temperature 1.5 --top_p 0.9 --top_k 50
