@@ -177,6 +177,26 @@ def evaluate(model, testdata, args):
 
     return eval_stats, result_dict 
 
+def chat(model, testdata, args):
+
+    if args.device == 'mps':
+        args.device = 'cpu'
+        logging.warning("Changed device from 'mps' to 'cpu' for chat")
+
+    gen_config = GenerationConfig(
+        num_beams=args.num_beams,
+        do_sample=args.do_sample,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        max_new_tokens=args.decoder_max,
+    )
+
+    logging.info(f"Continue interactive chat on dialogue {args.chatdialog_id}, turn {args.chatturn_id}")
+    stats, chat_results = testdata.chat(model, args.chatdialog_id, args.chatturn_id, gen_config, device=args.device)
+    return stats, chat_results 
+
+
 def selfchat(models, testdata, args):
 
     if args.device == 'mps':
@@ -506,7 +526,7 @@ def prepare_model_and_data(args):
                 if args.action in ['tune', 'train']:
                     traindata = MSC_Session(subset='train', max_samples=args.train_samples, **dataset_config)
                     validdata = MSC_Session(subset='valid', max_samples=args.valid_samples, **dataset_config)
-                if args.action in ['eval', 'selfchat'] or (args.action =='train' and (not args.skip_eval)):
+                if args.action in ['eval', 'chat', 'selfchat'] or (args.action =='train' and (not args.skip_eval)):
                     testdata = MSC_Session(subset='test', max_samples=args.test_samples, **dataset_config)
                 if args.action == 'selfchat':
                     dataset_config_other = dataset_config
@@ -604,6 +624,16 @@ def train_with_args(config, args):
         logging.info(f"Saved evalresults in {savepath}")
         stats.update(dict_with_key_prefix(eval_stats, prefix="eval_"))
 
+    if args.action == 'chat':
+        assert args.task == 'dialog', f"Chat not compatible with task '{args.task}'; choose 'dialog'"
+        logging.info("Start chat")
+        chat_stats, result_dict = chat(model, testdata, args)
+
+        savepath = args.output_dir + (args.load if args.load != "" else savename(args)) + datetime.now().strftime("_%Y%m%d_%H%M%S") + "_chatresults"
+        save_dict(savepath, result_dict, config=vars(args))
+        logging.info(f"Saved chat results in {savepath}")
+        stats.update(dict_with_key_prefix(chat_stats, prefix="chat_"))
+
     if args.action == 'selfchat':
         assert args.task == 'dialog', f"Self chat not compatible with task '{args.task}'; choose 'dialog'"
         logging.info("Start self_chat")
@@ -645,7 +675,7 @@ def get_args():
     generalgroup.add_argument("--use_wandb", default=False, action='store_true')
 
     # Main arguments
-    parser.add_argument("action", type=str, choices=['tune', 'train', 'eval', 'selfchat'], help="choose an action")
+    parser.add_argument("action", type=str, choices=['tune', 'train', 'eval', 'chat', 'selfchat'], help="choose an action")
     parser.add_argument("model", type=str, choices=["seq2seq", "bert", "bart", "prefixbart", "t5", "kg_gen", "dialogpt"], help="choose one of the available models")
     parser.add_argument("task", type=str, choices=["generate", "summarize", "classify", "clf_act", "dialog"], help="choose a task/dataset to use for tuning/training/evaluation")
 
@@ -670,6 +700,10 @@ def get_args():
     evalgroup.add_argument("--top_k", type=int, default=50, help="the number of highest probability vocabulary tokens to keep for top-k-filtering")
     evalgroup.add_argument("--do_sample", default=False, action='store_true', help="whether or not to use sampling ; use greedy decoding otherwise")
     evalgroup.add_argument("--num_beams", type=int, default=1, help="number of beams for beam search; 1 means no beam search")
+
+    chatgroup = parser.add_argument_group("options for chat")
+    chatgroup.add_argument("--chatdialog_id", type=int)
+    chatgroup.add_argument("--chatturn_id", type=int)
 
     selfchatgroup = parser.add_argument_group("options for selfchat")
     selfchatgroup.add_argument("--num_turns", type=int, default=8, help="number of turns generated in the selfchat")

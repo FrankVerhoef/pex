@@ -767,6 +767,87 @@ class MSC_Session(Dataset):
 
         return all_responses[0] if single_input else all_responses
 
+    def chat(self, model, dialog_id, turn_id, generation_config, device="cpu"):
+
+        def print_context(personas_agent, personas_user, utterances, speaker_mapping):
+            s = "Personas agent\n"
+            for p in personas_agent:
+                s += p + '\n'
+            s += "Personas user\n"
+            for p in personas_user:
+                s += p + '\n'
+            s += "Dialogue\n"
+            for u in utterances:
+                s += f"{speaker_mapping[u[0]]} {u[1]}\n"
+            return s
+
+        generator = partial(self.predict, model=model, generation_config=generation_config, device=device, batch_size=1)
+
+        i = self.find(dialog_id, turn_id)
+        assert i >= 0, f"Could not find dialogue {dialog_id}, turn {turn_id}"
+
+        # The speaker_id of the next utterance determines the speaker_id for user
+        sp_id_agent, sp_id_user = ('Speaker 1', 'Speaker 2') if self.next_utterance[i][0] == 'Speaker 2' else ('Speaker 2', 'Speaker 1')
+        speaker_mapping = {sp_id_agent: '<agent>', sp_id_user: '<user>'}
+
+        personas_agent = self.personas(i, sp_id_agent)
+        personas_user = self.personas(i, sp_id_user)
+
+        # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
+        speakers = [s for s, _ in self.history[i]]
+        current_dialogue = []
+        if 'Nobody' in speakers:
+            start_index = -(speakers[::-1].index('Nobody'))   # This is the last occurrance of a sessionbreak
+            if start_index < 0:
+                current_dialogue = self.history[i][start_index:]
+
+        # Dialogue history consists of all utterances before personas, or between personas and current dialogue
+        sessionbreaks = [i for i, (speaker, _) in enumerate(self.history[i]) if speaker == 'Nobody']
+        previous_sessions = []
+        if len(sessionbreaks) > 1:
+            episodes = [(start, end) for start, end in zip(sessionbreaks[:-1], sessionbreaks[1:])]
+            previous_sessions = [
+                (speaker, utterance) 
+                for start, end in episodes 
+                for speaker, utterance in self.history[i][start+1: end]
+                if self.history[i][start][1] != 'personas'
+            ]
+
+        # Initialize the agent
+        agent = Agent(id=sp_id_agent, generator=generator, persona=personas_agent)
+        agent.add_persona(speaker_id=sp_id_user, persona=personas_user)
+
+        # 'Force' the current dialogue history to Agent memory
+        if len(previous_sessions + current_dialogue) > 0:
+            for speaker_id, utterance in previous_sessions + current_dialogue:
+                if speaker_id == sp_id_agent:
+                    agent.act(speaker_id=sp_id_user, forced_text=utterance)
+                else:
+                    agent.observe(speaker_id=sp_id_user, message=utterance)
+
+        print(print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping))
+
+        # Continue conversation for a number of turns
+        continue_chat = True
+        generated = []
+
+        user_message = "I think they will if the price is right. What will be the price for 6 eggs?"
+        agent.observe(speaker_id=sp_id_user, message=user_message)
+        response = agent.act(speaker_id=sp_id_user)
+        print("<agent> ", response)
+        generated.extend([(sp_id_user, user_message), (sp_id_agent, response)])
+
+        # while continue_chat:
+        #     user_message = input("<user> ")
+        #     continue_chat = len(user_message) > 0
+        #     if continue_chat:
+        #         agent.observe(speaker_id=sp_id_user, message=user_message)
+        #         response = agent.act(speaker_id=sp_id_user)
+        #         print("<agent> ", response)
+        #         generated.extend([(sp_id_user, user_message), (sp_id_agent, response)])
+
+        return {'num_utterances': len(generated)}, {'generated': generated}
+
     @classmethod
     def selfchat(cls, models, testdatasets, generation_configs, device="cpu", num_turns=8, print_max=20, log_interval=100):
 
@@ -921,10 +1002,11 @@ if __name__ == "__main__":
     import argparse
     import random
     from functools import partial
-    from transformers import AutoTokenizer
+    from transformers import AutoTokenizer, GenerationConfig    
     from dataset.tokenizer import train_tokenizer, PAD_TOKEN
     from models.bart_extractor import BartExtractor
     from models.speechact_clf import SpeechactClassifier
+    from models.dialogpt import DialoGPT
     from utils.general import load_config
 
     def get_parser():
@@ -943,6 +1025,7 @@ if __name__ == "__main__":
         return parser
 
     parser = get_parser()
+    parser = DialoGPT.add_cmdline_args(parser)
     args = parser.parse_known_args()[0]
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -957,7 +1040,8 @@ if __name__ == "__main__":
     checkpoint_dir = '/Users/FrankVerhoef/Programming/PEX/checkpoints/'
     subset = 'test'
     session = 4
-    persona_selector = "init_persona"
+    persona_selector = None
+    persona_selector_fn = lambda x: []
     # session = "preprocessed:session_3_train_withprefixes_selectedpersona_withhistory"
     # persona_selector = 'test_bart'
     if session == 1:
@@ -966,12 +1050,12 @@ if __name__ == "__main__":
     speaker_prefixes = ['<other>', '<self>']
     sessionbreak_token = '<sessionbreak>'
     add_tokens = None #speaker_prefixes if sessionbreak_token is None else speaker_prefixes + [sessionbreak_token]
-    include_persona = False
-    include_history = True
+    include_persona = True
+    include_history = False
     input_order = INPUT_ORDER_OPTIONS[0]
     max_samples = None
 
-    augmented = False
+    augmented = True
     selected_turns = None
 
     speechact_classifier = None # SpeechactClassifier(checkpoint_dir='/Users/FrankVerhoef/Programming/PEX/checkpoints/', modelname='trained_speechact_bert')
@@ -1051,27 +1135,47 @@ if __name__ == "__main__":
         persona_selector=persona_selector,
         persona_selector_fn=persona_selector_fn
     )
-    
-    m = msc_turns.item_measurements(0)
-    m = msc_turns.measurements()
-    del m["allitem_measurements"]
-    print(prettydict(m, title="Measurements"))
+    model = DialoGPT(lm='gpt2', bos_token_id=tokenizer.bos_token_id)
+    model.model.resize_token_embeddings(len(tokenizer))
+    load = "trained_fb_hpc_s4_nll05bart_dgpt"
+    if load != "":
+        loadpath = checkpoint_dir + load
+        logging.info("Loading model from {}".format(loadpath))
+        state_dict = torch.load(loadpath, map_location=torch.device(args.device))
+        model.load_state_dict(state_dict)
 
-    for sentence in msc_turns.corpus()[10:30]:
-        logging.verbose(sentence)
-    logging.verbose('-'*40)
+    msc_turns.chat(
+        model, dialog_id=1, turn_id=4, 
+        generation_config=GenerationConfig(
+            num_beams=1,
+            do_sample=True,
+            temperature=1.5,
+            top_p=0.9,
+            top_k=50,
+            max_new_tokens=30,
+        )
+    )
 
-    msc_turns.save_dialogue_fig(1, './output/')
-    for i in range(min(10, max_samples)):
-        msc_turns.save_dialogue_fig(i, './output/')
+    # m = msc_turns.item_measurements(0)
+    # m = msc_turns.measurements()
+    # del m["allitem_measurements"]
+    # print(prettydict(m, title="Measurements"))
 
-    data = [msc_turns[i] for i in range(min(10, max_samples))]
+    # for sentence in msc_turns.corpus()[10:30]:
+    #     logging.verbose(sentence)
+    # logging.verbose('-'*40)
 
-    for item in data:
-        logging.verbose(item[0])
-        logging.verbose(item[1])
-        logging.verbose('-'*40)
+    # msc_turns.save_dialogue_fig(1, './output/')
+    # for i in range(min(10, max_samples)):
+    #     msc_turns.save_dialogue_fig(i, './output/')
 
-    batch = msc_turns.batchify(data, batch_format="huggingface_xycat")
-    logging.info("Components of batch: {}".format(str(batch.keys())))
-    logging.spam(batch)
+    # data = [msc_turns[i] for i in range(min(10, max_samples))]
+
+    # for item in data:
+    #     logging.verbose(item[0])
+    #     logging.verbose(item[1])
+    #     logging.verbose('-'*40)
+
+    # batch = msc_turns.batchify(data, batch_format="huggingface_xycat")
+    # logging.info("Components of batch: {}".format(str(batch.keys())))
+    # logging.spam(batch)
