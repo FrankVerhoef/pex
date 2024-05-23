@@ -13,6 +13,7 @@ from functools import partial
 from filelock import FileLock
 from datetime import datetime
 import configargparse as argparse
+import json
 
 from transformers import AutoTokenizer, PretrainedConfig, GenerationConfig
 from dataset.msc_binary import MSC_Turn_Facts
@@ -192,8 +193,18 @@ def chat(model, testdata, args):
         max_new_tokens=args.decoder_max,
     )
 
-    logging.info(f"Continue interactive chat on dialogue {args.chatdialog_id}, turn {args.chatturn_id}")
-    stats, chat_results = testdata.chat(model, args.chatdialog_id, args.chatturn_id, args.user_message, gen_config, device=args.device)
+    if args.chat_initfile != "":
+        chat_initbatch = []
+        with open(args.chat_initfile, 'r') as f:
+            for line in f:
+                d, t, m = line.split('\t')
+                chat_initbatch.append((int(d), int(t), m[:-1]))
+            logging.info(f"Loaded {len(chat_initbatch)} chat inits from {args.chat_initfile}")
+    else:
+        chat_initbatch = [(args.chatdialog_id, args.chatturn_id, args.user_message)]    
+        logging.info(f"Continue interactive chat on dialogue {args.chatdialog_id}, turn {args.chatturn_id}")
+
+    stats, chat_results = testdata.chat(model, chat_initbatch, gen_config, device=args.device)
     return stats, chat_results 
 
 
@@ -704,7 +715,8 @@ def get_args():
     chatgroup = parser.add_argument_group("options for chat")
     chatgroup.add_argument("--chatdialog_id", type=int)
     chatgroup.add_argument("--chatturn_id", type=int)
-    chatgroup.add_argument("--user_message", type=str)
+    chatgroup.add_argument("--user_message", type=str, default=None)
+    chatgroup.add_argument("--chat_initfile", type=str, default="")
 
     selfchatgroup = parser.add_argument_group("options for selfchat")
     selfchatgroup.add_argument("--num_turns", type=int, default=8, help="number of turns generated in the selfchat")

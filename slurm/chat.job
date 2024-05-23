@@ -20,6 +20,7 @@ source activate pex
 
 #Copy data dir  to scratch
 cp -r data  "$TMPDIR"/data
+cp chatstarters "$TMPDIR"
 mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/output
 
@@ -34,9 +35,7 @@ srun python -u run/main.py chat dialogpt dialog \
 	--include_persona \
 	--augmented \
 	--session 4 \
-	--chatdialog_id 1 \
-	--user_message "I think they will, if the price is low enough. How much will you charge for 6 eggs?" \
-	--chatturn_id 4 \
+	--chat_initfile "$TMPDIR"/chatstarters.txt
 	--decoder_max 50 \
 	--do_sample \
 	--num_beams 1 \

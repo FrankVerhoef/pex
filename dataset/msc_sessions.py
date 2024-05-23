@@ -767,7 +767,7 @@ class MSC_Session(Dataset):
 
         return all_responses[0] if single_input else all_responses
 
-    def chat(self, model, dialog_id, turn_id, user_message, generation_config, device="cpu"):
+    def chat(self, model, chat_initbatch, generation_config, device="cpu"):
 
         def print_context(personas_agent, personas_user, utterances, speaker_mapping):
             s = "Personas agent\n"
@@ -783,67 +783,74 @@ class MSC_Session(Dataset):
 
         generator = partial(self.predict, model=model, generation_config=generation_config, device=device, batch_size=1)
 
-        i = self.find(dialog_id, turn_id)
-        assert i >= 0, f"Could not find dialogue {dialog_id}, turn {turn_id}"
+        generated = []
+        for dialog_id, turn_id, user_message in chat_initbatch:
 
-        # The speaker_id of the next utterance determines the speaker_id for user
-        sp_id_agent, sp_id_user = ('Speaker 1', 'Speaker 2') if self.next_utterance[i][0] == 'Speaker 2' else ('Speaker 2', 'Speaker 1')
-        speaker_mapping = {sp_id_agent: '<agent>', sp_id_user: '<user>'}
+            i = self.find(dialog_id, turn_id)
+            if i < 0:
+                logging.info(f"Could not find dialogue {dialog_id}, turn {turn_id}")
+            else:
 
-        personas_agent = self.personas(i, sp_id_agent)
-        personas_user = self.personas(i, sp_id_user)
+                # The speaker_id of the next utterance determines the speaker_id for user
+                sp_id_agent, sp_id_user = ('Speaker 1', 'Speaker 2') if self.next_utterance[i][0] == 'Speaker 2' else ('Speaker 2', 'Speaker 1')
+                speaker_mapping = {sp_id_agent: '<agent>', sp_id_user: '<user>'}
 
-        # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
-        speakers = [s for s, _ in self.history[i]]
-        current_dialogue = []
-        if 'Nobody' in speakers:
-            start_index = -(speakers[::-1].index('Nobody'))   # This is the last occurrance of a sessionbreak
-            if start_index < 0:
-                current_dialogue = self.history[i][start_index:]
+                personas_agent = self.personas(i, sp_id_agent)
+                personas_user = self.personas(i, sp_id_user)
 
-        # Dialogue history consists of all utterances before personas, or between personas and current dialogue
-        sessionbreaks = [i for i, (speaker, _) in enumerate(self.history[i]) if speaker == 'Nobody']
-        previous_sessions = []
-        if len(sessionbreaks) > 1:
-            episodes = [(start, end) for start, end in zip(sessionbreaks[:-1], sessionbreaks[1:])]
-            previous_sessions = [
-                (speaker, utterance) 
-                for start, end in episodes 
-                for speaker, utterance in self.history[i][start+1: end]
-                if self.history[i][start][1] != 'personas'
-            ]
+                # Current dialogue consists of all utterances after the last sessionbreak (speaker == 'Nobody')
+                speakers = [s for s, _ in self.history[i]]
+                current_dialogue = []
+                if 'Nobody' in speakers:
+                    start_index = -(speakers[::-1].index('Nobody'))   # This is the last occurrance of a sessionbreak
+                    if start_index < 0:
+                        current_dialogue = self.history[i][start_index:]
 
-        # Initialize the agent
-        agent = Agent(id=sp_id_agent, generator=generator, persona=personas_agent)
-        agent.add_persona(speaker_id=sp_id_user, persona=personas_user)
+                # Dialogue history consists of all utterances before personas, or between personas and current dialogue
+                sessionbreaks = [i for i, (speaker, _) in enumerate(self.history[i]) if speaker == 'Nobody']
+                previous_sessions = []
+                if len(sessionbreaks) > 1:
+                    episodes = [(start, end) for start, end in zip(sessionbreaks[:-1], sessionbreaks[1:])]
+                    previous_sessions = [
+                        (speaker, utterance) 
+                        for start, end in episodes 
+                        for speaker, utterance in self.history[i][start+1: end]
+                        if self.history[i][start][1] != 'personas'
+                    ]
 
-        # 'Force' the current dialogue history to Agent memory
-        if len(previous_sessions + current_dialogue) > 0:
-            for speaker_id, utterance in previous_sessions + current_dialogue:
-                if speaker_id == sp_id_agent:
-                    agent.act(speaker_id=sp_id_user, forced_text=utterance)
+                # Initialize the agent
+                agent = Agent(id=sp_id_agent, generator=generator, persona=personas_agent)
+                agent.add_persona(speaker_id=sp_id_user, persona=personas_user)
+
+                # 'Force' the current dialogue history to Agent memory
+                if len(previous_sessions + current_dialogue) > 0:
+                    for speaker_id, utterance in previous_sessions + current_dialogue:
+                        if speaker_id == sp_id_agent:
+                            agent.act(speaker_id=sp_id_user, forced_text=utterance)
+                        else:
+                            agent.observe(speaker_id=sp_id_user, message=utterance)
+
+                if user_message is not None:
+                    agent.observe(speaker_id=sp_id_user, message=user_message)
+                    response = agent.act(speaker_id=sp_id_user)
+                    generated.append(((dialog_id, turn_id), [(sp_id_user, user_message), (sp_id_agent, response)]))
+
                 else:
-                    agent.observe(speaker_id=sp_id_user, message=utterance)
+                    print(print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping))
 
-        agent.observe(speaker_id=sp_id_user, message=user_message)
-        response = agent.act(speaker_id=sp_id_user)
-        generated = [(sp_id_user, user_message), (sp_id_agent, response)]
+                    continue_chat = True
+                    conversation = []
+                    while continue_chat:
+                        user_message = input("<user> ")
+                        continue_chat = len(user_message) > 0
+                        if continue_chat:
+                            agent.observe(speaker_id=sp_id_user, message=user_message)
+                            response = agent.act(speaker_id=sp_id_user)
+                            print("<agent> ", response)
+                            conversation.extend([(sp_id_user, user_message), (sp_id_agent, response)])
+                    generated.append(((dialog_id, turn_id), conversation))
 
-        # print(print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping))
-
-        # Continue conversation for a number of turns
-        # continue_chat = True
-        # generated = []
-        # while continue_chat:
-        #     user_message = input("<user> ")
-        #     continue_chat = len(user_message) > 0
-        #     if continue_chat:
-        #         agent.observe(speaker_id=sp_id_user, message=user_message)
-        #         response = agent.act(speaker_id=sp_id_user)
-        #         print("<agent> ", response)
-        #         generated.extend([(sp_id_user, user_message), (sp_id_agent, response)])
-
-        return {'num_utterances': len(generated)}, {'generated': generated}
+        return {'num_chats': len(generated)}, {'generated': generated}
 
     @classmethod
     def selfchat(cls, models, testdatasets, generation_configs, device="cpu", num_turns=8, print_max=20, log_interval=100):
