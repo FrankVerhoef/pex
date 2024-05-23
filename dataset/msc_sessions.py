@@ -770,13 +770,13 @@ class MSC_Session(Dataset):
     def chat(self, model, chat_initbatch, generation_config, device="cpu"):
 
         def print_context(personas_agent, personas_user, utterances, speaker_mapping):
-            s = "Personas agent\n"
+            s = "PERSONAS AGENT\n"
             for p in personas_agent:
                 s += p + '\n'
-            s += "Personas user\n"
+            s += "PERSONAS USER\n"
             for p in personas_user:
                 s += p + '\n'
-            s += "Dialogue\n"
+            s += "DIALOGUE\n"
             for u in utterances:
                 s += f"{speaker_mapping[u[0]]} {u[1]}\n"
             return s
@@ -834,6 +834,12 @@ class MSC_Session(Dataset):
                     agent.observe(speaker_id=sp_id_user, message=user_message)
                     response = agent.act(speaker_id=sp_id_user)
                     generated.append(((dialog_id, turn_id), [(sp_id_user, user_message), (sp_id_agent, response)]))
+                    logging.verbose(
+                        print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping) \
+                        + "CHAT"
+                        + f"<user> {user_message}\n" \
+                        + f"<agent> {response}\n" 
+                    )
 
                 else:
                     print(print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping))
