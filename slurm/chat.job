@@ -3,7 +3,7 @@
 #SBATCH --partition gpu
 #SBATCH --nodes 1
 #SBATCH --gpus 1
-#SBATCH --job-name Selfchat
+#SBATCH --job-name Chat
 #SBATCH --time 00:30:00
 #SBATCH --mem 32G
 #SBATCH --output slurm/outputs/chat_%A.out
@@ -35,7 +35,7 @@ srun python -u run/main.py chat dialogpt dialog \
 	--augmented \
 	--session 4 \
 	--chatdialog_id 1 \
-	--user_message I think they will, if the price is low enough. How much will you charge for 6 eggs? \
+	--user_message "I think they will, if the price is low enough. How much will you charge for 6 eggs?" \
 	--chatturn_id 4 \
 	--decoder_max 50 \
 	--do_sample \
