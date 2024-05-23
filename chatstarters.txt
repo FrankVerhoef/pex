@@ -1,15 +1,21 @@
-119	1	Do you have a hobby?
-143	1	What kind of work do you do?
-152	1	Do you have a hobby?
-271	1	Where do you live?
-274	1	Do you have a car?
-33	1	Where do you live?
-33	1	Do you have a car?
-33	1	What's your favorite food?
-102	1	Do you have a hobby?
-102	1	Where do you live?
-102	1	Do you have pets?
-159	1	What's your favorite food?
-225	1	What kind of work do you do?
-225	1	What's your favorite food?
-259	1	What kind of work do you do?
+121	1	Do you have a hobby?
+121	1	Where do you live?
+121	1	Do you have pets?
+145	1	What kind of work do you do?
+154	1	What's your favorite music?
+154	1	Do you have a hobby?
+273	1	Do you have pets?
+273	1	What kind of work do you do?
+273	1	Do you have a hobby?
+273	1	What kind of work do you do?
+276	1	Do you have a hobby?
+35	1	Where do you live?
+35	1	Do you have a car?
+103	1	Do you have a hobby?
+103	1	Where do you live?
+103	1	Do you have pets?
+161	1	What kind of work do you do?
+227	1	What kind of work do you do?
+227	1	What's your favorite food?
+261	1	What kind of work do you do?
+261	1	Do you have pets?
