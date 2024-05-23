@@ -193,7 +193,7 @@ def chat(model, testdata, args):
     )
 
     logging.info(f"Continue interactive chat on dialogue {args.chatdialog_id}, turn {args.chatturn_id}")
-    stats, chat_results = testdata.chat(model, args.chatdialog_id, args.chatturn_id, gen_config, device=args.device)
+    stats, chat_results = testdata.chat(model, args.chatdialog_id, args.chatturn_id, args.user_message, gen_config, device=args.device)
     return stats, chat_results 
 
 
@@ -704,6 +704,7 @@ def get_args():
     chatgroup = parser.add_argument_group("options for chat")
     chatgroup.add_argument("--chatdialog_id", type=int)
     chatgroup.add_argument("--chatturn_id", type=int)
+    chatgroup.add_argument("--user_message", type=str)
 
     selfchatgroup = parser.add_argument_group("options for selfchat")
     selfchatgroup.add_argument("--num_turns", type=int, default=8, help="number of turns generated in the selfchat")

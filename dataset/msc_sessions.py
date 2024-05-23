@@ -767,7 +767,7 @@ class MSC_Session(Dataset):
 
         return all_responses[0] if single_input else all_responses
 
-    def chat(self, model, dialog_id, turn_id, generation_config, device="cpu"):
+    def chat(self, model, dialog_id, turn_id, user_message, generation_config, device="cpu"):
 
         def print_context(personas_agent, personas_user, utterances, speaker_mapping):
             s = "Personas agent\n"
@@ -825,18 +825,15 @@ class MSC_Session(Dataset):
                 else:
                     agent.observe(speaker_id=sp_id_user, message=utterance)
 
-        print(print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping))
-
-        # Continue conversation for a number of turns
-        continue_chat = True
-        generated = []
-
-        user_message = "I think they will if the price is right. What will be the price for 6 eggs?"
         agent.observe(speaker_id=sp_id_user, message=user_message)
         response = agent.act(speaker_id=sp_id_user)
-        print("<agent> ", response)
-        generated.extend([(sp_id_user, user_message), (sp_id_agent, response)])
+        generated = [(sp_id_user, user_message), (sp_id_agent, response)]
 
+        # print(print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping))
+
+        # Continue conversation for a number of turns
+        # continue_chat = True
+        # generated = []
         # while continue_chat:
         #     user_message = input("<user> ")
         #     continue_chat = len(user_message) > 0

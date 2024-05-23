@@ -35,6 +35,7 @@ srun python -u run/main.py chat dialogpt dialog \
 	--augmented \
 	--session 4 \
 	--chatdialog_id 1 \
+	--user_message I think they will, if the price is low enough. How much will you charge for 6 eggs? \
 	--chatturn_id 4 \
 	--decoder_max 50 \
 	--do_sample \
