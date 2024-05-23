@@ -835,8 +835,8 @@ class MSC_Session(Dataset):
                     response = agent.act(speaker_id=sp_id_user)
                     generated.append(((dialog_id, turn_id), [(sp_id_user, user_message), (sp_id_agent, response)]))
                     logging.verbose(
-                        f"CHAT-ID {dialog_id}-{turn_id}\n"
-                        print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping) \
+                        f"CHAT-ID {dialog_id}-{turn_id}\n" \
+                        + print_context(personas_agent, personas_user, previous_sessions + current_dialogue, speaker_mapping) \
                         + "CHAT"
                         + f"<user> {user_message}\n" \
                         + f"<agent> {response}\n" 
