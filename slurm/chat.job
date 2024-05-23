@@ -20,7 +20,7 @@ source activate pex
 
 #Copy data dir  to scratch
 cp -r data  "$TMPDIR"/data
-cp chatstarters "$TMPDIR"
+cp chatstarters.txt "$TMPDIR"
 mkdir "$TMPDIR"/logs
 mkdir "$TMPDIR"/output
 
