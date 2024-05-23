@@ -35,7 +35,7 @@ srun python -u run/main.py chat dialogpt dialog \
 	--include_persona \
 	--augmented \
 	--session 4 \
-	--chat_initfile "$TMPDIR"/chatstarters.txt
+	--chat_initfile "$TMPDIR"/chatstarters.txt \
 	--decoder_max 50 \
 	--do_sample \
 	--num_beams 1 \
